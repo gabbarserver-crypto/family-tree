@@ -576,9 +576,11 @@ function drawTreeConnectors() {
     const familyKey = spouse ? [id, spouse].sort().join("|") : id;
     const sonPh = placeholderId("son", id), daughterPh = placeholderId("daughter", id);
     if (get(sonPh) && get(daughterPh)) {
-      const key = "ph-children:" + familyKey;
       const parentIds = spouse ? [id, spouse] : [id];
-      famUnits[key] = { parentIds, childIds: new Set([sonPh, daughterPh]) };
+      const key = [...parentIds].sort().join("|"); // same key format as real relationships, so placeholder children merge into the existing bus line instead of drawing a duplicate one
+      if (!famUnits[key]) famUnits[key] = { parentIds, childIds: new Set() };
+      famUnits[key].childIds.add(sonPh);
+      famUnits[key].childIds.add(daughterPh);
     }
   });
 
