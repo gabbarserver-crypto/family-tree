@@ -289,7 +289,8 @@ function go(id) { location.hash = id; window.scrollTo(0, 0); render(); }
 /* ---------------- login ---------------- */
 function renderLogin() {
   document.getElementById("app").innerHTML = `<main class="login"><section class="login-card">
-  <div class="eyebrow">Welcome to</div><div class="brand">🌳 Family<em>Tree</em></div>
+  <div class="eyebrow">Welcome to</div>
+  <div class="brand"><img src="/assets/logo.png" alt="FamilyTree" style="height:64px;width:64px;object-fit:contain;vertical-align:middle;margin-right:8px"> Family<em>Tree</em></div>
   <h1>Roots, remembered.</h1>
   <p class="muted">Build your family tree, connect with relatives, and keep memories in one place.</p>
   ${!supabaseConfigured ? `<div class="card" style="margin:14px 0"><strong>Supabase is not configured.</strong><p class="muted">Add VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY in Vercel/local environment variables.</p></div>` : ''}
@@ -316,7 +317,7 @@ function render() {
   const flatNav = NAV.flatMap(g => g.items).concat(isStaff() ? ADMIN_NAV.items : []);
   app.innerHTML = `<div class="shell">
     <header class="topbar">
-      <div class="brand">🌳 Family<em>Tree</em><small>V11</small></div>
+      <div class="brand"><img src="/assets/logo.png" alt="FamilyTree" style="height:32px;width:32px;object-fit:contain;vertical-align:middle;margin-right:6px"> Family<em>Tree</em><small>V11</small></div>
       <div class="top-actions">
         
         <span class="muted" style="font-size:13px">${state.account.name}</span>
@@ -383,20 +384,11 @@ function tree() {
   const centerGen = gens[centerId];
   const spousePlaceholder = (centerPerson && spousesOf(centerId).length === 0)
     ? addRelativeNode(centerPerson.gender === "Female" ? "husband" : "wife", centerId) : "";
-  const childPlaceholders = centerPerson ? (addRelativeNode("son", centerId) + addRelativeNode("daughter", centerId)) : "";
-  const parentPlaceholders = (centerPerson && parentsOf(centerId).length === 0)
-    ? (addRelativeNode("father", centerId) + addRelativeNode("mother", centerId)) : "";
-  const hasChildGenRow = levels.includes(centerGen + 1);
-  const hasParentGenRow = levels.includes(centerGen - 1);
   let rows = levels.map(g => {
     let html = byGen[g].map(id => branchNode(personById(id), id === centerId)).join("");
     if (g === centerGen) html += spousePlaceholder;
-    if (g === centerGen + 1) html += childPlaceholders;
-    if (g === centerGen - 1) html = parentPlaceholders + html;
     return `<div class="gen">${html}</div>`;
   }).join("");
-  if (!hasParentGenRow && centerPerson) rows = `<div class="gen">${parentPlaceholders}</div>` + rows;
-  if (!hasChildGenRow && centerPerson) rows += `<div class="gen">${childPlaceholders}</div>`;
   return `<div class="page-head"><h2>My Family Tree</h2><p class="muted">Built live from the relationship graph — zoom, pan and tap any branch to re-center or open a profile.</p></div>
   <div class="tree-toolbar">
     <input id="treeSearch" placeholder="Search by name or Person ID…" style="border:1px solid var(--line);border-radius:10px;padding:9px 12px;min-width:220px" list="treeSearchList" onchange="treeSearch(this.value)">
@@ -416,7 +408,18 @@ function addRelativeNode(typeKey, targetId) {
 }
 function branchNode(p, isCenter) {
   if (!p) return "";
-  return `<div class="branch-node ${p.me ? "me" : ""} ${isCenter && !p.me ? "me" : ""} ${p.status === "unclaimed" ? "unclaimed" : ""}" onclick="centerTree('${p.id}')" ondblclick="openProfile('${p.id}')">${avatarHTML(p, "photo")}<strong>${p.name}</strong><div class="mini">${deriveRelationship(me().id, p.id).label}${p.status === "unclaimed" ? " · Unclaimed" : ""}</div></div>`;
+  const actionBtnStyle = "border:1px solid var(--line,#c9bfa8);background:#fff;border-radius:20px;padding:3px 9px;font-size:11px;line-height:1.4;cursor:pointer;color:var(--ink,#2c2620);white-space:nowrap";
+  const treeBtnStyle = "border:1px solid var(--line,#c9bfa8);background:var(--sand,#f1e9d8);border-radius:20px;padding:3px 9px;font-size:11px;line-height:1.4;cursor:pointer;color:var(--ink,#2c2620);white-space:nowrap";
+  return `<div class="branch-node ${p.me ? "me" : ""} ${isCenter && !p.me ? "me" : ""} ${p.status === "unclaimed" ? "unclaimed" : ""}" ondblclick="openProfile('${p.id}')">
+    ${avatarHTML(p, "photo")}
+    <strong>${p.name}</strong>
+    <div class="mini">${deriveRelationship(me().id, p.id).label}${p.status === "unclaimed" ? " · Unclaimed" : ""}</div>
+    <div class="branch-actions" style="display:flex;gap:5px;justify-content:center;flex-wrap:wrap;margin-top:7px">
+      <button type="button" style="${actionBtnStyle}" title="Add Parent" onclick="event.stopPropagation();openAddRelative('${p.id}','father')">＋ Parent</button>
+      <button type="button" style="${actionBtnStyle}" title="Add Child" onclick="event.stopPropagation();openAddRelative('${p.id}','son')">＋ Child</button>
+      <button type="button" style="${treeBtnStyle}" title="Center tree on ${esc(p.name)}" onclick="event.stopPropagation();centerTree('${p.id}')">🌳 Tree</button>
+    </div>
+  </div>`;
 }
 function centerTree(id) { treeCenterId = id; treeScale = 1; go("tree"); }
 function treeSearch(val) {
