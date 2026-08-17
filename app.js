@@ -99,6 +99,11 @@ async function persistState() {
 function isUuid(v) { return typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v); }
 function normalizeDate(v) { if (!v) return null; const d = new Date(v); return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0,10); }
 function initials(n) { return n.split(" ").map(x => x[0]).slice(0, 2).join("").toUpperCase(); }
+function avatarHTML(p, cls) {
+  cls = cls || "";
+  if (p.avatar_url) return `<div class="avatar ${cls}" style="padding:0;overflow:hidden"><img src="${esc(p.avatar_url)}" alt="${esc(p.name)}" style="width:100%;height:100%;object-fit:cover;border-radius:inherit"></div>`;
+  return `<div class="avatar ${cls}">${initials(p.name)}</div>`;
+}
 function toast(msg) { const x = document.createElement("div"); x.className = "toast"; x.textContent = msg; document.body.appendChild(x); setTimeout(() => x.remove(), 2200); }
 function esc(s) { return String(s).replace(/</g, "&lt;"); }
 function me() { return state.people.find(p => p.me); }
@@ -442,7 +447,7 @@ function createPerson() {
 function people() {
   return `<div class="page-head"><h2>People</h2><p class="muted">Everyone connected to your family tree.</p></div>
   <div class="list">${state.people.map(p => `<div class="row" style="cursor:pointer" onclick="openProfile('${p.id}')">
-    <div style="display:flex;gap:12px;align-items:center"><div class="avatar">${initials(p.name)}</div><div><strong>${p.name}</strong><div class="muted" style="font-size:12.5px">${p.me ? "Self" : deriveRelationship(me().id, p.id).label} · ${p.id}</div></div></div>
+    <div style="display:flex;gap:12px;align-items:center">${avatarHTML(p)}<div><strong>${p.name}</strong><div class="muted" style="font-size:12.5px">${p.me ? "Self" : deriveRelationship(me().id, p.id).label} · ${p.id}</div></div></div>
     <div>${p.status === "unclaimed" ? '<span class="badge">Unclaimed</span>' : '<span class="badge sage">Claimed</span>'}</div>
   </div>`).join("")}</div>`;
 }
@@ -453,8 +458,8 @@ function profile(id) {
   const p = state.people.find(x => x.id === id) || me();
   return `<div class="page-head"><h2>Profile</h2><p class="muted">Person profile &amp; media.</p></div>
   <div class="card profile-head">
-    <div><div class="avatar lg ${p.me ? "gold" : ""}">${initials(p.name)}</div>
-      <button class="ghost full" style="margin-top:10px" onclick="toast('Demo: photo upload')">Change Photo</button></div>
+    <div>${avatarHTML(p, "lg " + (p.me ? "gold" : ""))}
+      <button class="ghost full" style="margin-top:10px" onclick="changePhoto('${p.id}')">Change Photo</button></div>
     <div>
       <h1 style="font-family:var(--font-display);font-size:24px;margin-bottom:2px">${p.name}</h1>
       <p class="muted">Person ID: <strong>${p.id}</strong> · ${p.status === "unclaimed" ? '<span class="badge">Unclaimed</span>' : '<span class="badge sage">Claimed</span>'}</p>
@@ -475,6 +480,38 @@ function profile(id) {
   </div></div>`;
 }
 function setPrivacy(id, val) { const p = state.people.find(x => x.id === id); if (p) { p.privacy = val; save(); toast("Privacy set to " + val); } }
+
+function changePhoto(id) {
+  if (!supabase || !currentUser) { toast("Please sign in to upload a photo"); return; }
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/png,image/jpeg,image/webp,image/gif";
+  input.onchange = async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { toast("Please choose an image file"); return; }
+    if (file.size > 5 * 1024 * 1024) { toast("Image must be under 5MB"); return; }
+    toast("Uploading photo…");
+    try {
+      const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+      const path = `${currentUser.id}/${id}-${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("avatars").upload(path, file, { upsert: true, cacheControl: "3600" });
+      if (upErr) throw upErr;
+      const { data: pub } = supabase.storage.from("avatars").getPublicUrl(path);
+      const avatar_url = pub.publicUrl;
+      const { error: dbErr } = await supabase.from("persons").update({ avatar_url }).eq("id", id);
+      if (dbErr) throw dbErr;
+      const p = state.people.find(x => x.id === id);
+      if (p) p.avatar_url = avatar_url;
+      toast("Photo updated");
+      render();
+    } catch (e) {
+      console.error("Photo upload failed", e);
+      toast("Photo upload failed: " + e.message);
+    }
+  };
+  input.click();
+}
 
 /* ---------------- V4: merge ---------------- */
 function merge() {
@@ -722,9 +759,9 @@ function production() {
    scoped to the module — they are NOT attached to window automatically
    the way classic <script> globals are. */
 Object.assign(window, {
-  acceptConnection, approveMerge, centerTree, compareMerge, createPerson,
-  createTicket, findPerson, findRelation, go, googleLogin, invite,
-  likePost, likeReel, logout, openProfile, openTicket, phoneLogin,
+  acceptConnection, approveMerge, centerTree, changePhoto, compareMerge,
+  createPerson, createTicket, findPerson, findRelation, go, googleLogin,
+  invite, likePost, likeReel, logout, openProfile, openTicket, phoneLogin,
   publishPost, requestMerge, resolveTicket, reviewItem, sendReply,
   shareId, toast, treeFocusMe, treeReset, treeZoom
 });
