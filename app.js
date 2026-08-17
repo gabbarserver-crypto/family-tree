@@ -455,7 +455,7 @@ function addRelativeNode(typeKey, targetId) {
 function branchNode(p, isCenter) {
   if (!p) return "";
   const expanded = treeExpanded.has(p.id);
-  const badgeBase = "position:absolute;top:-9px;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.25);z-index:2";
+  const badgeBase = "position:absolute;top:-9px;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.25);z-index:2;";
   const addBadge = canAddRelativeTo(p.id) ? `<button type="button" title="${expanded ? "Close" : "Add relative"}" style="${badgeBase}left:-9px;border:2px solid #fff;background:${expanded ? "#e0602a" : "#f2793a"};color:#fff" onclick="event.stopPropagation();toggleTreeExpand('${p.id}')">${expanded ? "✕" : "＋"}</button>` : "";
   const centerBadge = `<button type="button" title="Center tree on ${esc(p.name)}" style="${badgeBase}right:-9px;border:2px solid #fff;background:#fff" onclick="event.stopPropagation();centerTree('${p.id}')">🌳</button>`;
   return `<div class="branch-node ${p.me ? "me" : ""} ${isCenter && !p.me ? "me" : ""} ${p.status === "unclaimed" ? "unclaimed" : ""}" id="${nodeElId(p.id)}" style="position:relative" ondblclick="openProfile('${p.id}')">
