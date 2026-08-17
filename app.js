@@ -129,6 +129,9 @@ function personTreeRole(p) { return (p && p.treeRole) || (p && p.me ? "owner" : 
 function myTreeRole() { return personTreeRole(me()); }
 function isTreeOwner() { return myTreeRole() === "owner"; }
 function canEditTree() { return myTreeRole() === "owner" || myTreeRole() === "admin"; }
+/* Anyone can add relatives directly onto their own card, even if they're
+   not a tree owner/admin. Everyone else's card still needs edit rights. */
+function canAddRelativeTo(targetId) { return canEditTree() || targetId === me().id; }
 function treeRoleLabel(r) { return r === "owner" ? "Owner" : r === "admin" ? "Admin" : "Member"; }
 function treeRoleBadgeClass(r) { return r === "owner" ? "sage" : r === "admin" ? "plum" : ""; }
 
@@ -350,7 +353,8 @@ function pageView(p) {
     wall, reels, sharing, support, admin, production, treeAdmins
   };
   if ((p === "admin" || p === "production") && !isStaff()) return accessDenied();
-  if ((p === "add" || p === "addRelative") && !canEditTree()) return accessDenied("Tree admin access required", "Only this tree's owner or admins can add relatives. Ask the owner to promote you from the Tree Admins page.");
+  if (p === "add" && !canEditTree()) return accessDenied("Tree admin access required", "Only this tree's owner or admins can add relatives. Ask the owner to promote you from the Tree Admins page.");
+  if (p === "addRelative" && !canAddRelativeTo(addRelativeTargetId)) return accessDenied("Tree admin access required", "Only this tree's owner or admins can add relatives to other people. Ask the owner to promote you from the Tree Admins page.");
   return (map[p] || home)();
 }
 function accessDenied(title, msg) {
@@ -452,7 +456,7 @@ function branchNode(p, isCenter) {
   if (!p) return "";
   const expanded = treeExpanded.has(p.id);
   const badgeBase = "position:absolute;top:-9px;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.25);z-index:2";
-  const addBadge = canEditTree() ? `<button type="button" title="${expanded ? "Close" : "Add relative"}" style="${badgeBase}left:-9px;border:2px solid #fff;background:${expanded ? "#e0602a" : "#f2793a"};color:#fff" onclick="event.stopPropagation();toggleTreeExpand('${p.id}')">${expanded ? "✕" : "＋"}</button>` : "";
+  const addBadge = canAddRelativeTo(p.id) ? `<button type="button" title="${expanded ? "Close" : "Add relative"}" style="${badgeBase}left:-9px;border:2px solid #fff;background:${expanded ? "#e0602a" : "#f2793a"};color:#fff" onclick="event.stopPropagation();toggleTreeExpand('${p.id}')">${expanded ? "✕" : "＋"}</button>` : "";
   const centerBadge = `<button type="button" title="Center tree on ${esc(p.name)}" style="${badgeBase}right:-9px;border:2px solid #fff;background:#fff" onclick="event.stopPropagation();centerTree('${p.id}')">🌳</button>`;
   return `<div class="branch-node ${p.me ? "me" : ""} ${isCenter && !p.me ? "me" : ""} ${p.status === "unclaimed" ? "unclaimed" : ""}" id="${nodeElId(p.id)}" style="position:relative" ondblclick="openProfile('${p.id}')">
     ${addBadge}${centerBadge}
@@ -630,7 +634,7 @@ function createPerson() {
 
 /* ---------------- Add Relative — rich form (photo, contact, life details) ---------------- */
 function openAddRelative(targetId, typeKey) {
-  if (!canEditTree()) { toast("Only this tree's owner or admins can add relatives"); return; }
+  if (!canAddRelativeTo(targetId)) { toast("Only this tree's owner or admins can add relatives to other people"); return; }
   addRelativeTargetId = targetId;
   addRelativeTypeKey = typeKey;
   addRelativePhotoFile = null;
@@ -723,7 +727,7 @@ function addRelative() {
   </div>`;
 }
 async function saveAddRelative() {
-  if (!canEditTree()) { toast("Only this tree's owner or admins can add relatives"); return; }
+  if (!canAddRelativeTo(addRelativeTargetId)) { toast("Only this tree's owner or admins can add relatives to other people"); return; }
   const first = document.getElementById("arFirst").value.trim();
   const surname = document.getElementById("arSurname").value.trim();
   if (!first || !surname) { toast("First name and surname are required"); return; }
