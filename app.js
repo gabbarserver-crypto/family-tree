@@ -115,7 +115,24 @@ function initials(n) { return n.split(" ").map(x => x[0]).slice(0, 2).join("").t
 function avatarHTML(p, cls) {
   cls = cls || "";
   if (p.avatar_url) return `<div class="avatar ${cls}" style="padding:0;overflow:hidden"><img src="${esc(p.avatar_url)}" alt="${esc(p.name)}" style="width:100%;height:100%;object-fit:cover;border-radius:inherit"></div>`;
-  return `<div class="avatar ${cls}">${initials(p.name)}</div>`;
+  const [bg, fg] = avatarPalette(p.id || p.name || "");
+  return `<div class="avatar ${cls}" style="background:${bg};color:${fg}">${initials(p.name)}</div>`;
+}
+/* Deterministic pastel color per person, purely from their id/name, so the
+   same person always gets the same tint (matches the multi-color initials
+   look used by other family-tree apps) without needing a stored color. */
+function avatarPalette(seed) {
+  const palette = [
+    ["#fbe4ec", "#b23a63"], // rose
+    ["#e6effb", "#3a5fb2"], // blue
+    ["#efe9f5", "#6b4a94"], // plum/lavender
+    ["#e8f2ea", "#3f7a54"], // sage
+    ["#fdf0dc", "#b8811f"], // gold
+    ["#fde8df", "#c2612f"], // terracotta
+  ];
+  let h = 0;
+  for (let i = 0; i < String(seed).length; i++) h = (h * 31 + String(seed).charCodeAt(i)) >>> 0;
+  return palette[h % palette.length];
 }
 function toast(msg) { const x = document.createElement("div"); x.className = "toast"; x.textContent = msg; document.body.appendChild(x); setTimeout(() => x.remove(), 2200); }
 function esc(s) { return String(s).replace(/</g, "&lt;"); }
@@ -455,14 +472,16 @@ function addRelativeNode(typeKey, targetId) {
 function branchNode(p, isCenter) {
   if (!p) return "";
   const expanded = treeExpanded.has(p.id);
-  const badgeBase = "position:absolute;top:-9px;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.25);z-index:2;";
+  const badgeBase = "position:absolute;top:-9px;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.2);z-index:2;";
   const addBadge = canAddRelativeTo(p.id) ? `<button type="button" title="${expanded ? "Close" : "Add relative"}" style="${badgeBase}left:-9px;border:2px solid #fff;background:${expanded ? "#e0602a" : "#f2793a"};color:#fff" onclick="event.stopPropagation();toggleTreeExpand('${p.id}')">${expanded ? "✕" : "＋"}</button>` : "";
   const centerBadge = `<button type="button" title="Center tree on ${esc(p.name)}" style="${badgeBase}right:-9px;border:2px solid #fff;background:#fff" onclick="event.stopPropagation();centerTree('${p.id}')">🌳</button>`;
-  return `<div class="branch-node ${p.me ? "me" : ""} ${isCenter && !p.me ? "me" : ""} ${p.status === "unclaimed" ? "unclaimed" : ""}" id="${nodeElId(p.id)}" style="position:relative" ondblclick="openProfile('${p.id}')">
+  const years = p.dob ? `${new Date(p.dob).getFullYear()} –` : "–";
+  return `<div class="branch-node ${p.me ? "me" : ""} ${isCenter && !p.me ? "me" : ""}" id="${nodeElId(p.id)}" style="position:relative" ondblclick="openProfile('${p.id}')">
     ${addBadge}${centerBadge}
     ${avatarHTML(p, "photo")}
     <strong>${p.name}</strong>
-    <div class="mini">${deriveRelationship(me().id, p.id).label}${p.status === "unclaimed" ? " · Unclaimed" : ""}</div>
+    <div class="mini">${years}${p.status === "unclaimed" ? " · Unclaimed" : ""}</div>
+    <div class="mini rel">${deriveRelationship(me().id, p.id).label}</div>
   </div>`;
 }
 
