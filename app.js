@@ -330,6 +330,7 @@ function render() {
     </div>
     <nav class="bottomnav">${flatNav.slice(0, 6).map(([id, label, icon]) => navItem(id, label, icon, page)).join("")}</nav>
   </div>`;
+  if (page === "tree") requestAnimationFrame(drawTreeConnectors);
 }
 function switchRole() {}
 
@@ -367,29 +368,54 @@ function home() {
 
 /* ---------------- V3: tree — rendered live from the relationship graph ---------------- */
 let treeCenterId = null; // person the tree is currently focused/centered on
+let treeExpanded = new Set(); // person ids currently showing their "add relative" placeholders
+function nodeElId(id) { return "node-" + String(id).replace(/[^a-zA-Z0-9_-]/g, "_"); }
+function placeholderId(typeKey, targetId) { return "add-" + typeKey + "-" + targetId; }
+
 function tree() {
   const centerId = treeCenterId || me().id;
   const gens = computeGenerations(centerId); // {personId: genIndex}
   const byGen = {};
   Object.entries(gens).forEach(([id, g]) => { (byGen[g] = byGen[g] || []).push(id); });
-  const levels = Object.keys(byGen).map(Number).sort((a, b) => a - b);
+
+  // Work out which placeholder nodes to inject per generation, based on
+  // which cards are currently "expanded" (their add-badge was tapped).
+  const extraByGen = {}; // gen -> [{key,typeKey,targetId}]
+  const seenChildFamilies = new Set();
+  treeExpanded.forEach(id => {
+    if (!(id in gens)) return; // not part of the currently visible tree
+    const p = personById(id);
+    if (!p) return;
+    const g = gens[id];
+    if (spousesOf(id).length === 0) {
+      (extraByGen[g] = extraByGen[g] || []).push({ typeKey: p.gender === "Female" ? "husband" : "wife", targetId: id });
+    }
+    if (parentsOf(id).length === 0) {
+      (extraByGen[g - 1] = extraByGen[g - 1] || []).push({ typeKey: "father", targetId: id }, { typeKey: "mother", targetId: id });
+    }
+    const spouse = spousesOf(id)[0];
+    const familyKey = spouse ? [id, spouse].sort().join("|") : id;
+    if (!seenChildFamilies.has(familyKey)) {
+      seenChildFamilies.add(familyKey);
+      (extraByGen[g + 1] = extraByGen[g + 1] || []).push({ typeKey: "son", targetId: id }, { typeKey: "daughter", targetId: id });
+    }
+  });
+
+  const levels = Array.from(new Set([...Object.keys(byGen).map(Number), ...Object.keys(extraByGen).map(Number)])).sort((a, b) => a - b);
   // keep spouses adjacent to their partner within a row
   levels.forEach(g => {
-    byGen[g].sort((a, b) => {
+    (byGen[g] || []).sort((a, b) => {
       const aSp = spousesOf(a)[0], bSp = spousesOf(b)[0];
       return (aSp === b ? -1 : bSp === a ? 1 : 0);
     });
   });
-  const centerPerson = personById(centerId);
   const centerGen = gens[centerId];
-  const spousePlaceholder = (centerPerson && spousesOf(centerId).length === 0)
-    ? addRelativeNode(centerPerson.gender === "Female" ? "husband" : "wife", centerId) : "";
-  let rows = levels.map(g => {
-    let html = byGen[g].map(id => branchNode(personById(id), id === centerId)).join("");
-    if (g === centerGen) html += spousePlaceholder;
-    return `<div class="gen">${html}</div>`;
+  const rows = levels.map(g => {
+    const peopleHtml = (byGen[g] || []).map(id => branchNode(personById(id), id === centerId)).join("");
+    const extrasHtml = (extraByGen[g] || []).map(n => addRelativeNode(n.typeKey, n.targetId)).join("");
+    return `<div class="gen" data-gen="${g}">${peopleHtml}${extrasHtml}</div>`;
   }).join("");
-  return `<div class="page-head"><h2>My Family Tree</h2><p class="muted">Built live from the relationship graph — zoom, pan and tap any branch to re-center or open a profile.</p></div>
+  return `<div class="page-head"><h2>My Family Tree</h2><p class="muted">Built live from the relationship graph — zoom, pan and tap the ＋ badge on any card to add a relative, or the 🌳 badge to re-center.</p></div>
   <div class="tree-toolbar">
     <input id="treeSearch" placeholder="Search by name or Person ID…" style="border:1px solid var(--line);border-radius:10px;padding:9px 12px;min-width:220px" list="treeSearchList" onchange="treeSearch(this.value)">
     <datalist id="treeSearchList">${state.people.map(p => `<option value="${p.name} (${p.id})">`).join("")}</datalist>
@@ -399,37 +425,147 @@ function tree() {
     <button class="ghost" onclick="treeFocusMe()">🎯 Focus Me</button>
   </div>
   <div class="tree-canvas" id="treeCanvas">
-    <div class="tree-stage" id="treeStage">${rows || "<p class='muted'>No relationships recorded yet — add a parent, spouse or child to start the graph.</p>"}</div>
-  </div>`;
-}
-function addRelativeNode(typeKey, targetId) {
-  const t = RELATION_TYPES[typeKey];
-  return `<div class="branch-node add-node" style="border:2px dashed var(--line,#c9bfa8);background:transparent;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--muted,#8a8478);font-size:13px;text-align:center;min-height:64px" onclick="openAddRelative('${targetId}','${typeKey}')">+ Add ${t.label}</div>`;
-}
-function branchNode(p, isCenter) {
-  if (!p) return "";
-  const actionBtnStyle = "border:1px solid var(--line,#c9bfa8);background:#fff;border-radius:20px;padding:3px 9px;font-size:11px;line-height:1.4;cursor:pointer;color:var(--ink,#2c2620);white-space:nowrap";
-  const treeBtnStyle = "border:1px solid var(--line,#c9bfa8);background:var(--sand,#f1e9d8);border-radius:20px;padding:3px 9px;font-size:11px;line-height:1.4;cursor:pointer;color:var(--ink,#2c2620);white-space:nowrap";
-  return `<div class="branch-node ${p.me ? "me" : ""} ${isCenter && !p.me ? "me" : ""} ${p.status === "unclaimed" ? "unclaimed" : ""}" ondblclick="openProfile('${p.id}')">
-    ${avatarHTML(p, "photo")}
-    <strong>${p.name}</strong>
-    <div class="mini">${deriveRelationship(me().id, p.id).label}${p.status === "unclaimed" ? " · Unclaimed" : ""}</div>
-    <div class="branch-actions" style="display:flex;gap:5px;justify-content:center;flex-wrap:wrap;margin-top:7px">
-      <button type="button" style="${actionBtnStyle}" title="Add Parent" onclick="event.stopPropagation();openAddRelative('${p.id}','father')">＋ Parent</button>
-      <button type="button" style="${actionBtnStyle}" title="Add Child" onclick="event.stopPropagation();openAddRelative('${p.id}','son')">＋ Child</button>
-      <button type="button" style="${treeBtnStyle}" title="Center tree on ${esc(p.name)}" onclick="event.stopPropagation();centerTree('${p.id}')">🌳 Tree</button>
+    <div class="tree-stage" id="treeStage" style="position:relative">
+      <svg id="treeLines" style="position:absolute;top:0;left:0;pointer-events:none;overflow:visible"></svg>
+      ${rows || "<p class='muted'>No relationships recorded yet — tap the ＋ badge on your card to start the graph.</p>"}
     </div>
   </div>`;
 }
-function centerTree(id) { treeCenterId = id; treeScale = 1; go("tree"); }
+
+function addRelativeNode(typeKey, targetId) {
+  const t = RELATION_TYPES[typeKey];
+  return `<div class="branch-node add-node" id="${nodeElId(placeholderId(typeKey, targetId))}" style="border:2px dashed var(--line,#c9bfa8);background:transparent;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--muted,#8a8478);font-size:13px;text-align:center;min-height:64px" onclick="openAddRelative('${targetId}','${typeKey}')">+ Add ${t.label}</div>`;
+}
+
+function branchNode(p, isCenter) {
+  if (!p) return "";
+  const expanded = treeExpanded.has(p.id);
+  const badgeBase = "position:absolute;top:-9px;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.25);z-index:2";
+  const addBadge = `<button type="button" title="${expanded ? "Close" : "Add relative"}" style="${badgeBase}left:-9px;border:2px solid #fff;background:${expanded ? "#e0602a" : "#f2793a"};color:#fff" onclick="event.stopPropagation();toggleTreeExpand('${p.id}')">${expanded ? "✕" : "＋"}</button>`;
+  const centerBadge = `<button type="button" title="Center tree on ${esc(p.name)}" style="${badgeBase}right:-9px;border:2px solid #fff;background:#fff" onclick="event.stopPropagation();centerTree('${p.id}')">🌳</button>`;
+  return `<div class="branch-node ${p.me ? "me" : ""} ${isCenter && !p.me ? "me" : ""} ${p.status === "unclaimed" ? "unclaimed" : ""}" id="${nodeElId(p.id)}" style="position:relative" ondblclick="openProfile('${p.id}')">
+    ${addBadge}${centerBadge}
+    ${avatarHTML(p, "photo")}
+    <strong>${p.name}</strong>
+    <div class="mini">${deriveRelationship(me().id, p.id).label}${p.status === "unclaimed" ? " · Unclaimed" : ""}</div>
+  </div>`;
+}
+
+function toggleTreeExpand(id) {
+  if (treeExpanded.has(id)) treeExpanded.delete(id); else treeExpanded.add(id);
+  render();
+  requestAnimationFrame(drawTreeConnectors);
+}
+
+function centerTree(id) { treeCenterId = id; treeScale = 1; go("tree"); requestAnimationFrame(drawTreeConnectors); }
 function treeSearch(val) {
   const idMatch = val.match(/\(([^)]+)\)\s*$/);
   const id = idMatch ? idMatch[1] : (state.people.find(p => p.name.toLowerCase() === val.toLowerCase())?.id);
   if (id && personById(id)) centerTree(id); else toast("Person not found");
 }
-function treeZoom(n) { treeScale = Math.max(.5, Math.min(2.2, treeScale * n)); document.getElementById("treeStage").style.transform = `scale(${treeScale})`; }
-function treeReset() { treeScale = 1; const s = document.getElementById("treeStage"); if (s) s.style.transform = "scale(1)"; }
-function treeFocusMe() { treeCenterId = me().id; treeReset(); go("tree"); }
+function treeZoom(n) { treeScale = Math.max(.5, Math.min(2.2, treeScale * n)); document.getElementById("treeStage").style.transform = `scale(${treeScale})`; requestAnimationFrame(drawTreeConnectors); }
+function treeReset() { treeScale = 1; const s = document.getElementById("treeStage"); if (s) s.style.transform = "scale(1)"; requestAnimationFrame(drawTreeConnectors); }
+function treeFocusMe() { treeCenterId = me().id; treeReset(); go("tree"); requestAnimationFrame(drawTreeConnectors); }
+
+/* Draw the org-chart style connector lines (branch lines + junction dots)
+   between rendered tree nodes, using their actual DOM positions so the
+   layout always matches whatever the browser/flexbox produced. */
+function drawTreeConnectors() {
+  const stage = document.getElementById("treeStage");
+  const svg = document.getElementById("treeLines");
+  if (!stage || !svg) return;
+  const LINE = "#c9bfa8", DOT = "#4a2e6b";
+  const get = id => document.getElementById(nodeElId(id));
+  const rect = el => ({ x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight });
+  const parts = [];
+  const dot = (x, y) => parts.push(`<circle cx="${x}" cy="${y}" r="4" fill="${DOT}"/>`);
+  const line = (x1, y1, x2, y2) => parts.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${LINE}" stroke-width="2"/>`);
+
+  // 1) direct spouse links (real + placeholder)
+  const drawnSpousePairs = new Set();
+  state.people.forEach(p => {
+    spousesOf(p.id).forEach(sId => {
+      const key = [p.id, sId].sort().join("|");
+      if (drawnSpousePairs.has(key)) return;
+      drawnSpousePairs.add(key);
+      const a = get(p.id), b = get(sId);
+      if (!a || !b) return;
+      const ra = rect(a), rb = rect(b);
+      const leftEl = ra.x < rb.x ? ra : rb, rightEl = ra.x < rb.x ? rb : ra;
+      const y = leftEl.y + leftEl.h / 2;
+      const x1 = leftEl.x + leftEl.w, x2 = rightEl.x;
+      line(x1, y, x2, y);
+      dot((x1 + x2) / 2, y);
+    });
+  });
+  treeExpanded.forEach(id => {
+    if (spousesOf(id).length) return;
+    const p = personById(id);
+    if (!p) return;
+    const phId = placeholderId(p.gender === "Female" ? "husband" : "wife", id);
+    const a = get(id), b = get(phId);
+    if (!a || !b) return;
+    const ra = rect(a), rb = rect(b);
+    const leftEl = ra.x < rb.x ? ra : rb, rightEl = ra.x < rb.x ? rb : ra;
+    const y = leftEl.y + leftEl.h / 2;
+    const x1 = leftEl.x + leftEl.w, x2 = rightEl.x;
+    line(x1, y, x2, y);
+    dot((x1 + x2) / 2, y);
+  });
+
+  // 2) parent -> children family units (real relationships)
+  const famUnits = {}; // key(parents) -> {parentIds:[], childIds:Set}
+  state.relationships.filter(r => r.type === "parent").forEach(r => {
+    if (!get(r.from) || !get(r.to)) return;
+    const parentIds = parentsOf(r.to).filter(pid => get(pid));
+    const key = [...parentIds].sort().join("|");
+    if (!famUnits[key]) famUnits[key] = { parentIds, childIds: new Set() };
+    famUnits[key].childIds.add(r.to);
+  });
+  // 2b) placeholder parent/child family units from expanded cards
+  treeExpanded.forEach(id => {
+    const p = personById(id);
+    if (!p || !get(id)) return;
+    if (parentsOf(id).length === 0) {
+      const fatherPh = placeholderId("father", id), motherPh = placeholderId("mother", id);
+      if (get(fatherPh) && get(motherPh)) {
+        const key = "ph:" + fatherPh + "|" + motherPh;
+        famUnits[key] = { parentIds: [fatherPh, motherPh], childIds: new Set([id]) };
+      }
+    }
+    const spouse = spousesOf(id)[0];
+    const familyKey = spouse ? [id, spouse].sort().join("|") : id;
+    const sonPh = placeholderId("son", id), daughterPh = placeholderId("daughter", id);
+    if (get(sonPh) && get(daughterPh)) {
+      const key = "ph-children:" + familyKey;
+      const parentIds = spouse ? [id, spouse] : [id];
+      famUnits[key] = { parentIds, childIds: new Set([sonPh, daughterPh]) };
+    }
+  });
+
+  Object.values(famUnits).forEach(({ parentIds, childIds }) => {
+    const parentEls = parentIds.map(get).filter(Boolean);
+    const childEls = [...childIds].map(get).filter(Boolean);
+    if (!parentEls.length || !childEls.length) return;
+    const pRects = parentEls.map(rect);
+    const parentY = Math.max(...pRects.map(r => r.y + r.h));
+    const parentX = (Math.min(...pRects.map(r => r.x)) + Math.max(...pRects.map(r => r.x + r.w))) / 2;
+    const cRects = childEls.map(rect);
+    const childY = Math.min(...cRects.map(r => r.y));
+    const busY = parentY + (childY - parentY) / 2;
+    dot(parentX, parentY);
+    line(parentX, parentY, parentX, busY);
+    const childXs = cRects.map(r => r.x + r.w / 2);
+    const minX = Math.min(parentX, ...childXs), maxX = Math.max(parentX, ...childXs);
+    line(minX, busY, maxX, busY);
+    childXs.forEach(cx => { line(cx, busY, cx, childY); dot(cx, childY); });
+  });
+
+  svg.setAttribute("width", stage.scrollWidth);
+  svg.setAttribute("height", stage.scrollHeight);
+  svg.innerHTML = parts.join("");
+}
+window.addEventListener("resize", () => { if ((location.hash || "").slice(1) === "tree") drawTreeConnectors(); });
 
 /* ---------------- add person — creates real graph edges ---------------- */
 function add() {
@@ -948,7 +1084,7 @@ Object.assign(window, {
   invite, likePost, likeReel, logout, openAddRelative, openProfile, openTicket,
   phoneLogin, pickAddRelativePhoto, publishPost, requestMerge, resolveTicket,
   reviewItem, saveAddRelative, sendReply, shareId, toast, treeFocusMe,
-  treeReset, treeZoom
+  treeReset, treeZoom, toggleTreeExpand, treeSearch
 });
 
 window.addEventListener("hashchange", render);
