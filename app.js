@@ -103,7 +103,7 @@ async function persistState() {
       nickname: p.nickname || null, show_nickname: !!p.showNickname, birth_place: p.birthPlace || null, current_place: p.currentPlace || null, life_status: p.lifeStatus || 'living', details: p.details || {}
     }));
     if (peopleRows.length) { const { error } = await supabase.from('persons').upsert(peopleRows, { onConflict: 'id' }); if (error) throw error; }
-    const memberRows = state.people.map(p => ({ tree_id: state.treeId, person_id: p.id, added_by: currentUser.id, role: p.me ? 'owner' : 'member' }));
+    const memberRows = state.people.map(p => ({ tree_id: state.treeId, person_id: p.id, added_by: currentUser.id, role: personTreeRole(p) }));
     if (memberRows.length) { const { error } = await supabase.from('tree_members').upsert(memberRows, { onConflict: 'tree_id,person_id' }); if (error) throw error; }
     const relRows = state.relationships.map(r => ({ id: isUuid(r.id) ? r.id : crypto.randomUUID(), tree_id: state.treeId, person_a_id: r.from, person_b_id: r.to, relationship_type: r.type, created_by: currentUser.id, status: r.status === 'removed' ? 'removed' : 'active' }));
     if (relRows.length) { const { error } = await supabase.from('relationships').upsert(relRows, { onConflict: 'id' }); if (error) throw error; }
@@ -122,6 +122,15 @@ function esc(s) { return String(s).replace(/</g, "&lt;"); }
 function me() { return state.people.find(p => p.me); }
 function isStaff() { return state.account.role === "admin" || state.account.role === "support"; }
 function isAdmin() { return state.account.role === "admin"; }
+/* Per-tree admin role (distinct from the system-wide isStaff/isAdmin above).
+   Owner = created the tree. Admin = promoted by the owner, can add/edit
+   relatives in THIS tree only. Member = view-only for role management. */
+function personTreeRole(p) { return (p && p.treeRole) || (p && p.me ? "owner" : "member"); }
+function myTreeRole() { return personTreeRole(me()); }
+function isTreeOwner() { return myTreeRole() === "owner"; }
+function canEditTree() { return myTreeRole() === "owner" || myTreeRole() === "admin"; }
+function treeRoleLabel(r) { return r === "owner" ? "Owner" : r === "admin" ? "Admin" : "Member"; }
+function treeRoleBadgeClass(r) { return r === "owner" ? "sage" : r === "admin" ? "plum" : ""; }
 
 /* ==========================================================================
    Real Family Graph engine
@@ -263,7 +272,8 @@ function computeGenerations(rootId) {
 const NAV = [
   { group: "Family", items: [
     ["home", "Home", "🏠"], ["tree", "My Tree", "🌳"], ["people", "People", "👨‍👩‍👧"],
-    ["add", "Add Person", "➕"], ["merge", "Merge", "🔀"], ["relationship", "Relationship", "🔗"]
+    ["add", "Add Person", "➕"], ["merge", "Merge", "🔀"], ["relationship", "Relationship", "🔗"],
+    ["treeAdmins", "Tree Admins", "👑"]
   ]},
   { group: "Social", items: [
     ["wall", "Family Wall", "📝"], ["reels", "Reels", "🎬"], ["sharing", "Connections", "🔗🤝"]
@@ -275,7 +285,7 @@ const NAV = [
 const ADMIN_NAV = { group: "Admin", items: [ ["admin", "Admin & Safety", "🛡️"], ["production", "Production", "🚀"] ] };
 
 function navHTML(page) {
-  const groups = NAV.slice();
+  const groups = NAV.map(g => ({ group: g.group, items: g.items.filter(([id]) => id !== "add" || canEditTree()) }));
   if (isStaff()) groups.push(ADMIN_NAV);
   return groups.map(g => `<div class="navgroup"><div class="navgroup-label">${g.group}</div>${
     g.items.map(([id, label, icon]) => navItem(id, label, icon, page)).join("")
@@ -314,7 +324,7 @@ function render() {
   if (!loggedIn) { renderLogin(); return; }
   const page = (location.hash || "#home").slice(1);
   const app = document.getElementById("app");
-  const flatNav = NAV.flatMap(g => g.items).concat(isStaff() ? ADMIN_NAV.items : []);
+  const flatNav = NAV.flatMap(g => g.items).filter(([id]) => id !== "add" || canEditTree()).concat(isStaff() ? ADMIN_NAV.items : []);
   app.innerHTML = `<div class="shell">
     <header class="topbar">
       <div class="brand"><img src="/assets/logo.png" alt="FamilyTree" style="height:32px;width:32px;object-fit:contain;vertical-align:middle;margin-right:6px"> Family<em>Tree</em><small>V11</small></div>
@@ -337,13 +347,14 @@ function switchRole() {}
 function pageView(p) {
   const map = {
     home, tree, add, addRelative, people, merge, relationship, profile: () => profile(activeProfileId || me().id),
-    wall, reels, sharing, support, admin, production
+    wall, reels, sharing, support, admin, production, treeAdmins
   };
   if ((p === "admin" || p === "production") && !isStaff()) return accessDenied();
+  if ((p === "add" || p === "addRelative") && !canEditTree()) return accessDenied("Tree admin access required", "Only this tree's owner or admins can add relatives. Ask the owner to promote you from the Tree Admins page.");
   return (map[p] || home)();
 }
-function accessDenied() {
-  return `<div class="empty card"><span class="big">🔒</span><h3>Staff access required</h3><p class="muted">Switch the demo role selector above to Admin or Support to view this area.</p></div>`;
+function accessDenied(title, msg) {
+  return `<div class="empty card"><span class="big">🔒</span><h3>${esc(title || "Staff access required")}</h3><p class="muted">${esc(msg || "Switch the demo role selector above to Admin or Support to view this area.")}</p></div>`;
 }
 
 /* ---------------- home ---------------- */
@@ -441,7 +452,7 @@ function branchNode(p, isCenter) {
   if (!p) return "";
   const expanded = treeExpanded.has(p.id);
   const badgeBase = "position:absolute;top:-9px;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.25);z-index:2";
-  const addBadge = `<button type="button" title="${expanded ? "Close" : "Add relative"}" style="${badgeBase}left:-9px;border:2px solid #fff;background:${expanded ? "#e0602a" : "#f2793a"};color:#fff" onclick="event.stopPropagation();toggleTreeExpand('${p.id}')">${expanded ? "✕" : "＋"}</button>`;
+  const addBadge = canEditTree() ? `<button type="button" title="${expanded ? "Close" : "Add relative"}" style="${badgeBase}left:-9px;border:2px solid #fff;background:${expanded ? "#e0602a" : "#f2793a"};color:#fff" onclick="event.stopPropagation();toggleTreeExpand('${p.id}')">${expanded ? "✕" : "＋"}</button>` : "";
   const centerBadge = `<button type="button" title="Center tree on ${esc(p.name)}" style="${badgeBase}right:-9px;border:2px solid #fff;background:#fff" onclick="event.stopPropagation();centerTree('${p.id}')">🌳</button>`;
   return `<div class="branch-node ${p.me ? "me" : ""} ${isCenter && !p.me ? "me" : ""} ${p.status === "unclaimed" ? "unclaimed" : ""}" id="${nodeElId(p.id)}" style="position:relative" ondblclick="openProfile('${p.id}')">
     ${addBadge}${centerBadge}
@@ -596,6 +607,7 @@ async function findPerson() {
   else toast("Person not found");
 }
 function createPerson() {
+  if (!canEditTree()) { toast("Only this tree's owner or admins can add people"); return; }
   const name = document.getElementById("pname").value.trim();
   if (!name) { toast("Enter a name"); return; }
   const id = crypto.randomUUID();
@@ -618,6 +630,7 @@ function createPerson() {
 
 /* ---------------- Add Relative — rich form (photo, contact, life details) ---------------- */
 function openAddRelative(targetId, typeKey) {
+  if (!canEditTree()) { toast("Only this tree's owner or admins can add relatives"); return; }
   addRelativeTargetId = targetId;
   addRelativeTypeKey = typeKey;
   addRelativePhotoFile = null;
@@ -710,6 +723,7 @@ function addRelative() {
   </div>`;
 }
 async function saveAddRelative() {
+  if (!canEditTree()) { toast("Only this tree's owner or admins can add relatives"); return; }
   const first = document.getElementById("arFirst").value.trim();
   const surname = document.getElementById("arSurname").value.trim();
   if (!first || !surname) { toast("First name and surname are required"); return; }
@@ -1049,6 +1063,48 @@ function admin() {
 }
 function reviewItem(btn) { btn.textContent = "Reviewed"; btn.disabled = true; }
 
+/* ---------------- Tree Admins — per-tree admin roles ---------------- */
+/* An "admin" here can add/edit relatives inside THIS family tree only —
+   separate from state.account.role (system-wide staff/admin). The owner
+   (whoever created the tree) is the only one who can promote/demote. */
+function treeAdmins() {
+  const owners = state.people.filter(p => personTreeRole(p) === "owner");
+  const admins = state.people.filter(p => personTreeRole(p) === "admin");
+  const members = state.people.filter(p => personTreeRole(p) === "member");
+  const rowFor = p => {
+    const role = personTreeRole(p);
+    const canManage = isTreeOwner() && role !== "owner";
+    return `<div class="row">
+      <span style="display:flex;align-items:center;gap:10px">${avatarHTML(p)}<span>${esc(p.name)}${p.me ? " <span class='muted' style='font-size:12px'>(You)</span>" : ""}</span></span>
+      <span style="display:flex;align-items:center;gap:8px">
+        <span class="badge ${treeRoleBadgeClass(role)}">${treeRoleLabel(role)}</span>
+        ${canManage ? (role === "admin"
+          ? `<button class="ghost" onclick="setTreeRole('${p.id}','member')">Remove Admin</button>`
+          : `<button class="secondary" onclick="setTreeRole('${p.id}','admin')">Make Admin</button>`) : ""}
+      </span>
+    </div>`;
+  };
+  return `<div class="page-head"><h2>👑 Tree Admins</h2><p class="muted">People who can add and edit relatives in <b>${esc(me()?.name || "your")}'s</b> family tree. Admins can manage this tree only — not other people's trees.</p></div>
+  ${!isTreeOwner() ? `<div class="card" style="margin-bottom:14px"><span class="muted">Only the tree owner (${esc(owners[0]?.name || "—")}) can promote or remove admins. You can view the list below.</span></div>` : ""}
+  <div class="card"><h3>Owner</h3>${owners.length ? owners.map(rowFor).join("") : "<p class='muted'>No owner set.</p>"}</div>
+  <div class="card"><h3>Admins <span class="muted" style="font-size:12.5px;font-weight:400">— can add &amp; edit relatives in this tree</span></h3>
+    ${admins.length ? admins.map(rowFor).join("") : "<p class='muted'>No admins yet. Promote a family member below.</p>"}
+  </div>
+  <div class="card"><h3>Members</h3>
+    ${members.length ? members.map(rowFor).join("") : "<p class='muted'>No other members yet.</p>"}
+  </div>`;
+}
+function setTreeRole(personId, role) {
+  if (!isTreeOwner()) { toast("Only the tree owner can change admin roles"); return; }
+  const p = personById(personId);
+  if (!p) return;
+  if (personTreeRole(p) === "owner") { toast("Can't change the owner's role"); return; }
+  p.treeRole = role;
+  save();
+  toast(role === "admin" ? `${p.name} is now an admin of this tree` : `${p.name} is no longer an admin`);
+  go("treeAdmins");
+}
+
 /* ---------------- V11: production dashboard ---------------- */
 function production() {
   return `<div class="page-head"><h2>🚀 Production Dashboard</h2><p class="muted">System health and release pipeline.</p></div>
@@ -1084,7 +1140,7 @@ Object.assign(window, {
   invite, likePost, likeReel, logout, openAddRelative, openProfile, openTicket,
   phoneLogin, pickAddRelativePhoto, publishPost, requestMerge, resolveTicket,
   reviewItem, saveAddRelative, sendReply, shareId, toast, treeFocusMe,
-  treeReset, treeZoom, toggleTreeExpand, treeSearch
+  treeReset, treeZoom, toggleTreeExpand, treeSearch, setTreeRole
 });
 
 window.addEventListener("hashchange", render);
@@ -1120,6 +1176,7 @@ async function loadProductionState(user) {
   const treeId = state.treeId;
   const { data: members, error: me } = await supabase.from('tree_members').select('person_id, role').eq('tree_id', treeId); if (me) throw me;
   const memberIds = (members || []).map(x => x.person_id);
+  const memberRoleById = Object.fromEntries((members || []).map(x => [x.person_id, x.role]));
   let people = [];
   if (memberIds.length) { const { data, error } = await supabase.from('persons').select('*').in('id', memberIds); if (error) throw error; people = data || []; }
   if (!people.some(p => p.claimed_by === user.id)) {
@@ -1145,7 +1202,7 @@ async function loadProductionState(user) {
   const admin = await supabase.from('admin_roles').select('role').eq('profile_id', user.id).limit(1).maybeSingle();
   state.account.role = admin.data?.role || (staff.data ? 'support' : 'member');
   const peopleById = Object.fromEntries(people.map(p=>[p.id,p]));
-  state.people = people.map(p=>({id:p.id,personCode:p.person_code,name:p.full_name,gender:p.gender,status:p.status,dob:p.dob,mobile:p.mobile,email:p.email,avatar_url:p.avatar_url,me:p.claimed_by===user.id,claimed_by:p.claimed_by,created_by:p.created_by,privacy:'Family only',nickname:p.nickname,showNickname:p.show_nickname,birthPlace:p.birth_place,currentPlace:p.current_place,lifeStatus:p.life_status,details:p.details||{}}));
+  state.people = people.map(p=>({id:p.id,personCode:p.person_code,name:p.full_name,gender:p.gender,status:p.status,dob:p.dob,mobile:p.mobile,email:p.email,avatar_url:p.avatar_url,me:p.claimed_by===user.id,claimed_by:p.claimed_by,created_by:p.created_by,privacy:'Family only',nickname:p.nickname,showNickname:p.show_nickname,birthPlace:p.birth_place,currentPlace:p.current_place,lifeStatus:p.life_status,details:p.details||{},treeRole:memberRoleById[p.id]||(p.claimed_by===user.id?'owner':'member')}));
   state.relationships=relationships;
   state.posts=(posts||[]).map(p=>({id:p.id,author:p.author_profile_id===user.id?state.account.name:'Family Member',text:p.body||'',likes:0,comments:0,author_profile_id:p.author_profile_id}));
   state.events=(events||[]).map(e=>({id:e.id,emoji:'🎉',title:e.title,sub:e.event_date + ' · ' + e.event_type}));
