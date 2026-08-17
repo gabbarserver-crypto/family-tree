@@ -1,0 +1,178 @@
+FAMILY TREE APP — VERSION ROADMAP
+
+V1 — Foundation / Prototype
+Status: Completed
+- Login screen demo
+- Mobile OTP demo
+- Google/Facebook login demo buttons
+- User-specific tree concept
+- Unique Person ID
+- Add person
+- Unclaimed profile concept
+- Duplicate merge request UI
+- Basic relationship finder UI
+- Basic multi-admin dashboard
+- Local demo storage
+
+V2 — Real Account + Database Foundation
+Status: Current
+- Supabase database schema
+- Supabase Auth
+- Real Google OAuth
+- Real Facebook OAuth
+- Real mobile OTP
+- Account/profile separation
+- Person IDs stored permanently
+- User-specific family access
+- Family tree relationship tables
+- Connection requests
+- Unclaimed profile claim flow
+- OTP-based profile claiming
+- Basic notifications
+- Admin roles and permissions
+- Secure row-level access rules
+- Photo/profile storage foundation
+
+V3 — Advanced Family Tree
+Status: Current
+- Interactive graph tree
+- Zoom/pan/expand/collapse
+- Full parent/spouse/child/sibling relationships
+- Relationship path calculation
+- Relationship finder for any two people
+- Maternal/paternal side
+- Marriage/in-law relationships
+- Family branches
+- Search and filters
+
+V4 — Duplicate Detection + Merge Engine
+Status: Current
+- Automatic duplicate suggestions
+- Mobile/email matching
+- Name + DOB similarity
+- Profile comparison
+- Select which data to keep
+- Merge relationships
+- Remove duplicate relationships
+- Merge audit history
+- Restore/recovery mechanism
+- User/admin approval workflow
+
+V5 — Family Profiles + Media
+Status: Current
+- Full person profiles
+- Photos
+- Albums
+- Profile timeline
+- Family documents (with privacy controls)
+- Profile privacy
+- Family-only visibility
+- Selected-family visibility
+
+V6 — Family Wall + Events
+Status: Current
+- Family Wall
+- Posts
+- Likes/reactions
+- Comments
+- Birthday events
+- Engagement events
+- Marriage events
+- Anniversary events
+- New baby events
+- Graduation/achievement posts
+- Automatic upcoming-event reminders
+
+V7 — Supabase + Production Foundation
+Status: Current
+- Supabase schema and auth foundation
+- GitHub → Vercel deployment configuration
+- Secure environment-variable setup
+
+V8 — Family Reels
+- Short video upload
+- Vertical reels feed
+- Family-only reels
+- Likes/comments
+- Video moderation
+- Storage limits
+- Reporting
+
+V9 — Social Connections + Sharing
+Status: Current
+- Shareable family/person links
+- Invite relatives
+- QR/Unique ID sharing
+- Connection suggestions
+- Facebook profile linking
+- Optional social profile links
+- Family invitations
+
+V10 — Admin + Safety
+Status: Current
+- Super Admin
+- Admin
+- Moderator
+- User management
+- Reports
+- Content moderation
+- Merge dispute management
+- Connection dispute management
+- Audit logs
+- Blocking/suspension
+- Privacy controls
+- Backup/recovery tools
+
+V11 — Production / Scale + Support
+Status: Current
+- Support tickets
+- Support staff roles
+- User ↔ support chat
+- Attachments and ticket history
+- Production security hardening
+- Production security hardening
+- Reliability and backups
+- Performance and scaling
+- GitHub → Vercel release pipeline
+- Monitoring and recovery
+
+
+- Security audit
+- Database indexes
+- Storage optimization
+- Rate limiting
+- Notifications
+- Email/SMS infrastructure
+- Analytics
+- Error monitoring
+- Automated backups
+- Production deployment
+- App/PWA packaging
+- Final UI/UX polish
+
+IMPORTANT PRODUCT RULES
+1. ACCOUNT and PERSON are separate entities.
+2. Every person has a permanent Unique Person ID.
+3. A profile can exist before the real person claims it.
+4. Claiming requires OTP verification of the registered mobile number.
+5. Duplicate profiles can be merged with an approval workflow.
+6. Relationships belong to the family graph, not to the admin account.
+7. Each logged-in user sees only the family network they are authorized to see.
+8. Admins manage the system; they do not automatically become family members.
+9. Privacy must be built into the database from the beginning.
+10. Never expose private mobile numbers publicly.
+
+V2 BUILD ORDER
+1. Supabase project/database
+2. Auth providers
+3. Core database tables
+4. Row Level Security
+5. User/person linking
+6. Family relationships
+7. Unique ID lookup
+8. Connection requests
+9. Unclaimed profile + OTP claim
+10. Admin roles
+11. Notifications
+12. Test all permissions
+13. Deploy

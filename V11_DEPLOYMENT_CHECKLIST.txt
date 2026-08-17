@@ -1,0 +1,22 @@
+FAMILYTREE V11 — DEPLOYMENT ORDER
+
+1. Create Supabase DEVELOPMENT project.
+2. Run V7 schema.
+3. Run V8 reels migration.
+4. Run V9 sharing migration.
+5. Run V10 admin migration.
+6. Add and test RLS policies.
+7. Configure Google/Facebook/Phone OTP in Supabase Auth.
+8. Configure private Storage buckets and Storage RLS.
+9. Put project in GitHub.
+10. Import GitHub repo into Vercel.
+11. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.
+12. Deploy Preview.
+13. Test login, claim, family tree, merge, wall, reels, sharing and admin.
+14. Configure production domain.
+15. Create PRODUCTION Supabase project (recommended).
+16. Run migrations in production.
+17. Add production Vercel environment variables.
+18. Deploy production.
+19. Test backups/recovery.
+20. Enable monitoring and rate limits.
