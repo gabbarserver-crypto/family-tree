@@ -1,0 +1,29 @@
+FAMILY TREE V2 — SETUP NOTES
+
+This ZIP is the V2 planning/foundation package based on the V1 frontend prototype.
+
+Production integrations still require:
+- Supabase project URL and anon key
+- Google OAuth credentials
+- Facebook OAuth credentials
+- SMS/OTP provider configuration
+- Production environment variables
+
+Recommended stack:
+Frontend: Next.js
+Database/Auth/Storage: Supabase
+Hosting: Vercel
+
+Database entities to create first:
+profiles
+persons
+family_trees
+tree_members
+relationships
+connection_requests
+claim_requests
+merge_requests
+notifications
+admin_roles
+
+Do not put secret service-role keys in frontend code.
