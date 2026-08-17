@@ -115,21 +115,22 @@ function initials(n) { return n.split(" ").map(x => x[0]).slice(0, 2).join("").t
 function avatarHTML(p, cls) {
   cls = cls || "";
   if (p.avatar_url) return `<div class="avatar ${cls}" style="padding:0;overflow:hidden"><img src="${esc(p.avatar_url)}" alt="${esc(p.name)}" style="width:100%;height:100%;object-fit:cover;border-radius:inherit"></div>`;
-  const [bg, fg] = avatarPalette(p.id || p.name || "");
+  const [bg, fg] = avatarPalette(p);
   return `<div class="avatar ${cls}" style="background:${bg};color:${fg}">${initials(p.name)}</div>`;
 }
-/* Deterministic pastel color per person, purely from their id/name, so the
-   same person always gets the same tint (matches the multi-color initials
-   look used by other family-tree apps) without needing a stored color. */
-function avatarPalette(seed) {
+/* Gender-based tint (blue/rose, the common family-tree convention), with a
+   deterministic hash-based fallback palette when gender isn't set, so the
+   same person always gets the same color without needing to store one. */
+function avatarPalette(p) {
+  if (p.gender === "Male") return ["#e6effb", "#2f6fb8"];
+  if (p.gender === "Female") return ["#fbe4ec", "#c23572"];
   const palette = [
-    ["#fbe4ec", "#b23a63"], // rose
-    ["#e6effb", "#3a5fb2"], // blue
     ["#efe9f5", "#6b4a94"], // plum/lavender
     ["#e8f2ea", "#3f7a54"], // sage
     ["#fdf0dc", "#b8811f"], // gold
     ["#fde8df", "#c2612f"], // terracotta
   ];
+  const seed = p.id || p.name || "";
   let h = 0;
   for (let i = 0; i < String(seed).length; i++) h = (h * 31 + String(seed).charCodeAt(i)) >>> 0;
   return palette[h % palette.length];
