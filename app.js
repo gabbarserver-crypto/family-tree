@@ -88,7 +88,9 @@ const RELATION_TYPES = {
   wife: { label: "Wife", gender: "Female", edgeType: "spouse" },
   husband: { label: "Husband", gender: "Male", edgeType: "spouse" },
   son: { label: "Son", gender: "Male", edgeType: "child" },
-  daughter: { label: "Daughter", gender: "Female", edgeType: "child" }
+  daughter: { label: "Daughter", gender: "Female", edgeType: "child" },
+  father: { label: "Father", gender: "Male", edgeType: "parent" },
+  mother: { label: "Mother", gender: "Female", edgeType: "parent" }
 };
 
 function save() { return persistState(); }
@@ -382,13 +384,18 @@ function tree() {
   const spousePlaceholder = (centerPerson && spousesOf(centerId).length === 0)
     ? addRelativeNode(centerPerson.gender === "Female" ? "husband" : "wife", centerId) : "";
   const childPlaceholders = centerPerson ? (addRelativeNode("son", centerId) + addRelativeNode("daughter", centerId)) : "";
+  const parentPlaceholders = (centerPerson && parentsOf(centerId).length === 0)
+    ? (addRelativeNode("father", centerId) + addRelativeNode("mother", centerId)) : "";
   const hasChildGenRow = levels.includes(centerGen + 1);
+  const hasParentGenRow = levels.includes(centerGen - 1);
   let rows = levels.map(g => {
     let html = byGen[g].map(id => branchNode(personById(id), id === centerId)).join("");
     if (g === centerGen) html += spousePlaceholder;
     if (g === centerGen + 1) html += childPlaceholders;
+    if (g === centerGen - 1) html = parentPlaceholders + html;
     return `<div class="gen">${html}</div>`;
   }).join("");
+  if (!hasParentGenRow && centerPerson) rows = `<div class="gen">${parentPlaceholders}</div>` + rows;
   if (!hasChildGenRow && centerPerson) rows += `<div class="gen">${childPlaceholders}</div>`;
   return `<div class="page-head"><h2>My Family Tree</h2><p class="muted">Built live from the relationship graph — zoom, pan and tap any branch to re-center or open a profile.</p></div>
   <div class="tree-toolbar">
@@ -608,7 +615,8 @@ async function saveAddRelative() {
   });
 
   if (t.edgeType === "spouse") addEdge(addRelativeTargetId, id, "spouse");
-  else addEdge(addRelativeTargetId, id, "parent");
+  else if (t.edgeType === "parent") addEdge(id, addRelativeTargetId, "parent"); // new person is parent OF target
+  else addEdge(addRelativeTargetId, id, "parent"); // target is parent OF new person (child)
 
   save();
   toast(`${name} added as ${t.label}`);
