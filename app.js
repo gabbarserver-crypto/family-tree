@@ -448,7 +448,12 @@ function tree() {
     const extrasHtml = (extraByGen[g] || []).map(n => addRelativeNode(n.typeKey, n.targetId)).join("");
     return `<div class="gen" data-gen="${g}">${peopleHtml}${extrasHtml}</div>`;
   }).join("");
-  return `<div class="page-head"><h2>My Family Tree</h2><p class="muted">Built live from the relationship graph — zoom, pan and tap the ＋ badge on any card to add a relative, or the 🌳 badge to re-center.</p></div>
+  return `<div class="page-head">
+    <div class="view-switch" style="margin-bottom:12px">
+      <button class="active" onclick="go('tree')">Family Tree</button>
+      <button onclick="go('wall')">Family Wall</button>
+    </div>
+    <h2>My Family Tree</h2><p class="muted">Built live from the relationship graph — zoom, pan and tap the ＋ badge on any card to add a relative, or the 🌳 badge to re-center.</p></div>
   <div class="tree-toolbar">
     <input id="treeSearch" placeholder="Search by name or Person ID…" style="border:1px solid var(--line);border-radius:10px;padding:9px 12px;min-width:220px" list="treeSearchList" onchange="treeSearch(this.value)">
     <datalist id="treeSearchList">${state.people.map(p => `<option value="${p.name} (${p.id})">`).join("")}</datalist>
@@ -467,19 +472,18 @@ function tree() {
 
 function addRelativeNode(typeKey, targetId) {
   const t = RELATION_TYPES[typeKey];
-  return `<div class="branch-node add-node" id="${nodeElId(placeholderId(typeKey, targetId))}" style="border:2px dashed var(--line,#c9bfa8);background:transparent;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--muted,#8a8478);font-size:13px;text-align:center;min-height:64px" onclick="openAddRelative('${targetId}','${typeKey}')">+ Add ${t.label}</div>`;
+  return `<div class="branch-node add-node" id="${nodeElId(placeholderId(typeKey, targetId))}" onclick="openAddRelative('${targetId}','${typeKey}')">+ Add ${t.label}</div>`;
 }
 
 function branchNode(p, isCenter) {
   if (!p) return "";
   const expanded = treeExpanded.has(p.id);
-  const badgeBase = "position:absolute;top:-9px;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.2);z-index:2;";
-  const addBadge = canAddRelativeTo(p.id) ? `<button type="button" title="${expanded ? "Close" : "Add relative"}" style="${badgeBase}left:-9px;border:2px solid #fff;background:${expanded ? "#e0602a" : "#f2793a"};color:#fff" onclick="event.stopPropagation();toggleTreeExpand('${p.id}')">${expanded ? "✕" : "＋"}</button>` : "";
-  const centerBadge = `<button type="button" title="Center tree on ${esc(p.name)}" style="${badgeBase}right:-9px;border:2px solid #fff;background:#fff" onclick="event.stopPropagation();centerTree('${p.id}')">🌳</button>`;
+  const addBadge = canAddRelativeTo(p.id) ? `<button type="button" class="tree-badge left${expanded ? " open" : ""}" title="${expanded ? "Close" : "Add relative"}" onclick="event.stopPropagation();toggleTreeExpand('${p.id}')">${expanded ? "✕" : "＋"}</button>` : "";
+  const centerBadge = `<button type="button" class="tree-badge right" title="Center tree on ${esc(p.name)}" onclick="event.stopPropagation();centerTree('${p.id}')">🌳</button>`;
   const years = p.dob ? `${new Date(p.dob).getFullYear()} –` : "–";
   return `<div class="branch-node ${p.me ? "me" : ""} ${isCenter && !p.me ? "me" : ""}" id="${nodeElId(p.id)}" style="position:relative" ondblclick="openProfile('${p.id}')">
     ${addBadge}${centerBadge}
-    ${avatarHTML(p, "photo")}
+    ${avatarHTML(p, "photo" + (p.status !== "unclaimed" ? " claimed" : ""))}
     <strong>${p.name}</strong>
     <div class="mini">${years}${p.status === "unclaimed" ? " · Unclaimed" : ""}</div>
     <div class="mini rel">${deriveRelationship(me().id, p.id).label}</div>

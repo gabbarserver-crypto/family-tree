@@ -164,28 +164,58 @@ button:disabled{opacity:.55;cursor:default}
 .full{width:100%}
 
 /* ---------- family tree (signature view) ---------- */
-.tree-toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.tree-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+
+/* segmented Family Tree / Family Wall pill switch */
+.view-switch{display:inline-flex;background:var(--paper-raised);border:1px solid var(--line);border-radius:999px;padding:3px;gap:2px}
+.view-switch button{border:0;background:transparent;border-radius:999px;padding:8px 16px;font-size:13px;font-weight:700;color:var(--ink-soft);transition:background .15s,color .15s}
+.view-switch button.active{background:var(--gold);color:#fff;box-shadow:0 2px 6px rgba(184,129,31,.35)}
+
 .tree-canvas{
-  border:1px solid var(--line);border-radius:var(--radius-l);background:
-    radial-gradient(circle at 1px 1px,#e6dcc9 1px,transparent 1.6px) 0 0/22px 22px, var(--paper-raised);
+  border:1px solid var(--line);border-radius:var(--radius-l);
+  background:linear-gradient(135deg,#eaf3fb 0%,var(--paper) 55%,#fdf6e6 100%);
   min-height:540px;overflow:auto;padding:34px 10px;
 }
 .tree-stage{transform-origin:top center;transition:transform .18s ease-out}
-.gen{display:flex;justify-content:center;gap:26px;position:relative;padding-bottom:34px}
+.gen{display:flex;justify-content:center;gap:30px;position:relative;padding-bottom:38px}
 .gen::after{
   content:"";position:absolute;left:50%;bottom:0;width:2px;height:30px;background:var(--line);
 }
 .gen:last-child::after{display:none}
 .branch-node{
-  background:var(--paper-raised);border:1px solid var(--line);border-radius:14px;padding:14px 16px 12px;
-  min-width:128px;text-align:center;box-shadow:0 2px 8px rgba(36,24,50,.06);cursor:pointer;transition:border-color .15s,transform .1s,box-shadow .15s;
+  background:var(--paper-raised);border:1px solid var(--line);border-radius:16px;padding:16px 16px 13px;
+  min-width:132px;text-align:center;box-shadow:0 4px 14px rgba(41,58,74,.10);cursor:pointer;
+  transition:border-color .15s,transform .1s,box-shadow .15s;
 }
-.branch-node:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(36,24,50,.1)}
-.branch-node.me{border-color:var(--gold-deep);background:var(--gold-tint)}
-.branch-node .photo{width:56px;height:56px;border-radius:50%;background:var(--plum-tint);color:var(--plum-deep);display:grid;place-items:center;font-weight:700;font-size:16px;margin:0 auto 10px;box-shadow:0 0 0 3px var(--paper-raised),0 0 0 4px var(--line)}
-.branch-node strong{font-size:13.5px;display:block;color:var(--ink)}
-.branch-node .mini{font-size:11px;color:var(--ink-soft);margin-top:2px}
-.branch-node .mini.rel{color:var(--gold-deep);font-weight:600;text-transform:uppercase;letter-spacing:.03em;font-size:10px;margin-top:4px}
+.branch-node:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(41,58,74,.14)}
+.branch-node.me{background:var(--plum-deep);border-color:var(--plum-deep)}
+.branch-node.me strong,.branch-node.me .mini{color:#fff}
+.branch-node.me .mini.rel{color:var(--gold)}
+.branch-node.me .photo{box-shadow:0 0 0 3px var(--plum-deep),0 0 0 5px var(--gold)}
+.branch-node .photo{
+  width:58px;height:58px;border-radius:50%;background:var(--plum-tint);color:var(--plum-deep);
+  display:grid;place-items:center;font-weight:700;font-size:16px;margin:0 auto 10px;object-fit:cover;
+  box-shadow:0 0 0 3px var(--paper-raised),0 0 0 4px var(--line);
+}
+.branch-node .photo.claimed{box-shadow:0 0 0 3px var(--paper-raised),0 0 0 4px var(--sage)}
+.branch-node strong{font-size:13.5px;display:block;color:var(--ink);font-weight:700}
+.branch-node .mini{font-size:11px;color:var(--sage);font-weight:600;margin-top:2px}
+.branch-node .mini.rel{color:var(--gold-deep);font-weight:700;text-transform:uppercase;letter-spacing:.03em;font-size:10px;margin-top:4px}
+
+.tree-badge{
+  position:absolute;top:-9px;width:23px;height:23px;border-radius:50%;display:flex;align-items:center;
+  justify-content:center;font-size:12px;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.22);z-index:2;
+  border:2px solid #fff;
+}
+.tree-badge.left{left:-9px;background:var(--terracotta)}
+.tree-badge.left.open{background:var(--terracotta-deep,#a63f2c)}
+.tree-badge.right{right:-9px;background:var(--paper-raised);color:var(--plum)}
+
+.branch-node.add-node{
+  background:transparent;border:2px dashed var(--line);box-shadow:none;color:var(--ink-soft);
+  font-size:12.5px;font-weight:600;display:flex;align-items:center;justify-content:center;min-height:96px;
+}
+.branch-node.add-node:hover{border-color:var(--gold-deep);color:var(--gold-deep);transform:none;box-shadow:none}
 
 /* ---------- profile ---------- */
 .profile-head{display:grid;grid-template-columns:110px 1fr;gap:22px;align-items:start}
