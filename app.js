@@ -80,6 +80,16 @@ let currentUser = null;
 let treeScale = 1;
 let activeProfileId = null;
 let activeTicketId = null;
+let addRelativeTargetId = null;
+let addRelativeTypeKey = null;
+let addRelativePhotoFile = null;
+let addRelativePersonId = null;
+const RELATION_TYPES = {
+  wife: { label: "Wife", gender: "Female", edgeType: "spouse" },
+  husband: { label: "Husband", gender: "Male", edgeType: "spouse" },
+  son: { label: "Son", gender: "Male", edgeType: "child" },
+  daughter: { label: "Daughter", gender: "Female", edgeType: "child" }
+};
 
 function save() { return persistState(); }
 
@@ -87,7 +97,8 @@ async function persistState() {
   if (!supabase || !currentUser || !state.treeId) return;
   try {
     const peopleRows = state.people.map(p => ({
-      id: p.id, person_code: p.personCode || p.id, full_name: p.name, dob: normalizeDate(p.dob), gender: p.gender || null, mobile: p.mobile || null, email: p.email || null, avatar_url: p.avatar_url || null, status: p.status || 'unclaimed', claimed_by: p.claimed_by || (p.me ? currentUser.id : null), created_by: p.created_by || currentUser.id
+      id: p.id, person_code: p.personCode || p.id, full_name: p.name, dob: normalizeDate(p.dob), gender: p.gender || null, mobile: p.mobile || null, email: p.email || null, avatar_url: p.avatar_url || null, status: p.status || 'unclaimed', claimed_by: p.claimed_by || (p.me ? currentUser.id : null), created_by: p.created_by || currentUser.id,
+      nickname: p.nickname || null, show_nickname: !!p.showNickname, birth_place: p.birthPlace || null, current_place: p.currentPlace || null, life_status: p.lifeStatus || 'living', details: p.details || {}
     }));
     if (peopleRows.length) { const { error } = await supabase.from('persons').upsert(peopleRows, { onConflict: 'id' }); if (error) throw error; }
     const memberRows = state.people.map(p => ({ tree_id: state.treeId, person_id: p.id, added_by: currentUser.id, role: p.me ? 'owner' : 'member' }));
@@ -321,7 +332,7 @@ function switchRole() {}
 
 function pageView(p) {
   const map = {
-    home, tree, add, people, merge, relationship, profile: () => profile(activeProfileId || me().id),
+    home, tree, add, addRelative, people, merge, relationship, profile: () => profile(activeProfileId || me().id),
     wall, reels, sharing, support, admin, production
   };
   if ((p === "admin" || p === "production") && !isStaff()) return accessDenied();
@@ -366,7 +377,19 @@ function tree() {
       return (aSp === b ? -1 : bSp === a ? 1 : 0);
     });
   });
-  const rows = levels.map(g => `<div class="gen">${byGen[g].map(id => branchNode(personById(id), id === centerId)).join("")}</div>`).join("");
+  const centerPerson = personById(centerId);
+  const centerGen = gens[centerId];
+  const spousePlaceholder = (centerPerson && spousesOf(centerId).length === 0)
+    ? addRelativeNode(centerPerson.gender === "Female" ? "husband" : "wife", centerId) : "";
+  const childPlaceholders = centerPerson ? (addRelativeNode("son", centerId) + addRelativeNode("daughter", centerId)) : "";
+  const hasChildGenRow = levels.includes(centerGen + 1);
+  let rows = levels.map(g => {
+    let html = byGen[g].map(id => branchNode(personById(id), id === centerId)).join("");
+    if (g === centerGen) html += spousePlaceholder;
+    if (g === centerGen + 1) html += childPlaceholders;
+    return `<div class="gen">${html}</div>`;
+  }).join("");
+  if (!hasChildGenRow && centerPerson) rows += `<div class="gen">${childPlaceholders}</div>`;
   return `<div class="page-head"><h2>My Family Tree</h2><p class="muted">Built live from the relationship graph — zoom, pan and tap any branch to re-center or open a profile.</p></div>
   <div class="tree-toolbar">
     <input id="treeSearch" placeholder="Search by name or Person ID…" style="border:1px solid var(--line);border-radius:10px;padding:9px 12px;min-width:220px" list="treeSearchList" onchange="treeSearch(this.value)">
@@ -380,9 +403,13 @@ function tree() {
     <div class="tree-stage" id="treeStage">${rows || "<p class='muted'>No relationships recorded yet — add a parent, spouse or child to start the graph.</p>"}</div>
   </div>`;
 }
+function addRelativeNode(typeKey, targetId) {
+  const t = RELATION_TYPES[typeKey];
+  return `<div class="branch-node add-node" style="border:2px dashed var(--line,#c9bfa8);background:transparent;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--muted,#8a8478);font-size:13px;text-align:center;min-height:64px" onclick="openAddRelative('${targetId}','${typeKey}')">+ Add ${t.label}</div>`;
+}
 function branchNode(p, isCenter) {
   if (!p) return "";
-  return `<div class="branch-node ${p.me ? "me" : ""} ${isCenter && !p.me ? "me" : ""} ${p.status === "unclaimed" ? "unclaimed" : ""}" onclick="centerTree('${p.id}')" ondblclick="openProfile('${p.id}')"><div class="photo">${initials(p.name)}</div><strong>${p.name}</strong><div class="mini">${deriveRelationship(me().id, p.id).label}${p.status === "unclaimed" ? " · Unclaimed" : ""}</div></div>`;
+  return `<div class="branch-node ${p.me ? "me" : ""} ${isCenter && !p.me ? "me" : ""} ${p.status === "unclaimed" ? "unclaimed" : ""}" onclick="centerTree('${p.id}')" ondblclick="openProfile('${p.id}')">${avatarHTML(p, "photo")}<strong>${p.name}</strong><div class="mini">${deriveRelationship(me().id, p.id).label}${p.status === "unclaimed" ? " · Unclaimed" : ""}</div></div>`;
 }
 function centerTree(id) { treeCenterId = id; treeScale = 1; go("tree"); }
 function treeSearch(val) {
@@ -441,6 +468,152 @@ function createPerson() {
   toast(`Unclaimed profile created: ${id} — linked to the family graph`);
   treeCenterId = id;
   go("people");
+}
+
+/* ---------------- Add Relative — rich form (photo, contact, life details) ---------------- */
+function openAddRelative(targetId, typeKey) {
+  addRelativeTargetId = targetId;
+  addRelativeTypeKey = typeKey;
+  addRelativePhotoFile = null;
+  addRelativePersonId = crypto.randomUUID();
+  go("addRelative");
+}
+function pickAddRelativePhoto() {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/png,image/jpeg,image/webp,image/gif";
+  input.onchange = () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { toast("Please choose an image file"); return; }
+    if (file.size > 5 * 1024 * 1024) { toast("Image must be under 5MB"); return; }
+    addRelativePhotoFile = file;
+    const preview = document.getElementById("arPhotoPreview");
+    if (preview) preview.innerHTML = `<img src="${URL.createObjectURL(file)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`;
+  };
+  input.click();
+}
+function addRelative() {
+  const target = personById(addRelativeTargetId) || me();
+  const t = RELATION_TYPES[addRelativeTypeKey] || RELATION_TYPES.son;
+  return `<div class="page-head"><h2>Add ${esc(t.label)} to ${esc(target.name)}</h2><p class="muted">Fill in what you know — you can always add more later.</p></div>
+  <div class="card form">
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:6px">
+      <div id="arPhotoPreview" onclick="pickAddRelativePhoto()" style="width:64px;height:64px;border-radius:50%;background:var(--sand,#f1e9d8);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:22px;color:var(--muted,#8a8478);flex-shrink:0">+</div>
+      <button class="ghost" onclick="pickAddRelativePhoto()">Add a profile picture</button>
+    </div>
+    <div class="field"><label>Relationship type</label>
+      <select id="arRelType">${Object.entries(RELATION_TYPES).map(([k, v]) => `<option value="${k}" ${k === addRelativeTypeKey ? "selected" : ""}>${v.label}</option>`).join("")}</select>
+    </div>
+    <div class="field"><label>First Name *</label><input id="arFirst" placeholder="First name"></div>
+    <div class="field"><label>Middle Name</label><input id="arMiddle" placeholder="Optional"></div>
+    <div class="field"><label>Surname *</label><input id="arSurname" placeholder="Surname" value="${esc((target.name || "").split(" ").slice(-1)[0] || "")}"></div>
+    <div class="field"><label>Nickname</label><input id="arNickname" placeholder="Optional"></div>
+    <div class="field" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="arShowNick" style="width:auto"><label style="margin:0">Display nickname on tree instead of full name</label></div>
+    <div class="field"><label>Email ID</label><input id="arEmail" type="email" placeholder="Optional"></div>
+    <div class="field"><label>Phone Number</label><input id="arPhone" placeholder="+91 98XXXXXXXX"></div>
+    <div class="field"><label>Status</label>
+      <div style="display:flex;gap:16px">
+        <label style="display:flex;align-items:center;gap:6px;margin:0"><input type="radio" name="arStatus" value="living" checked style="width:auto">Living</label>
+        <label style="display:flex;align-items:center;gap:6px;margin:0"><input type="radio" name="arStatus" value="deceased" style="width:auto">Deceased</label>
+      </div>
+    </div>
+    <div class="field"><label>Birth Date</label><input id="arDob" type="date"></div>
+    <div class="field"><label>Birth Place</label><input id="arBirthPlace" placeholder="Optional"></div>
+    <div class="field"><label>Current Place</label><input id="arCurrentPlace" placeholder="Optional"></div>
+  </div>
+  <div class="card">
+    <details><summary>💍 Marriage Details</summary>
+      <div class="form" style="margin-top:10px">
+        <div class="field"><label>Spouse name</label><input id="arMarriageSpouse" placeholder="Optional"></div>
+        <div class="field"><label>Marriage date</label><input id="arMarriageDate" type="date"></div>
+      </div>
+    </details>
+    <details><summary>📖 Education History</summary>
+      <div class="form" style="margin-top:10px">
+        <div class="field"><label>Degree / qualification</label><input id="arEduDegree" placeholder="Optional"></div>
+        <div class="field"><label>Institute</label><input id="arEduInstitute" placeholder="Optional"></div>
+      </div>
+    </details>
+    <details><summary>💼 Work History</summary>
+      <div class="form" style="margin-top:10px">
+        <div class="field"><label>Company / occupation</label><input id="arWorkCompany" placeholder="Optional"></div>
+        <div class="field"><label>Role</label><input id="arWorkRole" placeholder="Optional"></div>
+      </div>
+    </details>
+    <details><summary>❤️ Medical History</summary>
+      <div class="form" style="margin-top:10px">
+        <div class="field"><label>Notes</label><input id="arMedicalNotes" placeholder="Optional"></div>
+      </div>
+    </details>
+    <details><summary>📋 Community Details</summary>
+      <div class="form" style="margin-top:10px">
+        <div class="field"><label>Caste / community</label><input id="arCommunityCaste" placeholder="Optional"></div>
+        <div class="field"><label>Gotra</label><input id="arCommunityGotra" placeholder="Optional"></div>
+      </div>
+    </details>
+    <details><summary>📞 Social Media</summary>
+      <div class="form" style="margin-top:10px">
+        <div class="field"><label>Facebook / Instagram handle</label><input id="arSocialHandle" placeholder="Optional"></div>
+      </div>
+    </details>
+  </div>
+  <div class="actions" style="margin-top:14px">
+    <button class="ghost" onclick="go('tree')">Cancel</button>
+    <button class="primary" onclick="saveAddRelative()">Add Relative</button>
+  </div>`;
+}
+async function saveAddRelative() {
+  const first = document.getElementById("arFirst").value.trim();
+  const surname = document.getElementById("arSurname").value.trim();
+  if (!first || !surname) { toast("First name and surname are required"); return; }
+  const middle = document.getElementById("arMiddle").value.trim();
+  const name = [first, middle, surname].filter(Boolean).join(" ");
+  const relTypeKey = document.getElementById("arRelType").value;
+  const t = RELATION_TYPES[relTypeKey];
+  const id = addRelativePersonId || crypto.randomUUID();
+  const lifeStatus = document.querySelector('input[name="arStatus"]:checked')?.value || "living";
+
+  let avatar_url;
+  if (addRelativePhotoFile && supabase && currentUser) {
+    try {
+      const ext = (addRelativePhotoFile.name.split(".").pop() || "jpg").toLowerCase();
+      const path = `${currentUser.id}/${id}-${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("avatars").upload(path, addRelativePhotoFile, { upsert: true, cacheControl: "3600" });
+      if (upErr) throw upErr;
+      const { data: pub } = supabase.storage.from("avatars").getPublicUrl(path);
+      avatar_url = pub.publicUrl;
+    } catch (e) { console.error("Relative photo upload failed", e); toast("Photo upload failed, saving without photo: " + e.message); }
+  }
+
+  state.people.push({
+    id, personCode: "P-" + Math.floor(10000 + Math.random() * 89999), name, gender: t.gender,
+    status: "unclaimed", created_by: currentUser?.id,
+    nickname: document.getElementById("arNickname").value.trim() || undefined,
+    showNickname: document.getElementById("arShowNick").checked,
+    email: document.getElementById("arEmail").value.trim() || undefined,
+    mobile: document.getElementById("arPhone").value.trim() || undefined,
+    dob: document.getElementById("arDob").value || undefined,
+    birthPlace: document.getElementById("arBirthPlace").value.trim() || undefined,
+    currentPlace: document.getElementById("arCurrentPlace").value.trim() || undefined,
+    lifeStatus, avatar_url,
+    details: {
+      marriage: { spouse: document.getElementById("arMarriageSpouse").value.trim(), date: document.getElementById("arMarriageDate").value },
+      education: { degree: document.getElementById("arEduDegree").value.trim(), institute: document.getElementById("arEduInstitute").value.trim() },
+      work: { company: document.getElementById("arWorkCompany").value.trim(), role: document.getElementById("arWorkRole").value.trim() },
+      medical: { notes: document.getElementById("arMedicalNotes").value.trim() },
+      community: { caste: document.getElementById("arCommunityCaste").value.trim(), gotra: document.getElementById("arCommunityGotra").value.trim() },
+      social: { handle: document.getElementById("arSocialHandle").value.trim() }
+    }
+  });
+
+  if (t.edgeType === "spouse") addEdge(addRelativeTargetId, id, "spouse");
+  else addEdge(addRelativeTargetId, id, "parent");
+
+  save();
+  toast(`${name} added as ${t.label}`);
+  treeCenterId = addRelativeTargetId;
+  go("tree");
 }
 
 /* ---------------- people ---------------- */
@@ -759,11 +932,12 @@ function production() {
    scoped to the module — they are NOT attached to window automatically
    the way classic <script> globals are. */
 Object.assign(window, {
-  acceptConnection, approveMerge, centerTree, changePhoto, compareMerge,
+  acceptConnection, addRelative, approveMerge, centerTree, changePhoto, compareMerge,
   createPerson, createTicket, findPerson, findRelation, go, googleLogin,
-  invite, likePost, likeReel, logout, openProfile, openTicket, phoneLogin,
-  publishPost, requestMerge, resolveTicket, reviewItem, sendReply,
-  shareId, toast, treeFocusMe, treeReset, treeZoom
+  invite, likePost, likeReel, logout, openAddRelative, openProfile, openTicket,
+  phoneLogin, pickAddRelativePhoto, publishPost, requestMerge, resolveTicket,
+  reviewItem, saveAddRelative, sendReply, shareId, toast, treeFocusMe,
+  treeReset, treeZoom
 });
 
 window.addEventListener("hashchange", render);
@@ -824,7 +998,7 @@ async function loadProductionState(user) {
   const admin = await supabase.from('admin_roles').select('role').eq('profile_id', user.id).limit(1).maybeSingle();
   state.account.role = admin.data?.role || (staff.data ? 'support' : 'member');
   const peopleById = Object.fromEntries(people.map(p=>[p.id,p]));
-  state.people = people.map(p=>({id:p.id,personCode:p.person_code,name:p.full_name,gender:p.gender,status:p.status,dob:p.dob,mobile:p.mobile,email:p.email,avatar_url:p.avatar_url,me:p.claimed_by===user.id,claimed_by:p.claimed_by,created_by:p.created_by,privacy:'Family only'}));
+  state.people = people.map(p=>({id:p.id,personCode:p.person_code,name:p.full_name,gender:p.gender,status:p.status,dob:p.dob,mobile:p.mobile,email:p.email,avatar_url:p.avatar_url,me:p.claimed_by===user.id,claimed_by:p.claimed_by,created_by:p.created_by,privacy:'Family only',nickname:p.nickname,showNickname:p.show_nickname,birthPlace:p.birth_place,currentPlace:p.current_place,lifeStatus:p.life_status,details:p.details||{}}));
   state.relationships=relationships;
   state.posts=(posts||[]).map(p=>({id:p.id,author:p.author_profile_id===user.id?state.account.name:'Family Member',text:p.body||'',likes:0,comments:0,author_profile_id:p.author_profile_id}));
   state.events=(events||[]).map(e=>({id:e.id,emoji:'🎉',title:e.title,sub:e.event_date + ' · ' + e.event_type}));
