@@ -378,6 +378,7 @@ function render() {
     <nav class="bottomnav">${flatNav.slice(0, 6).map(([id, label, icon]) => navItem(id, label, icon, page)).join("")}</nav>
   </div>`;
   if (page === "tree") requestAnimationFrame(drawTreeConnectors);
+  if (page === "profile") requestAnimationFrame(() => loadMemories(activeProfileId || me()?.id));
 }
 function switchRole() {}
 
@@ -1164,6 +1165,46 @@ function people() {
 
 /* ---------------- V5: profile ---------------- */
 function openProfile(id) { activeProfileId = id; go("profile"); }
+/* ---------------- memories: family members can write on a person's profile ---------------- */
+let memoriesPersonId = null;
+function memoriesCardHTML(p) {
+  const gone = p.lifeStatus === "deceased";
+  return `<div class="card"><h3>${gone ? "🕯️ In Memory of " + esc(p.name) : "💭 Memories of " + esc(p.name)}</h3>
+    <p class="muted" style="font-size:13px;margin-bottom:10px">${gone ? "Share a memory, a story or a few words for them." : "Write a memory or a few kind words. Family members who can see this profile can read it."}</p>
+    <div id="memoriesBox"><p class="muted">Loading…</p></div></div>`;
+}
+async function loadMemories(personId) {
+  const box = document.getElementById("memoriesBox"); if (!box) return;
+  memoriesPersonId = personId;
+  if (!supabase || !currentUser) { box.innerHTML = '<p class="muted">Sign in to see memories.</p>'; return; }
+  const { data, error } = await supabase.rpc("list_person_memories", { p_person_id: personId });
+  const now = document.getElementById("memoriesBox");
+  if (!now || memoriesPersonId !== personId) return; // user navigated away
+  if (error) { now.innerHTML = `<p class="muted">${/list_person_memories|function|schema cache/i.test(error.message) ? "Run person-memories.sql in Supabase first" : esc(error.message)}</p>`; return; }
+  const p = personById(personId);
+  const list = (data || []).map(m => `<div class="row" style="align-items:flex-start"><span style="flex:1">
+      <b>${esc(m.author_name || "Family member")}</b> <span class="muted" style="font-size:12.5px">· ${esc(fmtDate(m.created_at))}</span>
+      <div style="white-space:pre-wrap;margin-top:4px">${esc(m.body)}</div></span>
+      ${m.can_delete ? `<button class="ghost" title="Delete" onclick="deleteMemory('${esc(m.id)}')">🗑</button>` : ""}</div>`).join("");
+  now.innerHTML = `<div class="field"><textarea id="memText" rows="3" maxlength="2000" placeholder="Write a memory of ${esc(p ? p.name : "them")}…" style="width:100%;resize:vertical"></textarea></div>
+    <div class="actions" style="margin:8px 0 14px"><button class="primary" onclick="addMemory('${esc(personId)}')">Post memory</button></div>
+    ${list || '<p class="muted">No memories yet. Be the first to write one.</p>'}`;
+}
+async function addMemory(personId) {
+  const t = document.getElementById("memText"); const body = (t?.value || "").trim();
+  if (!body) { toast("Write something first"); return; }
+  const { error } = await supabase.rpc("add_person_memory", { p_person_id: personId, p_body: body });
+  if (error) { toast(error.message); return; }
+  toast("Memory added");
+  loadMemories(personId);
+}
+async function deleteMemory(id) {
+  if (!confirm("Delete this memory?")) return;
+  const { error } = await supabase.rpc("delete_person_memory", { p_id: id });
+  if (error) { toast(error.message); return; }
+  loadMemories(memoriesPersonId);
+}
+
 function profile(id) {
   const p = state.people.find(x => x.id === id) || me();
   return `<div class="page-head"><h2>Profile</h2><p class="muted">Person profile &amp; media.</p></div>
@@ -1182,6 +1223,7 @@ function profile(id) {
     </div>
   </div>
   ${canEditPerson(p) ? personDetailsCard(p) : ""}
+  ${memoriesCardHTML(p)}
   <div class="card"><h3>Photos &amp; Albums</h3><div class="photo-grid">
     <div class="album">📷</div><div class="album">👨‍👩‍👧</div><div class="album">🎉</div>
   </div>
@@ -1717,6 +1759,7 @@ Object.assign(window, {
   reviewItem, saveAddRelative, sendReply, shareId, toast, treeFocusMe,
   treeReset, treeZoom, toggleTreeExpand, treeSearch, setTreeRole,
   setAddRelativeMode, refreshExistingOptions, openMyProfile, saveProfileEdits, openEditProfile, closeEditProfile, openProfilePopup, openFullProfile, cancelEditProfile, deletePerson, searchRelativeByUid, linkByUniqueId, approveIncoming, rejectIncoming,
+  loadMemories, addMemory, deleteMemory,
   runClaimSearch, requestClaim, cancelClaim, startFreshProfile, approveClaim, rejectClaim
 });
 
