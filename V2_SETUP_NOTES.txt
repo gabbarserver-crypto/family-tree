@@ -10,7 +10,7 @@ Production integrations still require:
 - Production environment variables
 
 Recommended stack:
-Frontend: Next.js
+Frontend: Vite + vanilla JS (current app; Next.js was the original V2 plan)
 Database/Auth/Storage: Supabase
 Hosting: Vercel
 

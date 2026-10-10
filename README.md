@@ -25,8 +25,7 @@ Support, and Admin experiences in this demo without a real auth backend.
   (display) + Inter (body), organic branch-style tree connectors as the
   signature visual element.
 - Responsive: sidebar nav on desktop, bottom tab bar on mobile.
-- All original demo files (`v3-tree-demo.html`, `v4-merge-demo.html`, etc.)
-  are kept in this package for reference but are no longer needed — their
+- The original standalone demo files are not included in this package; their
   functionality now lives inside `app.js`.
 
 ## Added (from the original V11 Support package)
@@ -40,7 +39,8 @@ Support, and Admin experiences in this demo without a real auth backend.
 - Updated V11 roadmap
 
 ## Supabase
-Run `supabase-v11-support.sql` after the earlier V7/V8/V9/V10 migrations.
+Run `supabase-v11-support.sql` after the earlier V7/V8/V9/V10 migrations
+(these `.sql` files are NOT in this zip — keep them in your repo and review their RLS policies before going live).
 
 Create a private Storage bucket:
 `support-attachments`
@@ -49,3 +49,9 @@ Then add Storage RLS policies.
 
 ## Privacy
 Support staff are not family members. Support access must be limited to the ticket and information needed to resolve it.
+
+
+## Security notes
+- Staff/admin screens are hidden client-side only. Real protection must come from Supabase Row Level Security on `support_tickets`, `merge_requests`, `admin_roles`, `support_staff`, etc.
+- All user-entered text rendered via `innerHTML` must go through `esc()` (now escapes `& < > " '`).
+- TODO: make merge approval a single atomic Supabase RPC instead of delete + per-row upsert from the browser.

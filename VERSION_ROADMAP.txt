@@ -130,7 +130,6 @@ Status: Current
 - User ↔ support chat
 - Attachments and ticket history
 - Production security hardening
-- Production security hardening
 - Reliability and backups
 - Performance and scaling
 - GitHub → Vercel release pipeline
