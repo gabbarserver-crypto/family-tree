@@ -303,7 +303,11 @@ function computeGenerations(rootId) {
   while (queue.length) {
     const cur = queue.shift();
     const g = gen[cur];
-    parentsOf(cur).forEach(id => { if (!(id in gen)) { gen[id] = g - 1; queue.push(id); } });
+    // A relative who has their OWN account/tree (e.g. my grandmother) is shown as a card, but their own
+    // ancestors/siblings are NOT pulled into my tree. That branch opens only via the top-right tree icon on their card.
+    const cp = personById(cur) || {};
+    const ownTreeBoundary = !treeViewing && cur !== rootId && !!cp.claimed_by && !cp.me && cp.claimed_by !== (currentUser && currentUser.id);
+    if (!ownTreeBoundary) parentsOf(cur).forEach(id => { if (!(id in gen)) { gen[id] = g - 1; queue.push(id); } });
     childrenOf(cur).forEach(id => { if (!(id in gen)) { gen[id] = g + 1; queue.push(id); } });
     spousesOf(cur).forEach(id => { if (!(id in gen)) { gen[id] = g; queue.push(id); } });
   }
@@ -390,6 +394,7 @@ function render() {
     <nav class="bottomnav">${flatNav.slice(0, 6).map(([id, label, icon]) => navItem(id, label, icon, page)).join("")}</nav>
   </div>`;
   if (page === "tree") requestAnimationFrame(drawTreeConnectors);
+  if (page === "merge") mergeInitSelects();
   if (page === "profile") requestAnimationFrame(() => loadMemories(activeProfileId || me()?.id));
 }
 function switchRole() {}
@@ -1632,58 +1637,182 @@ function changePhoto(id) {
 }
 
 /* ---------------- V4: merge ---------------- */
+function normName(s) { return String(s || "").toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim(); }
+function sameNameLoose(a, b) {
+  const x = normName(a).split(" ").filter(Boolean), y = normName(b).split(" ").filter(Boolean);
+  if (!x.length || !y.length) return false;
+  if (x.join(" ") === y.join(" ")) return true;
+  if ([...x].sort().join(" ") === [...y].sort().join(" ")) return true;
+  return x.length > 1 && y.length > 1 && x[0] === y[0] && x[x.length - 1] === y[y.length - 1];
+}
+function mergeCandidates() { return state.people.filter(p => !p.external && p.status !== "merged" && !(p.details && p.details.deleted)); }
+function personHint(p) {
+  const bits = [];
+  const par = parentsOf(p.id).map(personById).filter(Boolean).map(x => x.name);
+  const sp = spousesOf(p.id).map(personById).filter(Boolean).map(x => x.name);
+  const ch = childrenOf(p.id).length;
+  if (par.length) bits.push("child of " + par.join(" & "));
+  if (sp.length) bits.push("spouse of " + sp.join(", "));
+  if (ch) bits.push(ch + " child" + (ch > 1 ? "ren" : ""));
+  if (p.dob) bits.push("b. " + p.dob);
+  if (p.details && p.details.gedcom_id) bits.push("imported");
+  return bits.join(" · ") || "no details";
+}
+function mergeScore(p) {
+  let s = 0;
+  if (p.me) s += 1000;
+  if (p.claimed_by) s += 500;
+  ["dob", "mobile", "email", "avatar_url", "birthPlace", "currentPlace"].forEach(k => { if (p[k]) s += 10; });
+  s += state.relationships.filter(r => r.from === p.id || r.to === p.id).length;
+  return s;
+}
+/* Group likely duplicates (same / near-same name) using union-find. */
+function findDuplicateGroups() {
+  const list = mergeCandidates();
+  const parent = {}; list.forEach(p => parent[p.id] = p.id);
+  const find = x => parent[x] === x ? x : (parent[x] = find(parent[x]));
+  for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+    const a = list[i], b = list[j];
+    if (a.gender && b.gender && a.gender !== b.gender) continue;
+    if (sameNameLoose(a.name, b.name)) parent[find(a.id)] = find(b.id);
+  }
+  const groups = {};
+  list.forEach(p => { (groups[find(p.id)] = groups[find(p.id)] || []).push(p); });
+  return Object.values(groups).filter(g => g.length > 1).map(g => {
+    g.sort((x, y) => mergeScore(y) - mergeScore(x));
+    return { keep: g[0], remove: g.slice(1) };
+  });
+}
+function canMergeDirect() { return canEditTree() || isStaff(); }
+
 function merge() {
-  const opts = state.people.map(p => `<option value="${p.id}">${esc(p.name)} — ${p.id}</option>`).join("");
-  return `<div class="page-head"><h2>Duplicate Merge</h2><p class="muted">Select two profiles to compare and create a merge request.</p></div>
+  const people = mergeCandidates().slice().sort((a, b) => a.name.localeCompare(b.name));
+  const opt = p => `<option value="${esc(p.id)}">${esc(p.name)}${p.me ? " (You)" : ""} — ${esc(personHint(p))}</option>`;
+  const optsA = people.map(opt).join("");
+  const groups = findDuplicateGroups();
+  const direct = canMergeDirect();
+  const dupCard = groups.length ? `<div class="card">
+    <h3>Suggested duplicates (${groups.length})</h3>
+    <p class="muted">Same naam wale profiles mile. Jo merge karne hain unhe tick karo — pehla naam (✓ Keep) rakha jayega, baaki uske andar merge honge.</p>
+    ${groups.map((g, i) => `<div class="row" style="align-items:flex-start">
+      <label style="display:flex;gap:10px;align-items:flex-start;flex:1;cursor:pointer">
+        <input type="checkbox" class="dupchk" value="${i}" checked style="margin-top:4px">
+        <span><strong>✓ Keep: ${esc(g.keep.name)}${g.keep.me ? " (You)" : ""}</strong> <span class="muted">— ${esc(personHint(g.keep))}</span>
+        ${g.remove.map(r => `<br><span class="muted">↳ merge: ${esc(r.name)} — ${esc(personHint(r))}</span>`).join("")}</span>
+      </label></div>`).join("")}
+    <div style="margin-top:12px"><button class="primary" onclick="mergeSelectedGroups()">${direct ? "Merge selected now" : "Send merge requests"}</button></div>
+  </div>` : `<div class="card"><h3>Suggested duplicates</h3><p class="muted">Koi duplicate profile nahi mila.</p></div>`;
+  return `<div class="page-head"><h2>Duplicate Merge</h2><p class="muted">Duplicate profiles ko ek mein jodo. Saare rishte (relationships) kept profile par shift ho jayenge.</p></div>
+  ${dupCard}
   <div class="card form">
-    <div class="field"><label>Profile A</label><select id="ma">${opts}</select></div>
-    <div class="field"><label>Profile B</label><select id="mb">${opts}</select></div>
+    <h3>Manual merge</h3>
+    <div class="field"><label>Profile A</label><select id="ma">${optsA}</select></div>
+    <div class="field"><label>Profile B</label><select id="mb">${optsA}</select></div>
     <button class="secondary" style="justify-self:start" onclick="compareMerge()">Compare Profiles</button>
   </div>
   <div id="mergeCompare"></div>
-  <div class="card"><h3>Requests</h3>${state.mergeRequests.length ? state.mergeRequests.map((r, i) => `<div class="row"><span>${esc(r.a)} ↔ ${esc(r.b)}</span><span class="badge ${r.status === "Merged" ? "sage" : ""}">${esc(r.status)}</span>${r.status === "Pending" && isStaff() ? `<button class="secondary" onclick="approveMerge(${i})">Approve &amp; Merge</button>` : ""}</div>`).join("") : "<p class='muted'>No requests yet.</p>"}</div>`;
+  <div class="card"><h3>Requests</h3>${state.mergeRequests.length ? state.mergeRequests.map((r, i) => `<div class="row"><span>${esc(r.a)} ↔ ${esc(r.b)}</span><span class="badge ${r.status === "Merged" ? "sage" : ""}">${esc(r.status)}</span>${r.status === "Pending" && (isStaff() || canEditTree()) ? `<button class="secondary" onclick="approveMerge(${i})">Approve &amp; Merge</button>` : ""}</div>`).join("") : "<p class='muted'>No requests yet.</p>"}</div>`;
+}
+/* Make Profile B default to a different person than A so "Compare" works straight away. */
+function mergeInitSelects() {
+  const a = document.getElementById("ma"), b = document.getElementById("mb");
+  if (a && b && b.options.length > 1 && a.value === b.value) b.selectedIndex = 1;
 }
 function compareMerge() {
-  const a = state.people.find(p => p.id === document.getElementById("ma").value);
-  const b = state.people.find(p => p.id === document.getElementById("mb").value);
+  const a = personById(document.getElementById("ma").value);
+  const b = personById(document.getElementById("mb").value);
   const box = document.getElementById("mergeCompare");
-  if (a.id === b.id) { box.innerHTML = `<div class="card"><p class="muted">Choose two different profiles.</p></div>`; return; }
+  if (!a || !b) return;
+  if (a.id === b.id) { box.innerHTML = `<div class="card"><p class="muted">Do alag profiles chuno (A aur B same hain).</p></div>`; return; }
   const same = (x, y) => x && y && x === y;
   const rowField = (label, av, bv) => `<div class="row"><span class="muted">${label}</span><span>${esc(av) || "—"}</span><span>${esc(bv) || "—"}</span></div>`;
   const matches = [], conflicts = [];
   if (same(a.dob, b.dob)) matches.push("DOB"); else if (a.dob || b.dob) conflicts.push("DOB");
   if (same(a.mobile, b.mobile)) matches.push("mobile"); else if (a.mobile || b.mobile) conflicts.push("mobile");
-  if (a.name !== b.name) conflicts.push("display name"); else matches.push("name");
+  if (normName(a.name) !== normName(b.name)) conflicts.push("display name"); else matches.push("name");
+  const names = id => parentsOf(id).map(personById).filter(Boolean).map(x => x.name).join(", ");
+  const spouses = id => spousesOf(id).map(personById).filter(Boolean).map(x => x.name).join(", ");
+  const keepA = mergeScore(a) >= mergeScore(b);
   box.innerHTML = `<div class="card">
     <div class="row"><span></span><strong>${esc(a.name)}</strong><strong>${esc(b.name)}</strong></div>
-    ${rowField("DOB", a.dob, b.dob)}${rowField("Mobile", a.mobile, b.mobile)}${rowField("Father", a.father, b.father)}
+    ${rowField("DOB", a.dob, b.dob)}${rowField("Mobile", a.mobile, b.mobile)}${rowField("Parents", names(a.id), names(b.id))}${rowField("Spouse", spouses(a.id), spouses(b.id))}
     ${matches.length ? `<div class="badge sage" style="margin-top:10px">✓ Matching: ${matches.join(", ")}</div>` : ""}
     ${conflicts.length ? `<div class="badge terracotta" style="margin-top:8px;margin-left:6px">! Conflict: ${conflicts.join(", ")}</div>` : ""}
     <hr class="divider">
-    <label><input type="radio" name="keepname" value="${a.id}" checked> Keep "${esc(a.name)}"</label><br>
-    <label><input type="radio" name="keepname" value="${b.id}"> Keep "${esc(b.name)}"</label>
-    <p class="muted" style="margin-top:8px">All relationship-graph edges will be redirected onto the kept profile and duplicate edges removed.</p>
-    <button class="primary" onclick="requestMerge('${a.id}','${b.id}')">Create Merge Request</button>
+    <label><input type="radio" name="keepname" value="${esc(a.id)}" ${keepA ? "checked" : ""}> Keep "${esc(a.name)}"</label><br>
+    <label><input type="radio" name="keepname" value="${esc(b.id)}" ${keepA ? "" : "checked"}> Keep "${esc(b.name)}"</label>
+    <p class="muted" style="margin-top:8px">Saare rishte kept profile par shift honge, duplicate edges hat jayenge, aur khali fields (DOB, mobile, photo…) dusre profile se bhar jayengi.</p>
+    <button class="primary" onclick="requestMerge('${esc(a.id)}','${esc(b.id)}')">${canMergeDirect() ? "Merge now" : "Create Merge Request"}</button>
   </div>`;
+}
+/* Core merge: moves edges + empty fields onto kept person, soft-removes the duplicate. */
+async function performMerge(keptId, removedId) {
+  let kept = personById(keptId), removed = personById(removedId);
+  if (!kept || !removed || kept.id === removed.id) return false;
+  if (removed.me) { [kept, removed] = [removed, kept]; }          // never remove the signed-in user's own profile
+  if (kept.external || removed.external) { toast("Dusre tree ke profile merge nahi ho sakte"); return false; }
+  ["dob", "mobile", "email", "avatar_url", "gender", "birthPlace", "currentPlace", "nickname"].forEach(k => { if (!kept[k] && removed[k]) kept[k] = removed[k]; });
+  kept.details = { ...(removed.details || {}), ...(kept.details || {}) };
+  kept.details.merged_from = [...(kept.details.merged_from || []), removed.id];
+  reassignEdges(removed.id, kept.id);
+  if (supabase) {
+    const { error: re } = await supabase.from("relationships").delete().eq("tree_id", state.treeId).or(`person_a_id.eq.${removed.id},person_b_id.eq.${removed.id}`);
+    if (re) { toast(re.message); return false; }
+    const rdetails = { ...(removed.details || {}), deleted: true, merged_into: kept.id };
+    let { error: pe } = await supabase.from("persons").update({ status: "merged", merged_into_person_id: kept.id, details: rdetails }).eq("id", removed.id);
+    if (pe) { ({ error: pe } = await supabase.from("persons").update({ details: rdetails }).eq("id", removed.id)); }
+    if (pe) { toast(pe.message); return false; }
+    state.people = state.people.filter(p => p.id !== removed.id);
+    await save();                                                   // writes kept person + re-pointed relationships
+    try { await supabase.from("merge_requests").insert({ source_person_id: removed.id, target_person_id: kept.id, requested_by: currentUser.id, status: "completed", reviewed_by: currentUser.id }); } catch (e) { /* audit row is best-effort */ }
+  } else {
+    state.people = state.people.filter(p => p.id !== removed.id);
+  }
+  return kept.id;
+}
+async function mergeSelectedGroups() {
+  const idx = [...document.querySelectorAll(".dupchk:checked")].map(x => +x.value);
+  if (!idx.length) return toast("Kam se kam ek group tick karo");
+  const groups = findDuplicateGroups();
+  let done = 0;
+  for (const i of idx) {
+    const g = groups[i]; if (!g) continue;
+    for (const r of g.remove) {
+      if (canMergeDirect()) { if (await performMerge(g.keep.id, r.id)) done++; else break; }
+      else if (await queueMergeRequest(g.keep.id, r.id)) done++;
+    }
+  }
+  if (supabase) { try { await loadProductionState(currentUser); } catch (e) { console.error(e); } }
+  toast(canMergeDirect() ? `${done} profile merge ho gaye` : `${done} merge request bhej di`);
+  render();
+}
+async function queueMergeRequest(keptId, removedId) {
+  if (supabase) { const { error } = await supabase.from("merge_requests").insert({ source_person_id: removedId, target_person_id: keptId, requested_by: currentUser.id }); if (error) { toast(error.message); return false; } }
+  else state.mergeRequests.push({ a: personById(removedId)?.name, b: personById(keptId)?.name, keptId, removedId, status: "Pending" });
+  return true;
 }
 async function requestMerge(a, b) {
   const keptId = document.querySelector('input[name="keepname"]:checked')?.value || a;
   const removedId = keptId === a ? b : a;
-  if (supabase) { const {error}=await supabase.from('merge_requests').insert({source_person_id:removedId,target_person_id:keptId,requested_by:currentUser.id}); if(error) return toast(error.message); await loadProductionState(currentUser); } else state.mergeRequests.push({ a,b,keptId,removedId,status:'Pending' });
-  toast("Merge request created for admin review"); go("merge");
+  if (canMergeDirect()) {
+    if (!(await performMerge(keptId, removedId))) return;
+    if (supabase) { try { await loadProductionState(currentUser); } catch (e) { console.error(e); } }
+    toast("Profiles merge ho gaye"); go("merge"); return;
+  }
+  if (!(await queueMergeRequest(keptId, removedId))) return;
+  if (supabase) await loadProductionState(currentUser);
+  toast("Merge request admin review ke liye bhej di"); go("merge");
 }
-/* Admin approves a merge request: reassigns graph edges (acceptance test 8), removes the duplicate person. */
+/* Admin / tree owner approves a pending request. */
 async function approveMerge(i) {
   const req = state.mergeRequests[i];
-  reassignEdges(req.removedId, req.keptId);
-  if (supabase) {
-    const {error: re}=await supabase.from('relationships').delete().eq('tree_id',state.treeId).or(`person_a_id.eq.${req.removedId},person_b_id.eq.${req.removedId}`); if(re) return toast(re.message);
-    for (const r of state.relationships) { const {error}=await supabase.from('relationships').upsert({id:isUuid(r.id)?r.id:crypto.randomUUID(),tree_id:state.treeId,person_a_id:r.from,person_b_id:r.to,relationship_type:r.type,created_by:currentUser.id,status:'active'}); if(error) return toast(error.message); }
-    const {error: pe}=await supabase.from('persons').update({status:'merged',merged_into_person_id:req.keptId}).eq('id',req.removedId); if(pe) return toast(pe.message);
-    await supabase.from('merge_requests').update({status:'completed',reviewed_by:currentUser.id}).eq('id',req.id);
-  }
-  state.people = state.people.filter(p => p.id !== req.removedId); state.mergeRequests[i].status = 'Merged';
-  toast(`Merged ${req.removedId} into ${req.keptId}`); await loadProductionState(currentUser); render();
+  if (!req) return;
+  if (!(await performMerge(req.keptId, req.removedId))) return;
+  if (supabase && req.id) await supabase.from("merge_requests").update({ status: "completed", reviewed_by: currentUser.id }).eq("id", req.id);
+  if (state.mergeRequests[i]) state.mergeRequests[i].status = "Merged";
+  toast("Merge complete");
+  if (supabase) { try { await loadProductionState(currentUser); } catch (e) { console.error(e); } }
+  render();
 }
 
 /* ---------------- relationship finder — real graph traversal + path ---------------- */
@@ -1988,7 +2117,7 @@ async function importGedcomPicked(inputEl) {
 Object.assign(window, {
   openPersonTree, exitTreeView,
   openChangeEmail, saveNewEmail,
-  acceptConnection, addRelative, approveMerge, centerTree, changePhoto, compareMerge,
+  acceptConnection, addRelative, approveMerge, centerTree, changePhoto, compareMerge, mergeSelectedGroups,
   createPerson, createTicket, findPerson, findRelation, go, googleLogin,
   invite, likePost, likeReel, logout, openAddRelative, openProfile, openTicket,
   phoneLogin, pickAddRelativePhoto, publishPost, requestMerge, resolveTicket,
@@ -2114,7 +2243,7 @@ async function loadProductionState(user) {
   const memberIds = (members || []).map(x => x.person_id);
   const memberRoleById = Object.fromEntries((members || []).map(x => [x.person_id, x.role]));
   let people = [];
-  if (memberIds.length) { const { data, error } = await supabase.from('persons').select('*').in('id', memberIds); if (error) throw error; people = (data || []).filter(p => !(p.details && p.details.deleted)); }
+  if (memberIds.length) { const { data, error } = await supabase.from('persons').select('*').in('id', memberIds); if (error) throw error; people = (data || []).filter(p => !(p.details && p.details.deleted) && p.status !== 'merged'); }
   if (!people.some(p => p.claimed_by === user.id)) {
     const { data: mine, error } = await supabase.from('persons').select('*').eq('claimed_by', user.id).limit(1).maybeSingle();
     if (error) throw error;
