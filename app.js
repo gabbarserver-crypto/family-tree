@@ -1350,7 +1350,7 @@ function detailRowsHTML(p) {
 function personDetailsCard(p) {
   return `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
       <h3 style="margin:0">Personal details</h3>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">${canEditPerson(p) ? `<button class="secondary" onclick="openEditProfile('${esc(p.id)}')">✏️ Edit</button>` : ""}${canDeletePerson(p) ? `<button class="danger" onclick="deletePerson('${esc(p.id)}')">🗑 Delete profile</button>` : ""}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${p.me ? `<button class="secondary" onclick="openChangeEmail('${esc(p.id)}')">✉️ Change email</button>` : ""}${canEditPerson(p) ? `<button class="secondary" onclick="openEditProfile('${esc(p.id)}')">✏️ Edit</button>` : ""}${canDeletePerson(p) ? `<button class="danger" onclick="deletePerson('${esc(p.id)}')">🗑 Delete profile</button>` : ""}</div>
     </div>
     ${detailRowsHTML(p)}
   </div>`;
@@ -1419,6 +1419,37 @@ function openEditProfile(id, fromView) {
     <div class="actions modal-foot"><button type="button" class="ghost" onclick="cancelEditProfile('${esc(p.id)}')">Cancel</button><button type="button" class="primary" onclick="saveProfileEdits('${esc(p.id)}')">Save changes</button></div>`);
   document.getElementById("mpFirst")?.focus();
 }
+/* Change your own contact email from the profile page (updates your person card + account profile). */
+function openChangeEmail(id) {
+  const p = personById(id);
+  if (!p || !p.me) { toast("You can only change your own email"); return; }
+  profileModalOrigin = "edit";
+  profileModalLocked = true;
+  profileModalShell(`<div class="modal-head"><h3>✉️ Change email</h3><button type="button" class="ghost" aria-label="Close" onclick="closeEditProfile()">✕</button></div>
+    <div class="form modal-body">
+      <p class="muted" style="font-size:13px;margin:0 0 8px">Current email: <strong>${esc(p.email || state.account.email || "not set")}</strong></p>
+      <div class="field"><label>New email</label><input id="mpNewEmail" type="email" placeholder="name@gmail.com" autocomplete="email"></div>
+    </div>
+    <div class="actions modal-foot"><button type="button" class="ghost" onclick="closeEditProfile()">Cancel</button><button type="button" class="primary" onclick="saveNewEmail('${esc(p.id)}')">Save email</button></div>`);
+  document.getElementById("mpNewEmail")?.focus();
+}
+async function saveNewEmail(id) {
+  const p = personById(id);
+  if (!p || !p.me) { toast("You can only change your own email"); return; }
+  const email = document.getElementById("mpNewEmail").value.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast("Please enter a valid email"); return; }
+  if (email === (p.email || "").toLowerCase()) { toast("This is already your email"); return; }
+  p.email = email;
+  state.account.email = email;
+  await save();
+  if (supabase && currentUser) {
+    const { error } = await supabase.from("profiles").update({ email }).eq("id", currentUser.id);
+    if (error) { toast("Saved on your card, but account email failed: " + error.message); render(); closeEditProfile(); return; }
+  }
+  toast("Email updated");
+  closeEditProfile();
+  render();
+}
 function cancelEditProfile(id) { if (profileModalOrigin === "view") openProfilePopup(id); else closeEditProfile(); }
 function closeEditProfile() {
   profileModalLocked = false;
@@ -1444,9 +1475,9 @@ async function saveProfileEdits(id) {
   p.email = email || undefined;
   p.lifeStatus = dod ? "deceased" : "living";
   p.details = { ...(p.details || {}), firstName: first, middleName: middle, surname: last, dod: dod || "", state: g("mpState"), city: g("mpCity"), married: document.getElementById("mpMarried").value };
-  if (p.me) state.account.name = p.name;
+  if (p.me) { state.account.name = p.name; if (email) state.account.email = email; }
   await save();
-  if (p.me && supabase && currentUser) { try { await supabase.from("profiles").update({ display_name: p.name }).eq("id", currentUser.id); } catch (e) { console.warn("display_name update failed", e); } }
+  if (p.me && supabase && currentUser) { try { await supabase.from("profiles").update({ display_name: p.name, ...(email ? { email } : {}) }).eq("id", currentUser.id); } catch (e) { console.warn("display_name update failed", e); } }
   toast("Profile updated");
   render();
   if (profileModalOrigin === "view") openProfilePopup(id); else closeEditProfile();
@@ -1796,6 +1827,7 @@ function production() {
    scoped to the module — they are NOT attached to window automatically
    the way classic <script> globals are. */
 Object.assign(window, {
+  openChangeEmail, saveNewEmail,
   acceptConnection, addRelative, approveMerge, centerTree, changePhoto, compareMerge,
   createPerson, createTicket, findPerson, findRelation, go, googleLogin,
   invite, likePost, likeReel, logout, openAddRelative, openProfile, openTicket,
