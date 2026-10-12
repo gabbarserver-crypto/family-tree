@@ -297,17 +297,61 @@ function deriveRelationship(fromId, toId) {
 /* Generation index of every person reachable from `rootId` (0 = root,
    negative = ancestors, positive = descendants; spouses share their
    partner's generation). Used to lay the tree out in rows. */
+/* A married woman's OWN parents/siblings are hidden in the default tree. They show only when
+   her tree icon is clicked ("branch view"). */
+function hidesParents(id) {
+  const p = personById(id);
+  return !!p && !p.me && p.gender === "Female" && spousesOf(id).length > 0 && parentsOf(id).length > 0;
+}
+let branchView = null; // { id, prevCenter } while a married woman's own family branch is open
+
+function computeBranchGenerations(xId) {
+  const gen = { [xId]: 0 };
+  spousesOf(xId).forEach(sp => { gen[sp] = 0; }); // her husband only (no his parents / no her children)
+  const parents = parentsOf(xId);
+  parents.forEach(pa => { gen[pa] = -1; });
+  parents.forEach(pa => spousesOf(pa).forEach(sp => { if (!(sp in gen)) gen[sp] = -1; }));
+  // siblings + their spouses + all their descendants
+  const down = (id, g) => {
+    if (id in gen && id !== xId) { /* already placed */ }
+    childrenOf(id).forEach(c => {
+      if (c === xId || c in gen) return;
+      gen[c] = g + 1;
+      spousesOf(c).forEach(sp => { if (!(sp in gen)) gen[sp] = g + 1; });
+      down(c, g + 1);
+    });
+  };
+  parents.forEach(pa => down(pa, -1));
+  return gen;
+}
+function openBranch(id) {
+  if (!personById(id)) return;
+  if (!parentsOf(id).length) { toast("Is ke parents ki details abhi add nahi hain"); return; }
+  if (!branchView) branchView = { prevCenter: treeCenterId };
+  branchView.id = id;
+  treeExpanded = new Set();
+  treeCenterId = id; treeScale = 1;
+  go("tree"); requestAnimationFrame(drawTreeConnectors);
+}
+function exitBranch() {
+  if (!branchView) return;
+  treeCenterId = branchView.prevCenter; branchView = null; treeExpanded = new Set(); treeScale = 1;
+  go("tree"); requestAnimationFrame(drawTreeConnectors);
+}
+
 function computeGenerations(rootId) {
+  if (branchView) return computeBranchGenerations(branchView.id);
   const gen = { [rootId]: 0 };
   const queue = [rootId];
   while (queue.length) {
     const cur = queue.shift();
     const g = gen[cur];
-    // A relative who has their OWN account/tree (e.g. my grandmother) is shown as a card, but their own
-    // ancestors/siblings are NOT pulled into my tree. That branch opens only via the top-right tree icon on their card.
+    // Married-in women (and relatives with their OWN account/tree) are shown as a card, but THEIR parents/siblings
+    // are not pulled into this tree; they open via the top-right tree icon on that card.
     const cp = personById(cur) || {};
-    const ownTreeBoundary = !treeViewing && cur !== rootId && !!cp.claimed_by && !cp.me && cp.claimed_by !== (currentUser && currentUser.id);
-    if (!ownTreeBoundary) parentsOf(cur).forEach(id => { if (!(id in gen)) { gen[id] = g - 1; queue.push(id); } });
+    const ownAcct = !treeViewing && !!cp.claimed_by && !cp.me && cp.claimed_by !== (currentUser && currentUser.id);
+    const boundary = cur !== rootId && (ownAcct || (!treeViewing && hidesParents(cur)));
+    if (!boundary) parentsOf(cur).forEach(id => { if (!(id in gen)) { gen[id] = g - 1; queue.push(id); } });
     childrenOf(cur).forEach(id => { if (!(id in gen)) { gen[id] = g + 1; queue.push(id); } });
     spousesOf(cur).forEach(id => { if (!(id in gen)) { gen[id] = g; queue.push(id); } });
   }
@@ -610,7 +654,9 @@ function tree() {
     return `<div class="gen" data-gen="${g}">${html}</div>`;
   }).join("");
   const banner = treeViewing ? `<div class="tree-view-banner"><img src="/assets/tree-icon.png" alt=""><span>Aap <b>${esc(treeViewing.ownerName)}</b> ki tree dekh rahe hain (sirf dekhne ke liye). Aapki apni tree chhupi hui hai.</span><button type="button" class="primary" onclick="exitTreeView()">← Meri tree par wapas</button></div>` : "";
-  return `${banner}<div class="tree-canvas" id="treeCanvas">
+  const bp = branchView && personById(branchView.id);
+  const banner2 = bp ? `<div class="tree-view-banner"><span><b>${esc(bp.name)}</b> ki family tree (unke parents, bhai-behen aur unke bachhe)</span><button type="button" class="primary" onclick="exitBranch()">← Meri tree par wapas</button></div>` : "";
+  return `${banner}${banner2}<div class="tree-canvas" id="treeCanvas">
     <div class="tree-stage" id="treeStage" style="position:relative">
       <svg id="treeLines" style="position:absolute;top:0;left:0;pointer-events:none;overflow:visible"></svg>
       ${rows || "<p class='muted'>No relationships recorded yet — tap the ＋ badge on your card to start the graph.</p>"}
@@ -643,8 +689,12 @@ function branchNode(p, isCenter) {
   // instead of mine; otherwise it just centres the tree on that person.
   const ownTree = !!supabase && !!currentUser && !!p.claimed_by && (treeViewing ? true : p.claimed_by !== currentUser.id);
   const backToMine = ownTree && treeViewing && p.claimed_by === currentUser.id;
-  const badgeTitle = ownTree ? (backToMine ? "Back to my tree" : "Open " + esc(p.name) + "'s own tree") : "Center tree on " + esc(p.name);
-  const badgeClick = ownTree ? `openPersonTree('${p.id}')` : `centerTree('${p.id}')`;
+  const branchable = !ownTree && !treeViewing && hidesParents(p.id);
+  const isBranchRoot = !!branchView && branchView.id === p.id;
+  const badgeTitle = ownTree ? (backToMine ? "Back to my tree" : "Open " + esc(p.name) + "'s own tree")
+    : isBranchRoot ? "Back to my tree" : branchable ? "Open " + esc(p.name) + "'s family tree" : "Center tree on " + esc(p.name);
+  const badgeClick = ownTree ? `openPersonTree('${p.id}')`
+    : isBranchRoot ? `exitBranch()` : branchable ? `openBranch('${p.id}')` : (branchView ? `exitBranch()` : `centerTree('${p.id}')`);
   const centerBadge = `<button type="button" class="tree-badge right own-tree" title="${badgeTitle}" onclick="event.stopPropagation();${badgeClick}"><img src="/assets/tree-icon.png" alt="Tree"></button>`;
   const dodYear = p.details?.dod ? new Date(p.details.dod).getFullYear() : "";
   const years = p.dob ? `${new Date(p.dob).getFullYear()} –${dodYear ? " " + dodYear : ""}` : (dodYear ? `– ${dodYear}` : "–");
@@ -716,7 +766,7 @@ function toggleTreeExpand(id) {
   requestAnimationFrame(drawTreeConnectors);
 }
 
-function centerTree(id) { treeCenterId = id; treeScale = 1; go("tree"); requestAnimationFrame(drawTreeConnectors); }
+function centerTree(id) { branchView = null; treeCenterId = id; treeScale = 1; go("tree"); requestAnimationFrame(drawTreeConnectors); }
 function treeSearch(val) {
   const idMatch = val.match(/\(([^)]+)\)\s*$/);
   const id = idMatch ? idMatch[1] : (state.people.find(p => p.name.toLowerCase() === val.toLowerCase())?.id);
@@ -724,7 +774,7 @@ function treeSearch(val) {
 }
 function treeZoom(n) { treeScale = Math.max(.5, Math.min(2.2, treeScale * n)); document.getElementById("treeStage").style.transform = `scale(${treeScale})`; requestAnimationFrame(drawTreeConnectors); }
 function treeReset() { treeScale = 1; const s = document.getElementById("treeStage"); if (s) s.style.transform = "scale(1)"; requestAnimationFrame(drawTreeConnectors); }
-function treeFocusMe() { treeCenterId = me().id; treeReset(); go("tree"); requestAnimationFrame(drawTreeConnectors); }
+function treeFocusMe() { branchView = null; treeCenterId = me().id; treeReset(); go("tree"); requestAnimationFrame(drawTreeConnectors); }
 
 /* Draw the org-chart style connector lines (branch lines + junction dots)
    between rendered tree nodes, using their actual DOM positions so the
@@ -2115,7 +2165,7 @@ async function importGedcomPicked(inputEl) {
    scoped to the module — they are NOT attached to window automatically
    the way classic <script> globals are. */
 Object.assign(window, {
-  openPersonTree, exitTreeView,
+  openPersonTree, exitTreeView, openBranch, exitBranch,
   openChangeEmail, saveNewEmail,
   acceptConnection, addRelative, approveMerge, centerTree, changePhoto, compareMerge, mergeSelectedGroups,
   createPerson, createTicket, findPerson, findRelation, go, googleLogin,
