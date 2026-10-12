@@ -693,7 +693,14 @@ function drawTreeConnectors() {
   };
   state.people.forEach(p => {
     if (!get(p.id)) return;
-    const keys = parentsOf(p.id).filter(get);
+    let keys = parentsOf(p.id).filter(get);
+    // Siblings must share ONE bus line. If only one parent is recorded for this child but that parent's
+    // spouse is also on screen and they share another child, treat the couple as the parent unit.
+    if (keys.length === 1) {
+      const sp = spousesOf(keys[0]).find(s => get(s) && !keys.includes(s) &&
+        childrenOf(keys[0]).some(c => c !== p.id && parentsOf(c).includes(s)));
+      if (sp) keys = [keys[0], sp];
+    }
     if (treeExpanded.has(p.id)) ["father", "mother"].forEach(t => { const ph = placeholderId(t, p.id); if (get(ph)) keys.push(ph); });
     addUnit(keys, p.id);
   });
