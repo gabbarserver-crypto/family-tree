@@ -91,7 +91,9 @@ const RELATION_TYPES = {
   son: { label: "Son", gender: "Male", edgeType: "child" },
   daughter: { label: "Daughter", gender: "Female", edgeType: "child" },
   father: { label: "Father", gender: "Male", edgeType: "parent" },
-  mother: { label: "Mother", gender: "Female", edgeType: "parent" }
+  mother: { label: "Mother", gender: "Female", edgeType: "parent" },
+  brother: { label: "Brother", gender: "Male", edgeType: "sibling" },
+  sister: { label: "Sister", gender: "Female", edgeType: "sibling" }
 };
 
 function save() { return persistState(); }
@@ -484,6 +486,7 @@ function tree() {
       const use = keys.slice(0, 2 - ps.length);
       if (use.length) { groups.push({ kind: "parents", gen: g - 1, targetId: id, keys: use }); lvl.add(g - 1); }
     }
+    groups.push({ kind: "siblings", gen: g, targetId: id });
     const spouse = spousesOf(id)[0];
     const familyKey = spouse ? [id, spouse].sort().join("|") : id;
     if (!seenChildFamilies.has(familyKey)) {
@@ -519,6 +522,17 @@ function tree() {
   groups.filter(x => x.kind === "spouse").forEach(gr => {
     const row = rowItems[gr.gen]; const i = idxIn(gr.gen, gr.targetId);
     row.splice(i < 0 ? row.length : i + 1, 0, { ph: gr.typeKey, target: gr.targetId });
+  });
+
+  // 1b) "Add Brother/Sister" next to the person's existing siblings (never between a couple)
+  groups.filter(x => x.kind === "siblings").forEach(gr => {
+    const row = rowItems[gr.gen];
+    const fam = [gr.targetId, ...siblingsOf(gr.targetId)].map(id => idxIn(gr.gen, id)).filter(i => i >= 0);
+    if (!fam.length) return;
+    const at = skipCouple(row, Math.max(...fam) + 1);
+    const pIdx = parentsOf(gr.targetId).map(pid => idxIn(gr.gen - 1, pid)).filter(i => i >= 0);
+    const ref = pIdx.length ? mean(pIdx) : undefined;
+    row.splice(at, 0, { ph: "brother", target: gr.targetId, pos: ref }, { ph: "sister", target: gr.targetId, pos: ref });
   });
 
   // 2) "Add Father/Mother" above the person (top rows first)
@@ -691,21 +705,28 @@ function drawTreeConnectors() {
     if (!units.has(k)) units.set(k, { parents: keys, kids: new Set() });
     units.get(k).kids.add(kidKey);
   };
-  state.people.forEach(p => {
-    if (!get(p.id)) return;
-    let keys = parentsOf(p.id).filter(get);
-    // Siblings must share ONE bus line. If only one parent is recorded for this child but that parent's
-    // spouse is also on screen and they share another child, treat the couple as the parent unit.
+  // Siblings must share ONE bus line. If only one parent is recorded for this child but that parent's
+  // spouse is also on screen and they share another child, treat the couple as the parent unit.
+  const familyKeys = (childId, keys) => {
+    keys = keys.filter(get);
     if (keys.length === 1) {
       const sp = spousesOf(keys[0]).find(s => get(s) && !keys.includes(s) &&
-        childrenOf(keys[0]).some(c => c !== p.id && parentsOf(c).includes(s)));
+        childrenOf(keys[0]).some(c => c !== childId && parentsOf(c).includes(s)));
       if (sp) keys = [keys[0], sp];
     }
+    return keys;
+  };
+  state.people.forEach(p => {
+    if (!get(p.id)) return;
+    let keys = familyKeys(p.id, parentsOf(p.id));
     if (treeExpanded.has(p.id)) ["father", "mother"].forEach(t => { const ph = placeholderId(t, p.id); if (get(ph)) keys.push(ph); });
     addUnit(keys, p.id);
   });
   treeExpanded.forEach(id => {
     if (!get(id)) return;
+    // "Add Brother/Sister" boxes hang off the SAME parent bus as the person's real siblings
+    const sibPhs = ["brother", "sister"].map(t => placeholderId(t, id)).filter(get);
+    if (sibPhs.length) { const fk = familyKeys(id, parentsOf(id)); sibPhs.forEach(k => addUnit(fk, k)); }
     const kidPhs = ["son", "daughter"].map(t => placeholderId(t, id)).filter(get);
     if (!kidPhs.length) return;
     const firstKid = childrenOf(id).find(c => get(c));
@@ -821,6 +842,7 @@ function createPerson() {
 /* ---------------- Add Relative — rich form (photo, contact, life details) ---------------- */
 function openAddRelative(targetId, typeKey) {
   if (!canAddRelativeTo(targetId)) { toast("Only this tree's owner or admins can add relatives to other people"); return; }
+  if ((RELATION_TYPES[typeKey] || {}).edgeType === "sibling" && !parentsOf(targetId).length) { toast("Brother/Sister add karne ke liye pehle parents (Father/Mother) add karein"); return; }
   addRelativeTargetId = targetId;
   addRelativeTypeKey = typeKey;
   addRelativeMode = "new";
@@ -958,6 +980,7 @@ function existingCandidates(targetId, typeKey) {
     if (p.id === targetId) return false;
     if (t.edgeType === "spouse") return !spousesOf(targetId).includes(p.id);
     if (t.edgeType === "parent") return !parentsOf(targetId).includes(p.id) && !desc.has(p.id);
+    if (t.edgeType === "sibling") return !siblingsOf(targetId).includes(p.id) && !desc.has(p.id) && !anc.has(p.id) && !spousesOf(targetId).includes(p.id);
     return !childrenOf(targetId).includes(p.id) && !anc.has(p.id);
   });
 }
@@ -1035,6 +1058,9 @@ async function searchRelativeByUid() {
     <p class="muted" style="margin:10px 0 0;font-size:13px">${status}</p></div>`;
 }
 async function linkByUniqueId() {
+  if ((RELATION_TYPES[document.getElementById("arRelType")?.value] || {}).edgeType === "sibling" && !parentsOf(addRelativeTargetId).length) {
+    toast("Brother/Sister add karne ke liye pehle is person ke parents (Father/Mother) add karein"); return;
+  }
   const f = arFoundPerson;
   if (!f) { toast("Search a Unique ID first"); return; }
   const typeKey = document.getElementById("arRelType").value;
@@ -1063,6 +1089,14 @@ async function linkByUniqueId() {
   go("tree");
 }
 function linkRelative(targetId, personId, t) {
+  if (t.edgeType === "sibling") {
+    // A sibling is simply another child of the SAME parent(s) — so they share one connector line on the tree.
+    const ps = new Set(parentsOf(targetId));
+    [...ps].forEach(pid => { const sp = spousesOf(pid); if (sp.length === 1) ps.add(sp[0]); });
+    let e = null;
+    ps.forEach(pid => { e = addEdge(pid, personId, "parent") || e; });
+    return e;
+  }
   if (t.edgeType === "spouse") {
     const e = addEdge(targetId, personId, "spouse");
     // New spouse should also show as parent of the target's existing single-parent children
@@ -1095,6 +1129,9 @@ function syncSpouseParents() {
   return changed;
 }
 async function saveAddRelative() {
+  if ((RELATION_TYPES[document.getElementById("arRelType")?.value] || {}).edgeType === "sibling" && !parentsOf(addRelativeTargetId).length) {
+    toast("Brother/Sister add karne ke liye pehle is person ke parents (Father/Mother) add karein"); return;
+  }
   if (!canAddRelativeTo(addRelativeTargetId)) { toast("Only this tree's owner or admins can add relatives to other people"); return; }
   if (addRelativeMode === "uid") { await linkByUniqueId(); return; }
   if (addRelativeMode === "existing") {
