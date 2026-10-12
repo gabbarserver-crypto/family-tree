@@ -339,8 +339,53 @@ function exitBranch() {
   go("tree"); requestAnimationFrame(drawTreeConnectors);
 }
 
+/* Default tree: me + my siblings (+ spouses, + all our children); my parents (+ their siblings, spouses and the
+   uncles' children - a bua's husband shows but NOT her children); grandparents and higher ancestors with the
+   BROTHERS of each ancestor and their wives (no children). A married woman's own parents/siblings stay hidden
+   (they open from her tree icon). */
+function computeDefaultGenerations(rootId) {
+  const gen = {};
+  const place = (id, g) => { if (id && !(id in gen)) { gen[id] = g; return true; } return false; };
+  const addSpouses = (id, g) => spousesOf(id).forEach(sp => place(sp, g));
+  const addDesc = (id, g) => childrenOf(id).forEach(c => { if (place(c, g + 1)) { addSpouses(c, g + 1); addDesc(c, g + 1); } });
+  const sibs = id => { const out = new Set(); parentsOf(id).forEach(p => { if (p in gen) childrenOf(p).forEach(c => { if (c !== id) out.add(c); }); }); return [...out]; };
+  const isFemale = id => (personById(id) || {}).gender === "Female";
+  place(rootId, 0); addSpouses(rootId, 0);
+  // ancestors, level by level (a married woman's own parents are not walked)
+  const levels = [];
+  let frontier = [rootId], g = 0;
+  while (frontier.length) {
+    const next = [];
+    frontier.forEach(id => {
+      if (id !== rootId && hidesParents(id)) return;
+      parentsOf(id).forEach(p => { place(p, g - 1); if (!next.includes(p)) next.push(p); });
+    });
+    g--;
+    next.forEach(p => addSpouses(p, g));
+    if (next.length) levels.push(next);
+    frontier = next;
+  }
+  // my own generation: siblings + spouses + everybody's children
+  sibs(rootId).forEach(sb => { if (place(sb, 0)) addSpouses(sb, 0); });
+  addDesc(rootId, 0);
+  sibs(rootId).forEach(sb => addDesc(sb, 0));
+  // siblings of my ancestors
+  levels.forEach((lvl, i) => {
+    const k = i + 1, lg = -k;
+    lvl.forEach(a => sibs(a).forEach(sb => {
+      if (isFemale(sb) && k > 1) return;               // dada's sisters etc: not shown
+      if (place(sb, lg)) {
+        addSpouses(sb, lg);                              // uncle's wife / bua's husband
+        if (k === 1 && !isFemale(sb)) childrenOf(sb).forEach(c => place(c, lg + 1)); // cousins only via uncles, not via bua
+      }
+    }));
+  });
+  return gen;
+}
+
 function computeGenerations(rootId) {
   if (branchView) return computeBranchGenerations(branchView.id);
+  if (!treeViewing) return computeDefaultGenerations(rootId);
   const gen = { [rootId]: 0 };
   const queue = [rootId];
   while (queue.length) {
@@ -1695,7 +1740,7 @@ function sameNameLoose(a, b) {
   if ([...x].sort().join(" ") === [...y].sort().join(" ")) return true;
   return x.length > 1 && y.length > 1 && x[0] === y[0] && x[x.length - 1] === y[y.length - 1];
 }
-function mergeCandidates() { return state.people.filter(p => !p.external && p.status !== "merged" && !(p.details && p.details.deleted)); }
+function mergeCandidates() { return state.people.filter(p => p.status !== "merged" && !(p.details && p.details.deleted)); }
 function personHint(p) {
   const bits = [];
   const par = parentsOf(p.id).map(personById).filter(Boolean).map(x => x.name);
@@ -1737,7 +1782,7 @@ function canMergeDirect() { return canEditTree() || isStaff(); }
 
 function merge() {
   const people = mergeCandidates().slice().sort((a, b) => a.name.localeCompare(b.name));
-  const opt = p => `<option value="${esc(p.id)}">${esc(p.name)}${p.me ? " (You)" : ""} — ${esc(personHint(p))}</option>`;
+  const opt = p => `<option value="${esc(p.id)}">${esc(p.name)}${p.me ? " (You)" : ""}${p.external ? " (dusri tree)" : ""} — ${esc(personHint(p))}</option>`;
   const optsA = people.map(opt).join("");
   const groups = findDuplicateGroups();
   const direct = canMergeDirect();
@@ -1799,19 +1844,27 @@ function compareMerge() {
 async function performMerge(keptId, removedId) {
   let kept = personById(keptId), removed = personById(removedId);
   if (!kept || !removed || kept.id === removed.id) return false;
-  if (removed.me) { [kept, removed] = [removed, kept]; }          // never remove the signed-in user's own profile
-  if (kept.external || removed.external) { toast("Dusre tree ke profile merge nahi ho sakte"); return false; }
+  if (removed.me || (kept.external && !removed.external)) { [kept, removed] = [removed, kept]; }  // keep my own / my-tree profile
+  if (kept.external) { toast("Kam se kam ek profile aapki apni tree ka hona chahiye"); return false; }
   ["dob", "mobile", "email", "avatar_url", "gender", "birthPlace", "currentPlace", "nickname"].forEach(k => { if (!kept[k] && removed[k]) kept[k] = removed[k]; });
   kept.details = { ...(removed.details || {}), ...(kept.details || {}) };
   kept.details.merged_from = [...(kept.details.merged_from || []), removed.id];
+  // edges of the duplicate that live in ANOTHER tree can't be edited here: re-create them in my tree instead
+  const oldEdgeIds = state.relationships.filter(r => r.from === removed.id || r.to === removed.id).map(r => r.id).filter(Boolean);
+  state.relationships.forEach(r => { if ((r.from === removed.id || r.to === removed.id) && r.tree_id && r.tree_id !== state.treeId) { r.id = null; r.tree_id = null; } });
   reassignEdges(removed.id, kept.id);
   if (supabase) {
-    const { error: re } = await supabase.from("relationships").delete().eq("tree_id", state.treeId).or(`person_a_id.eq.${removed.id},person_b_id.eq.${removed.id}`);
-    if (re) { toast(re.message); return false; }
+    if (oldEdgeIds.length) {
+      const { error: re } = await supabase.from("relationships").delete().in("id", oldEdgeIds);
+      if (re && !removed.external) { toast(re.message); return false; }
+    } else if (!removed.external) {
+      const { error: re } = await supabase.from("relationships").delete().eq("tree_id", state.treeId).or(`person_a_id.eq.${removed.id},person_b_id.eq.${removed.id}`);
+      if (re) { toast(re.message); return false; }
+    }
     const rdetails = { ...(removed.details || {}), deleted: true, merged_into: kept.id };
     let { error: pe } = await supabase.from("persons").update({ status: "merged", merged_into_person_id: kept.id, details: rdetails }).eq("id", removed.id);
     if (pe) { ({ error: pe } = await supabase.from("persons").update({ details: rdetails }).eq("id", removed.id)); }
-    if (pe) { toast(pe.message); return false; }
+    if (pe && !removed.external) { toast(pe.message); return false; }
     state.people = state.people.filter(p => p.id !== removed.id);
     await save();                                                   // writes kept person + re-pointed relationships
     try { await supabase.from("merge_requests").insert({ source_person_id: removed.id, target_person_id: kept.id, requested_by: currentUser.id, status: "completed", reviewed_by: currentUser.id }); } catch (e) { /* audit row is best-effort */ }
