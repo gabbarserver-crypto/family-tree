@@ -1,4 +1,5 @@
 import { supabase, supabaseConfigured, signInWithGoogle, sendPhoneOtp, verifyPhoneOtp } from "./supabase.js";
+import { importGedcomFile } from "./gedcom.js";
 
 /* ==========================================================================
    FamilyTree — integrated app (V1 core + V3 Tree, V4 Merge, V5 Profiles,
@@ -423,6 +424,13 @@ function home() {
     <button class="secondary" onclick="go('relationship')">🔗 Find Relationship</button>
     <button class="secondary" onclick="go('wall')">📝 Family Wall</button>
   </div></div>
+  <div class="card"><h3>Import from GEDCOM</h3>
+    <p class="muted">Upload a .ged file (from iMeUsWe, Ancestry, MyHeritage, etc.) to add all its people and relationships to your tree.</p>
+    <div class="actions">
+      <button class="primary" onclick="document.getElementById('gedFile').click()">📥 Import .ged file</button>
+      <input type="file" id="gedFile" accept=".ged,.gedcom" hidden onchange="importGedcomPicked(this)">
+    </div>
+  </div>
   <div class="card"><h3>Upcoming</h3>${upcoming.map(e => `<div class="event-chip"><span class="em">${e.emoji}</span><div><strong>${esc(e.title)}</strong><div class="muted" style="font-size:12.5px">${e.sub}</div></div></div>`).join("")}
   <button class="ghost" style="margin-top:8px" onclick="go('wall')">See all events →</button></div>`;
 }
@@ -1889,6 +1897,50 @@ function production() {
   </div>`;
 }
 
+/* ---- GEDCOM import ---- */
+async function importGedcomPicked(inputEl) {
+  const file = inputEl.files && inputEl.files[0];
+  inputEl.value = "";                       // allow picking the same file again
+  if (!file) return;
+  if (treeViewing) return toast("Read-only while viewing another person's tree");
+  if (!currentUser || !state.treeId) return toast("Please sign in first");
+  try {
+    toast("Reading GEDCOM file…");
+    const res = await importGedcomFile(file, {
+      createdBy: currentUser.id,
+      existingCodes: new Set(state.people.map(p => p.personCode).filter(Boolean)),
+      existingGedIds: new Set(state.people.map(p => p.details && p.details.gedcom_id).filter(Boolean))
+    });
+    let people = res.people; const rels = res.relationships; const report = res.report;
+    if (!people.length) return toast(report.skippedDuplicates ? "Is file ke sab log pehle se import ho chuke hain" : "File mein koi person nahi mila");
+
+    // If the file contains the signed-in user, link to their existing card instead of creating a duplicate.
+    const mine = myself();
+    let linked = null;
+    if (mine && mine.name) {
+      const key = s => (s || "").toLowerCase().replace(/\s+/g, " ").trim();
+      const hit = people.find(p => key(p.name) === key(mine.name) && (!p.dob || !mine.dob || normalizeDate(mine.dob) === p.dob));
+      if (hit) {
+        rels.forEach(r => { if (r.from === hit.id) r.from = mine.id; if (r.to === hit.id) r.to = mine.id; });
+        mine.details = { ...(mine.details || {}), gedcom_id: hit.details.gedcom_id };
+        if (!mine.dob && hit.dob) mine.dob = hit.dob;
+        if (!mine.birthPlace && hit.birthPlace) mine.birthPlace = hit.birthPlace;
+        if (!mine.avatar_url && hit.avatar_url) mine.avatar_url = hit.avatar_url;
+        people = people.filter(p => p !== hit);
+        linked = mine.name;
+      }
+    }
+
+    const have = new Set(state.relationships.map(r => `${r.type}|${r.from}|${r.to}`));
+    const newRels = rels.filter(r => !have.has(`${r.type}|${r.from}|${r.to}`));
+    state.people.push(...people);
+    state.relationships.push(...newRels);
+    await save();
+    render();
+    toast(`${people.length} log aur ${newRels.length} rishte import hue` + (linked ? ` (${linked} aapke profile se jud gaye)` : ""));
+  } catch (e) { console.error("GEDCOM import failed", e); toast("GEDCOM import failed: " + e.message); }
+}
+
 /* Expose functions referenced by inline onclick="..." handlers in the
    rendered HTML. Required because this file is loaded as an ES module
    (type="module"), and top-level function declarations in a module are
@@ -1905,7 +1957,8 @@ Object.assign(window, {
   treeReset, treeZoom, toggleTreeExpand, treeSearch, setTreeRole,
   setAddRelativeMode, refreshExistingOptions, openMyProfile, saveProfileEdits, openEditProfile, closeEditProfile, openProfilePopup, openFullProfile, cancelEditProfile, deletePerson, searchRelativeByUid, linkByUniqueId, approveIncoming, rejectIncoming,
   loadMemories, addMemory, deleteMemory,
-  runClaimSearch, requestClaim, cancelClaim, startFreshProfile, approveClaim, rejectClaim
+  runClaimSearch, requestClaim, cancelClaim, startFreshProfile, approveClaim, rejectClaim,
+  importGedcomPicked
 });
 
 window.addEventListener("hashchange", render);
