@@ -85,6 +85,8 @@ a{color:var(--plum)}
 .nav.logout:hover{background:var(--terracotta-tint)}
 
 .content{flex:1;min-width:0;padding:26px 28px 100px;max-width:1180px;margin:0 auto;width:100%}
+/* tree page: use the full width next to the sidebar instead of the 1180px reading column */
+.content.content-wide{max-width:none;margin:0}
 .page-head{margin-bottom:20px}
 .page-head p{max-width:640px}
 
@@ -173,9 +175,11 @@ button:disabled{opacity:.55;cursor:default}
 .tree-canvas{
   border:1px solid var(--line);border-radius:var(--radius-l);
   background:linear-gradient(135deg,#eaf3fb 0%,var(--paper) 55%,#fdf6e6 100%);
-  min-height:540px;overflow:auto;padding:34px 10px;
+  min-height:max(540px,calc(100vh - 190px));overflow:auto;padding:34px 24px;
 }
-.tree-stage{transform-origin:top center;transition:transform .18s ease-out}
+.tree-stage{transform-origin:top center;transition:transform .18s ease-out;
+  /* grow to the widest generation row so nothing is clipped on the left; rows stay centred */
+  display:flex;flex-direction:column;align-items:center;width:max-content;min-width:100%}
 .gen{display:flex;justify-content:center;gap:30px;position:relative;padding-bottom:64px}
 .branch-node{
   background:var(--paper-raised);border:1px solid var(--line);border-radius:16px;padding:16px 16px 13px;

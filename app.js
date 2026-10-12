@@ -375,7 +375,7 @@ function render() {
     </header>
     <div class="layout">
       <aside class="sidebar">${navHTML(page)}</aside>
-      <main class="content">${pageView(page)}</main>
+      <main class="content${page === "tree" ? " content-wide" : ""}">${pageView(page)}</main>
     </div>
     <nav class="bottomnav">${flatNav.slice(0, 6).map(([id, label, icon]) => navItem(id, label, icon, page)).join("")}</nav>
   </div>`;
