@@ -99,6 +99,7 @@ const RELATION_TYPES = {
 function save() { return persistState(); }
 
 async function persistState() {
+  if (treeViewing) return; // read-only while viewing another person's tree
   if (!supabase || !currentUser || !state.treeId) return;
   try {
     // Only write persons this user owns/claims; rewriting other people's rows is what RLS rejects (403 / 42501) and it fails the whole batch.
@@ -149,7 +150,14 @@ function avatarPalette(p) {
 }
 function toast(msg) { const x = document.createElement("div"); x.className = "toast"; x.textContent = msg; document.body.appendChild(x); setTimeout(() => x.remove(), 2200); }
 function esc(s) { return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
-function me() { return state.people.find(p => p.me); }
+/* "View another person's own tree" mode: state.people/relationships are temporarily swapped for that
+   person's tree (read-only). treeViewing.backup holds MY tree so "Back to my tree" restores it instantly. */
+let treeViewing = null; // { ownerId, ownerName, backup: { people, relationships, treeCenterId, treeExpanded, treeScale } }
+function me() {
+  if (treeViewing) return state.people.find(p => p.id === treeViewing.ownerId) || state.people[0];
+  return state.people.find(p => p.me);
+}
+function myself() { return treeViewing ? treeViewing.backup.people.find(p => p.me) : me(); } // the signed-in user's own person card
 function isStaff() { return state.account.role === "admin" || state.account.role === "support"; }
 function isAdmin() { return state.account.role === "admin"; }
 /* Per-tree admin role (distinct from the system-wide isStaff/isAdmin above).
@@ -158,10 +166,10 @@ function isAdmin() { return state.account.role === "admin"; }
 function personTreeRole(p) { return (p && p.treeRole) || (p && p.me ? "owner" : "member"); }
 function myTreeRole() { return personTreeRole(me()); }
 function isTreeOwner() { return myTreeRole() === "owner"; }
-function canEditTree() { return myTreeRole() === "owner" || myTreeRole() === "admin"; }
+function canEditTree() { if (treeViewing) return false; return myTreeRole() === "owner" || myTreeRole() === "admin"; }
 /* Anyone can add relatives directly onto their own card, even if they're
    not a tree owner/admin. Everyone else's card still needs edit rights. */
-function canAddRelativeTo(targetId) { return canEditTree() || targetId === me().id; }
+function canAddRelativeTo(targetId) { if (treeViewing) return false; return canEditTree() || targetId === me().id; }
 function treeRoleLabel(r) { return r === "owner" ? "Owner" : r === "admin" ? "Admin" : "Member"; }
 function treeRoleBadgeClass(r) { return r === "owner" ? "sage" : r === "admin" ? "plum" : ""; }
 
@@ -356,11 +364,12 @@ async function logout() { skipClaimSearch = false; if (supabase) await supabase.
 function topCenterHTML(page) {
   if (page !== "tree" && page !== "wall") return "";
   const search = page === "tree" ? `<input id="treeSearch" class="top-search" placeholder="Search by name or Person ID…" list="treeSearchList" onchange="treeSearch(this.value)"><datalist id="treeSearchList">${state.people.map(p => `<option value="${esc(p.name)} (${p.id})">`).join("")}</datalist>` : "";
-  return `<div class="topbar-center"><span class="top-title">My Family Tree</span>${search}<div class="view-switch"><button class="${page === "tree" ? "active" : ""}" onclick="go('tree')">Family Tree</button><button class="${page === "wall" ? "active" : ""}" onclick="go('wall')">Family Wall</button></div></div>`;
+  return `<div class="topbar-center"><span class="top-title">${treeViewing ? esc(treeViewing.ownerName) + "'s Family Tree" : "My Family Tree"}</span>${search}<div class="view-switch"><button class="${page === "tree" ? "active" : ""}" onclick="go('tree')">Family Tree</button><button class="${page === "wall" ? "active" : ""}" onclick="go('wall')">Family Wall</button></div></div>`;
 }
 function render() {
   if (!loggedIn) { renderLogin(); return; }
   const page = (location.hash || "#home").slice(1);
+  if (treeViewing && page !== "tree" && page !== "profile") exitTreeView(false);
   const app = document.getElementById("app");
   const flatNav = NAV.flatMap(g => g.items).filter(([id]) => id !== "add" || canEditTree()).concat(isStaff() ? ADMIN_NAV.items : []);
   app.innerHTML = `<div class="shell">
@@ -370,7 +379,7 @@ function render() {
       <div class="top-actions">
         
         <span class="muted" style="font-size:13px;cursor:pointer" title="My Profile" onclick="openMyProfile()">${esc(state.account.name)}</span>
-        <div style="cursor:pointer" title="My Profile" onclick="openMyProfile()">${me() ? avatarHTML(me()) : `<div class="avatar">${esc(initials(state.account.name))}</div>`}</div>
+        <div style="cursor:pointer" title="My Profile" onclick="openMyProfile()">${myself() ? avatarHTML(myself()) : `<div class="avatar">${esc(initials(state.account.name))}</div>`}</div>
       </div>
     </header>
     <div class="layout">
@@ -587,7 +596,8 @@ function tree() {
       : addRelativeNode(it.ph, it.target)).join("");
     return `<div class="gen" data-gen="${g}">${html}</div>`;
   }).join("");
-  return `<div class="tree-canvas" id="treeCanvas">
+  const banner = treeViewing ? `<div class="tree-view-banner"><img src="/assets/tree-icon.png" alt=""><span>Aap <b>${esc(treeViewing.ownerName)}</b> ki tree dekh rahe hain (sirf dekhne ke liye). Aapki apni tree chhupi hui hai.</span><button type="button" class="primary" onclick="exitTreeView()">← Meri tree par wapas</button></div>` : "";
+  return `${banner}<div class="tree-canvas" id="treeCanvas">
     <div class="tree-stage" id="treeStage" style="position:relative">
       <svg id="treeLines" style="position:absolute;top:0;left:0;pointer-events:none;overflow:visible"></svg>
       ${rows || "<p class='muted'>No relationships recorded yet — tap the ＋ badge on your card to start the graph.</p>"}
@@ -616,7 +626,13 @@ function branchNode(p, isCenter) {
   if (!p) return "";
   const expanded = treeExpanded.has(p.id);
   const addBadge = canAddRelativeTo(p.id) ? `<button type="button" class="tree-badge left${expanded ? " open" : ""}" title="${expanded ? "Close" : "Add relative"}" onclick="event.stopPropagation();toggleTreeExpand('${p.id}')">${expanded ? "✕" : "＋"}</button>` : "";
-  const centerBadge = `<button type="button" class="tree-badge right" title="Center tree on ${esc(p.name)}" onclick="event.stopPropagation();centerTree('${p.id}')">🌳</button>`;
+  // Top-right badge is ALWAYS the tree logo. If the person has their OWN account/tree, clicking opens (and shows) their tree
+  // instead of mine; otherwise it just centres the tree on that person.
+  const ownTree = !!supabase && !!currentUser && !!p.claimed_by && (treeViewing ? true : p.claimed_by !== currentUser.id);
+  const backToMine = ownTree && treeViewing && p.claimed_by === currentUser.id;
+  const badgeTitle = ownTree ? (backToMine ? "Back to my tree" : "Open " + esc(p.name) + "'s own tree") : "Center tree on " + esc(p.name);
+  const badgeClick = ownTree ? `openPersonTree('${p.id}')` : `centerTree('${p.id}')`;
+  const centerBadge = `<button type="button" class="tree-badge right own-tree" title="${badgeTitle}" onclick="event.stopPropagation();${badgeClick}"><img src="/assets/tree-icon.png" alt="Tree"></button>`;
   const dodYear = p.details?.dod ? new Date(p.details.dod).getFullYear() : "";
   const years = p.dob ? `${new Date(p.dob).getFullYear()} –${dodYear ? " " + dodYear : ""}` : (dodYear ? `– ${dodYear}` : "–");
   return `<div class="branch-node ${p.me ? "me" : ""} ${isCenter && !p.me ? "me" : ""}" id="${nodeElId(p.id)}" style="position:relative;cursor:pointer" title="View profile" onclick="openProfilePopup('${p.id}')">
@@ -627,6 +643,58 @@ function branchNode(p, isCenter) {
     <div class="mini rel">${deriveRelationship(me().id, p.id).label}</div>
     ${kidsCaption(p.id)}
   </div>`;
+}
+
+/* Open the OWN tree of a person who has an account (e.g. my wife), hiding mine until I go back. */
+async function fetchPersonTree(person) {
+  const r = await supabase.rpc("get_person_tree", { p_person_id: person.id });
+  if (!r.error && r.data) return r.data;
+  if (r.error && !/get_person_tree|function|schema cache/i.test(r.error.message)) throw r.error; // installed, but refused
+  // Fallback when the SQL helper isn't installed: plain queries (only works if RLS lets you read that tree)
+  const { data: ft } = await supabase.from("family_trees").select("id").eq("owner_id", person.claimed_by).order("created_at").limit(1).maybeSingle();
+  if (!ft) throw new Error("Is person ki apni tree nahi mili. Run supabase-view-other-tree.sql in Supabase.");
+  const { data: members } = await supabase.from("tree_members").select("person_id, role").eq("tree_id", ft.id);
+  const ids = (members || []).map(m => m.person_id);
+  const { data: persons } = ids.length ? await supabase.from("persons").select("*").in("id", ids) : { data: [] };
+  const { data: relationships } = await supabase.from("relationships").select("*").eq("tree_id", ft.id);
+  return { tree_id: ft.id, members: members || [], persons: persons || [], relationships: relationships || [] };
+}
+async function openPersonTree(id) {
+  const p = personById(id);
+  if (!p || !supabase || !currentUser) return;
+  if (p.claimed_by === currentUser.id) { exitTreeView(); return; } // that's me -> back to my own tree
+  if (!p.claimed_by) { toast("Is person ki apni tree nahi hai"); return; }
+  toast("Opening " + p.name + "'s tree…");
+  let data;
+  try { data = await fetchPersonTree(p); } catch (e) { toast(e.message || "Couldn't open this tree"); return; }
+  const roleById = Object.fromEntries((data.members || []).map(m => [m.person_id, m.role]));
+  const people = (data.persons || []).filter(x => !(x.details && x.details.deleted)).map(x => ({
+    id: x.id, personCode: x.person_code, name: x.full_name, gender: x.gender, status: x.status, dob: x.dob, mobile: x.mobile, email: x.email,
+    avatar_url: x.avatar_url, me: false, claimed_by: x.claimed_by, created_by: x.created_by, privacy: "Family only", nickname: x.nickname,
+    showNickname: x.show_nickname, birthPlace: x.birth_place, currentPlace: x.current_place, lifeStatus: x.life_status, details: x.details || {},
+    treeRole: roleById[x.id] || "member", external: true
+  }));
+  if (people.length <= 1) { toast(p.name + " ne abhi apni tree mein koi family member add nahi kiya"); return; }
+  const ids = new Set(people.map(x => x.id));
+  const rels = (data.relationships || []).filter(r => r.status !== "removed" && ids.has(r.person_a_id) && ids.has(r.person_b_id))
+    .map(r => ({ id: r.id, from: r.person_a_id, to: r.person_b_id, type: r.relationship_type, status: r.status, tree_id: r.tree_id }));
+  if (!treeViewing) treeViewing = { backup: { people: state.people, relationships: state.relationships, treeCenterId, treeExpanded, treeScale } };
+  treeViewing.ownerId = p.id;
+  treeViewing.ownerName = p.name;
+  state.people = people;
+  state.relationships = rels;
+  treeExpanded = new Set();
+  treeCenterId = p.id;
+  treeScale = 1;
+  go("tree");
+}
+function exitTreeView(rerender = true) {
+  if (!treeViewing) return;
+  const b = treeViewing.backup;
+  state.people = b.people; state.relationships = b.relationships;
+  treeCenterId = b.treeCenterId; treeExpanded = b.treeExpanded; treeScale = b.treeScale;
+  treeViewing = null;
+  if (rerender) { go("tree"); requestAnimationFrame(drawTreeConnectors); }
 }
 
 function toggleTreeExpand(id) {
@@ -1285,7 +1353,7 @@ function nameParts(p) {
   return { first: t[0], middle: t.slice(1, -1).join(" "), last: t[t.length - 1] };
 }
 function canEditPerson(p) {
-  if (!p) return false;
+  if (!p || treeViewing) return false;
   if (p.me) return true;
   // other people's profiles: only while unclaimed, and only by the tree owner/admins or whoever created the profile
   return p.status === "unclaimed" && (canEditTree() || (!!currentUser && p.created_by === currentUser.id));
@@ -1827,6 +1895,7 @@ function production() {
    scoped to the module — they are NOT attached to window automatically
    the way classic <script> globals are. */
 Object.assign(window, {
+  openPersonTree, exitTreeView,
   openChangeEmail, saveNewEmail,
   acceptConnection, addRelative, approveMerge, centerTree, changePhoto, compareMerge,
   createPerson, createTicket, findPerson, findRelation, go, googleLogin,
@@ -1947,6 +2016,7 @@ async function ensureProfileAndTree(user) {
 }
 
 async function loadProductionState(user) {
+  treeViewing = null;
   const treeId = state.treeId;
   const { data: members, error: me } = await supabase.from('tree_members').select('person_id, role').eq('tree_id', treeId); if (me) throw me;
   const memberIds = (members || []).map(x => x.person_id);

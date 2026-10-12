@@ -209,6 +209,12 @@ button:disabled{opacity:.55;cursor:default}
 .tree-badge.left{left:-9px;background:var(--terracotta)}
 .tree-badge.left.open{background:var(--terracotta-deep,#a63f2c)}
 .tree-badge.right{right:-9px;background:var(--paper-raised);color:var(--plum)}
+.tree-badge.right.own-tree{background:#fff;padding:0;overflow:hidden;width:26px;height:26px;top:-10px}
+.tree-badge.right.own-tree img{width:100%;height:100%;object-fit:contain;display:block;pointer-events:none}
+.tree-badge.right.own-tree:hover{transform:scale(1.12)}
+.tree-view-banner{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;padding:10px 14px;border-radius:12px;background:var(--plum-tint);border:1px solid var(--line);font-size:13.5px}
+.tree-view-banner img{width:26px;height:26px;object-fit:contain}
+.tree-view-banner span{flex:1;min-width:200px}
 
 .branch-node.add-node{
   background:transparent;border:2px dashed var(--line);box-shadow:none;color:var(--ink-soft);
