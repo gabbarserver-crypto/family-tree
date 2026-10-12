@@ -1275,12 +1275,51 @@ async function saveAddRelative() {
 }
 
 /* ---------------- people ---------------- */
-function people() {
-  return `<div class="page-head"><h2>People</h2><p class="muted">Everyone connected to your family tree.</p></div>
-  <div class="list">${state.people.map(p => `<div class="row" style="cursor:pointer" onclick="openProfile('${p.id}')">
-    <div style="display:flex;gap:12px;align-items:center">${avatarHTML(p)}<div><strong>${esc(p.name)}</strong><div class="muted" style="font-size:12.5px">${p.me ? "Self" : deriveRelationship(me().id, p.id).label} · ${p.id}</div></div></div>
+let peopleQuery = "";
+let peopleSort = "name-asc";
+const PEOPLE_SORTS = {
+  "name-asc": "Name (A → Z)",
+  "name-desc": "Name (Z → A)",
+  "dob-asc": "Oldest first (DOB)",
+  "dob-desc": "Youngest first (DOB)",
+  "unclaimed": "Unclaimed first",
+  "newest": "Recently added"
+};
+function peopleListHTML() {
+  const q = peopleQuery.trim().toLowerCase();
+  let rows = state.people.map(p => ({ p, label: p.me ? "Self" : deriveRelationship(me().id, p.id).label }));
+  if (q) rows = rows.filter(({ p, label }) => [p.name, p.id, p.personCode, p.birthPlace, p.currentPlace, label].some(v => (v || "").toString().toLowerCase().includes(q)));
+  const byName = (a, b) => (a.p.name || "").localeCompare(b.p.name || "", undefined, { sensitivity: "base" });
+  const dob = r => r.p.dob || "";   // ISO strings sort correctly; empty DOB always goes last
+  const byDob = dir => (a, b) => (!dob(a) ? 1 : !dob(b) ? -1 : dir * dob(a).localeCompare(dob(b))) || byName(a, b);
+  const sorters = {
+    "name-asc": byName,
+    "name-desc": (a, b) => byName(b, a),
+    "dob-asc": byDob(1),
+    "dob-desc": byDob(-1),
+    "unclaimed": (a, b) => ((a.p.status === "unclaimed" ? 0 : 1) - (b.p.status === "unclaimed" ? 0 : 1)) || byName(a, b),
+    "newest": (a, b) => (b.p.created_at || "").localeCompare(a.p.created_at || "") || byName(a, b)
+  };
+  rows.sort(sorters[peopleSort] || byName);
+  const count = `<p class="muted" style="font-size:12.5px;margin:0 0 8px">${rows.length === state.people.length ? rows.length + " people" : rows.length + " of " + state.people.length + " people"}</p>`;
+  if (!rows.length) return count + '<div class="card"><p class="muted">Koi match nahi mila. Kuch aur search karke dekhein.</p></div>';
+  return count + `<div class="list">${rows.map(({ p, label }) => `<div class="row" style="cursor:pointer" onclick="openProfile('${p.id}')">
+    <div style="display:flex;gap:12px;align-items:center">${avatarHTML(p)}<div><strong>${esc(p.name)}</strong><div class="muted" style="font-size:12.5px">${esc(label)} · ${p.id}</div></div></div>
     <div style="display:flex;gap:8px;align-items:center">${p.status === "unclaimed" ? '<span class="badge">Unclaimed</span>' : '<span class="badge sage">Claimed</span>'}${canDeletePerson(p) ? `<button type="button" class="danger" style="padding:6px 12px;font-size:12.5px" title="Delete this profile" onclick="event.stopPropagation();deletePerson('${esc(p.id)}')">🗑 Delete</button>` : ""}</div>
   </div>`).join("")}</div>`;
+}
+function refreshPeopleList() { const el = document.getElementById("peopleList"); if (el) el.innerHTML = peopleListHTML(); }
+function setPeopleSearch(v) { peopleQuery = v || ""; refreshPeopleList(); }
+function clearPeopleSearch() { peopleQuery = ""; const i = document.getElementById("peopleSearch"); if (i) { i.value = ""; i.focus(); } refreshPeopleList(); }
+function setPeopleSort(v) { peopleSort = PEOPLE_SORTS[v] ? v : "name-asc"; refreshPeopleList(); }
+function people() {
+  return `<div class="page-head"><h2>People</h2><p class="muted">Everyone connected to your family tree.</p></div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+    <input id="peopleSearch" type="search" value="${esc(peopleQuery)}" placeholder="🔍 Search by name, relation, place or ID…" oninput="setPeopleSearch(this.value)" style="flex:1;min-width:220px">
+    <button type="button" class="secondary" onclick="clearPeopleSearch()">Clear</button>
+    <select id="peopleSort" onchange="setPeopleSort(this.value)" title="Sort by">${Object.entries(PEOPLE_SORTS).map(([k, l]) => `<option value="${k}"${k === peopleSort ? " selected" : ""}>${l}</option>`).join("")}</select>
+  </div>
+  <div id="peopleList">${peopleListHTML()}</div>`;
 }
 
 /* ---------------- V5: profile ---------------- */
@@ -1919,7 +1958,7 @@ async function importGedcomPicked(inputEl) {
     let linked = null;
     if (mine && mine.name) {
       const key = s => (s || "").toLowerCase().replace(/\s+/g, " ").trim();
-      const hit = people.find(p => key(p.name) === key(mine.name) && (!p.dob || !mine.dob || normalizeDate(mine.dob) === p.dob));
+      const hit = people.find(p => key(p.name) === key(mine.name)); // name match only: DOB in file may differ from profile; keep my own DOB
       if (hit) {
         rels.forEach(r => { if (r.from === hit.id) r.from = mine.id; if (r.to === hit.id) r.to = mine.id; });
         mine.details = { ...(mine.details || {}), gedcom_id: hit.details.gedcom_id };
@@ -1958,7 +1997,7 @@ Object.assign(window, {
   setAddRelativeMode, refreshExistingOptions, openMyProfile, saveProfileEdits, openEditProfile, closeEditProfile, openProfilePopup, openFullProfile, cancelEditProfile, deletePerson, searchRelativeByUid, linkByUniqueId, approveIncoming, rejectIncoming,
   loadMemories, addMemory, deleteMemory,
   runClaimSearch, requestClaim, cancelClaim, startFreshProfile, approveClaim, rejectClaim,
-  importGedcomPicked
+  importGedcomPicked, setPeopleSearch, clearPeopleSearch, setPeopleSort
 });
 
 window.addEventListener("hashchange", render);
@@ -2109,7 +2148,7 @@ async function loadProductionState(user) {
   const admin = await supabase.from('admin_roles').select('role').eq('profile_id', user.id).limit(1).maybeSingle();
   state.account.role = admin.data?.role || (staff.data ? 'support' : 'member');
   const peopleById = Object.fromEntries(people.map(p=>[p.id,p]));
-  state.people = people.map(p=>({id:p.id,personCode:p.person_code,name:p.full_name,gender:p.gender,status:p.status,dob:p.dob,mobile:p.mobile,email:p.email,avatar_url:p.avatar_url,me:p.claimed_by===user.id,claimed_by:p.claimed_by,created_by:p.created_by,privacy:'Family only',nickname:p.nickname,showNickname:p.show_nickname,birthPlace:p.birth_place,currentPlace:p.current_place,lifeStatus:p.life_status,details:p.details||{},treeRole:memberRoleById[p.id]||(p.claimed_by===user.id?'owner':'member'),savedRole:memberRoleById[p.id],external:!!p.__external}));
+  state.people = people.map(p=>({id:p.id,created_at:p.created_at,personCode:p.person_code,name:p.full_name,gender:p.gender,status:p.status,dob:p.dob,mobile:p.mobile,email:p.email,avatar_url:p.avatar_url,me:p.claimed_by===user.id,claimed_by:p.claimed_by,created_by:p.created_by,privacy:'Family only',nickname:p.nickname,showNickname:p.show_nickname,birthPlace:p.birth_place,currentPlace:p.current_place,lifeStatus:p.life_status,details:p.details||{},treeRole:memberRoleById[p.id]||(p.claimed_by===user.id?'owner':'member'),savedRole:memberRoleById[p.id],external:!!p.__external}));
   state.relationships=relationships;
   if (syncSpouseParents()) save();
   state.posts=(posts||[]).map(p=>({id:p.id,author:p.author_profile_id===user.id?state.account.name:'Family Member',text:p.body||'',likes:0,comments:0,author_profile_id:p.author_profile_id}));
