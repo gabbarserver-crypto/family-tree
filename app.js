@@ -726,7 +726,7 @@ function tree() {
 
 function addRelativeNode(typeKey, targetId) {
   const t = RELATION_TYPES[typeKey];
-  return `<div class="branch-node add-node" id="${nodeElId(placeholderId(typeKey, targetId))}" onclick="openAddRelative('${targetId}','${typeKey}')">+ Add ${t.label}</div>`;
+  return `<div class="branch-node add-node" id="${nodeElId(placeholderId(typeKey, targetId))}" data-ph="${typeKey}" data-target="${esc(targetId)}" onclick="openAddRelative('${targetId}','${typeKey}')">+ Add ${t.label}</div>`;
 }
 
 function kidsCaption(id) {
@@ -833,10 +833,112 @@ function treeFocusMe() { branchView = null; treeCenterId = me().id; treeReset();
 /* Draw the org-chart style connector lines (branch lines + junction dots)
    between rendered tree nodes, using their actual DOM positions so the
    layout always matches whatever the browser/flexbox produced. */
+/* ---- Tree row layout: every family's children sit directly UNDER their own parents ----
+   (instead of every generation row being centred as one block). Pure function: takes the measured
+   cards of each generation row (top to bottom) and returns an x position for every card.
+   Classic "tidy tree": a unit (person + partner) owns a slot as wide as its children need, sits
+   centred over them, and sibling families never overlap. */
+function computeTreeRowLayout(rows, opts) {
+  const GAP = (opts && opts.gap) || 30, UNIT_GAP = (opts && opts.unitGap) || 38;
+  const inTree = new Set();
+  rows.forEach(r => r.forEach(c => { if (c.pid) inTree.add(c.pid); }));
+  const present = id => inTree.has(id);
+  const famParents = childId => {
+    let ps = parentsOf(childId).filter(present);
+    if (ps.length === 1) {
+      const sp = spousesOf(ps[0]).find(x => present(x) && !ps.includes(x) && childrenOf(ps[0]).some(c => c !== childId && parentsOf(c).includes(x)));
+      if (sp) ps = [ps[0], sp];
+    }
+    return ps;
+  };
+  const parentsFor = c => {
+    if (c.pid) return famParents(c.pid);
+    if (c.ph === "brother" || c.ph === "sister") return famParents(c.target);
+    if (c.ph === "son" || c.ph === "daughter") {
+      const firstKid = childrenOf(c.target).find(k => present(k));
+      if (firstKid) return famParents(firstKid);
+      return [c.target, spousesOf(c.target).find(present)].filter(x => x && present(x));
+    }
+    return [];
+  };
+  const isParentPh = c => c.ph === "father" || c.ph === "mother";
+  const partner1 = (a, b) => // is b the partner of a?
+    (a.pid && b.pid && (spousesOf(a.pid).includes(b.pid) || spousesOf(b.pid).includes(a.pid))) ||
+    ((b.ph === "husband" || b.ph === "wife") && b.target === a.pid) ||
+    (isParentPh(b) && a.pid && parentsOf(b.target).includes(a.pid)) ||
+    (isParentPh(a) && b.pid && parentsOf(a.target).includes(b.pid)) ||
+    (isParentPh(a) && isParentPh(b) && a.target === b.target);
+  const partner = (a, b) => !!a && !!b && (partner1(a, b) || partner1(b, a));
+
+  // 1) units per row (a person + their partner / "Add partner" box)
+  const unitsByRow = rows.map(cards => {
+    const us = [];
+    cards.forEach((c, i) => { const u = us[us.length - 1]; if (u && partner(cards[i - 1], c)) u.cards.push(c); else us.push({ cards: [c], kids: [], parent: null }); });
+    us.forEach(u => { u.w = u.cards.reduce((t, c) => t + c.w, 0) + GAP * (u.cards.length - 1); u.pids = u.cards.map(c => c.pid).filter(Boolean); });
+    return us;
+  });
+  // 2) link every unit to the unit of its parents in the row above
+  unitsByRow.forEach((us, r) => {
+    const next = unitsByRow[r + 1] || [];
+    us.forEach(u => next.forEach(k => {
+      if (k.parent) return;
+      const hit = k.cards.some(c => parentsFor(c).some(p => u.pids.includes(p))) ||
+        u.cards.some(c => isParentPh(c) && k.pids.includes(c.target));
+      if (hit) { k.parent = u; u.kids.push(k); }
+    }));
+  });
+  // 3) slot width = widest of (the unit itself, all its children side by side)
+  const slot = u => {
+    if (u.slot !== undefined) return u.slot;
+    u.kidsW = u.kids.length ? u.kids.reduce((t, k) => t + slot(k), 0) + UNIT_GAP * (u.kids.length - 1) : 0;
+    return (u.slot = Math.max(u.w, u.kidsW));
+  };
+  const left = new Map();
+  const place = (u, edge) => {
+    let x = edge + (slot(u) - u.w) / 2;
+    u.cards.forEach(c => { left.set(c.key, x); x += c.w + GAP; });
+    let kx = edge + (u.slot - u.kidsW) / 2;
+    u.kids.forEach(k => { place(k, kx); kx += k.slot + UNIT_GAP; });
+  };
+  // 4) place every family tree that starts at a unit without parents, left to right
+  unitsByRow.forEach((us, r) => us.forEach(u => {
+    if (u.parent) return;
+    let edge = 0;
+    rows.forEach((cards, rr) => cards.forEach(c => { if (left.has(c.key)) edge = Math.max(edge, left.get(c.key) + c.w + UNIT_GAP); }));
+    place(u, edge);
+  }));
+  const all = rows.flat();
+  const minX = Math.min(...all.map(c => left.get(c.key)));
+  const maxX = Math.max(...all.map(c => left.get(c.key) + c.w));
+  return { positions: all.map(c => ({ key: c.key, x: left.get(c.key) - minX })), width: maxX - minX };
+}
+function layoutTreeRows(stage) {
+  const rowEls = [...stage.querySelectorAll(":scope > .gen")];
+  if (!rowEls.length) return;
+  const elToPid = new Map(state.people.map(p => [nodeElId(p.id), p.id]));
+  rowEls.forEach(row => {
+    row.style.cssText = "";
+    [...row.children].forEach(el => {
+      if (el.dataset.basePos === undefined) el.dataset.basePos = el.style.position || "";
+      el.style.position = el.dataset.basePos; el.style.left = ""; el.style.top = ""; el.style.flex = "";
+    });
+  });
+  const rows = rowEls.map(row => [...row.children].map(el => ({ el, key: el.id, pid: elToPid.get(el.id) || null, ph: el.dataset.ph || null, target: el.dataset.target || null, w: el.offsetWidth, h: el.offsetHeight })));
+  const res = computeTreeRowLayout(rows);
+  const posOf = new Map(res.positions.map(p => [p.key, p.x]));
+  rowEls.forEach((row, i) => {
+    const cs = getComputedStyle(row), pad = parseFloat(cs.paddingBottom) || 0;
+    const maxH = Math.max(...rows[i].map(c => c.h));
+    row.style.display = "block"; row.style.position = "relative"; row.style.width = res.width + "px";
+    row.style.height = (cs.boxSizing === "border-box" ? maxH + pad : maxH) + "px";
+    rows[i].forEach(c => { c.el.style.position = "absolute"; c.el.style.top = "0"; c.el.style.left = posOf.get(c.key) + "px"; c.el.style.flex = "none"; });
+  });
+}
 function drawTreeConnectors() {
   const stage = document.getElementById("treeStage");
   const svg = document.getElementById("treeLines");
   if (!stage || !svg) return;
+  layoutTreeRows(stage);
   const LINE = "#c9bfa8", DOT = "#4a2e6b";
   const get = key => document.getElementById(nodeElId(key));
   // IMPORTANT: .gen rows are position:relative, so offsetLeft/offsetTop are relative to the ROW,
@@ -2049,6 +2151,7 @@ function renderChatMessages(stick = true) {
 function chat() {
   const members = state.people.filter(p => p.status === "claimed").length;
   return `<div class="page-head"><h2>💬 Family Chat</h2><p class="muted">Poore parivaar ka ek group chat${members ? ` · ${members} active member${members === 1 ? "" : "s"}` : ""}.</p></div>
+  <div class="chat-layout">
   <div class="card chat-card">
     <div class="chat-room" id="chatBox"><p class="muted" style="text-align:center">Loading…</p></div>
     <div class="chat-compose">
@@ -2056,19 +2159,41 @@ function chat() {
       <button class="primary" onclick="sendChat()">Send ➤</button>
     </div>
     <div id="chatNote" class="muted" style="font-size:12px;margin-top:6px"></div>
+  </div>
+  <aside class="card chat-members"><h3>Members <span class="chat-online-count" id="chatOnlineCount"></span></h3><div id="chatMembers">${chatMembersHTML()}</div></aside>
   </div>`;
+}
+/* Members panel: ONLY claimed profiles (real people with an account), online ones first. */
+let chatOnline = new Set(); // profile ids currently in the chat (Supabase Realtime presence)
+function chatMembersHTML() {
+  const claimed = state.people.filter(p => p.status === "claimed" && !(p.details && p.details.deleted));
+  const isOn = p => p.me || (p.claimed_by && chatOnline.has(p.claimed_by));
+  const list = claimed.map(p => ({ p, on: !!isOn(p) })).sort((a, b) => (b.on - a.on) || a.p.name.localeCompare(b.p.name));
+  if (!list.length) return `<p class="muted" style="font-size:13px">Abhi koi claimed member nahi hai.</p>`;
+  const row = ({ p, on }) => `<div class="chat-member" onclick="openProfilePopup('${esc(p.id)}')" title="View profile">
+    <span class="chat-member-av">${avatarHTML(p)}<i class="presence ${on ? "on" : ""}"></i></span>
+    <span class="chat-member-name">${esc(p.name)}${p.me ? " <small class='muted'>(you)</small>" : ""}<small class="${on ? "online-txt" : "muted"}">${on ? "Online" : "Offline"}</small></span></div>`;
+  const on = list.filter(x => x.on), off = list.filter(x => !x.on);
+  return (on.length ? `<div class="chat-group-label">Online · ${on.length}</div>${on.map(row).join("")}` : "")
+    + (off.length ? `<div class="chat-group-label">Offline · ${off.length}</div>${off.map(row).join("")}` : "");
+}
+function renderChatMembers() {
+  const box = document.getElementById("chatMembers"); if (!box) return;
+  box.innerHTML = chatMembersHTML();
+  const n = state.people.filter(p => p.status === "claimed" && (p.me || (p.claimed_by && chatOnline.has(p.claimed_by)))).length;
+  const c = document.getElementById("chatOnlineCount"); if (c) c.innerHTML = `<i class="presence on"></i> ${n} online`;
 }
 async function initChat() {
   const note = document.getElementById("chatNote");
   chatReady = false;
   if (!supabase || !currentUser || !state.treeId) {
-    chatLocalOnly = true; renderChatMessages();
+    chatLocalOnly = true; chatOnline = new Set(); renderChatMessages(); renderChatMembers();
     if (note) note.textContent = "Demo mode: messages sirf is session mein dikhenge.";
     return;
   }
   const { data, error } = await supabase.from("chat_messages").select("*").eq("tree_id", state.treeId).order("created_at", { ascending: false }).limit(200);
   if (error) {
-    chatLocalOnly = true; chatMessages = chatMessages.filter(m => m.local); renderChatMessages();
+    chatLocalOnly = true; chatMessages = chatMessages.filter(m => m.local); renderChatMessages(); renderChatMembers();
     if (note) note.textContent = /chat_messages|relation|schema cache/i.test(error.message) ? "Chat shuru karne ke liye Supabase mein supabase-chat.sql run kijiye." : error.message;
     return;
   }
@@ -2077,7 +2202,11 @@ async function initChat() {
   renderChatMessages(true);
   chatReady = true;
   teardownChat(true);
-  chatChannel = supabase.channel("chat-" + state.treeId)
+  chatOnline = new Set([currentUser.id]); renderChatMembers();
+  chatChannel = supabase.channel("chat-" + state.treeId, { config: { presence: { key: currentUser.id } } })
+    .on("presence", { event: "sync" }, () => {
+      chatOnline = new Set(Object.keys(chatChannel.presenceState())); renderChatMembers();
+    })
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "chat_messages", filter: "tree_id=eq." + state.treeId }, payload => {
       if (chatMessages.some(m => m.id === payload.new.id)) return;
       chatMessages.push(payload.new); renderChatMessages(chatMine(payload.new));
@@ -2085,10 +2214,11 @@ async function initChat() {
     .on("postgres_changes", { event: "DELETE", schema: "public", table: "chat_messages" }, payload => {
       chatMessages = chatMessages.filter(m => m.id !== payload.old.id); renderChatMessages(false);
     })
-    .subscribe();
+    .subscribe(status => { if (status === "SUBSCRIBED") chatChannel.track({ name: state.account.name || "", at: new Date().toISOString() }); });
 }
 function teardownChat(keepMessages) {
-  if (chatChannel && supabase) { supabase.removeChannel(chatChannel); chatChannel = null; }
+  if (chatChannel && supabase) { try { chatChannel.untrack(); } catch (e) {} supabase.removeChannel(chatChannel); chatChannel = null; }
+  if (!keepMessages) chatOnline = new Set();
   if (!keepMessages) chatReady = false;
 }
 function chatKey(e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } }
@@ -2138,7 +2268,7 @@ function sharing() {
     <div class="field"><label>Scope</label><select id="inviteScope"><option>Person profile</option><option>Family tree</option></select></div>
     <button class="primary" style="justify-self:start" onclick="invite()">Send Invite</button>
   </div>
-  ${(state.incomingClaims || []).length ? `<div class="card"><h3>Profile claim requests</h3>${state.incomingClaims.map(r => `<div class="row"><span><b>${esc(r.requester_name || "Someone")}</b> says the profile <b>${esc(r.person_name)}</b> that you added is them.<br><span class="muted" style="font-size:12.5px">Approve only if you know this person. They will get control of that profile.</span></span>
+  ${(state.incomingClaims || []).length ? `<div class="card"><h3>Profile claim requests</h3>${state.incomingClaims.map(r => `<div class="row"><span><b>${esc(r.requester_name || "Someone")}</b> says the profile <b>${esc(r.person_name)}</b> is them.<br><span class="muted" style="font-size:12.5px">Any tree admin can approve. Approve only if you know this person. They will get control of that profile.</span></span>
       <span style="display:flex;gap:8px"><button class="primary" onclick="approveClaim('${esc(r.request_id)}')">Approve</button><button class="ghost" onclick="rejectClaim('${esc(r.request_id)}')">Decline</button></span></div>`).join("")}</div>` : ""}
   ${(state.incoming || []).length ? `<div class="card"><h3>Connection requests for you</h3>${state.incoming.map(r => {
     const rl = RELATION_TYPES[r.relation_type]?.label;

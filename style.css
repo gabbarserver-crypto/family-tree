@@ -323,3 +323,21 @@ button:disabled{opacity:.55;cursor:default}
 .chat-compose textarea:focus{border-color:var(--plum);background:#fff;outline:0}
 .chat-card #chatNote{padding:0 16px 10px}
 @media (max-width:760px){.chat-room{height:calc(100vh - 300px)}.chat-bubble{max-width:86%}}
+
+/* chat members / presence */
+.chat-layout{display:grid;grid-template-columns:minmax(0,1fr) 270px;gap:16px;align-items:start}
+.chat-members{margin:0;max-height:calc(min(62vh,560px) + 120px);overflow-y:auto}
+.chat-members h3{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.chat-online-count{font-family:var(--font-body);font-size:12px;font-weight:700;color:var(--sage);display:inline-flex;align-items:center;gap:5px}
+.chat-group-label{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-soft);font-weight:700;margin:12px 0 4px}
+.chat-member{display:flex;align-items:center;gap:10px;padding:7px 6px;border-radius:12px;cursor:pointer}
+.chat-member:hover{background:var(--plum-tint)}
+.chat-member-av{position:relative;display:inline-flex}
+.chat-member-av .avatar{width:34px;height:34px;font-size:12px}
+.presence{display:inline-block;width:9px;height:9px;border-radius:50%;background:#c8c0d3;border:2px solid var(--paper-raised);box-sizing:content-box}
+.chat-member-av .presence{position:absolute;right:-2px;bottom:-2px}
+.presence.on{background:#2fa866}
+.chat-member-name{display:flex;flex-direction:column;font-size:13.5px;font-weight:600;min-width:0}
+.chat-member-name small{font-size:11px;font-weight:600}
+.online-txt{color:#2fa866}
+@media (max-width:900px){.chat-layout{grid-template-columns:1fr}.chat-members{max-height:240px;order:-1}}
