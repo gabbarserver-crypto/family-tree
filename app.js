@@ -128,13 +128,20 @@ function normalizeDate(v) { if (!v) return null; const d = new Date(v); return N
 function initials(n) { return n.split(" ").map(x => x[0]).slice(0, 2).join("").toUpperCase(); }
 function avatarHTML(p, cls) {
   cls = cls || "";
-  if (p.avatar_url) return `<div class="avatar ${cls}" style="padding:0;overflow:hidden"><img src="${esc(p.avatar_url)}" alt="${esc(p.name)}" style="width:100%;height:100%;object-fit:cover;border-radius:inherit"></div>`;
   const [bg, fg] = avatarPalette(p);
+  // If the photo link is dead (404 / expired short link) the onerror handler swaps in the initials avatar.
+  if (p.avatar_url) return `<div class="avatar ${cls}" style="padding:0;overflow:hidden"><img src="${esc(p.avatar_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-ini="${esc(initials(p.name))}" data-bg="${bg}" data-fg="${fg}" onerror="avatarFallback(this)" style="width:100%;height:100%;object-fit:cover;border-radius:inherit"></div>`;
   return `<div class="avatar ${cls}" style="background:${bg};color:${fg}">${esc(initials(p.name))}</div>`;
 }
 /* Gender-based tint (blue/rose, the common family-tree convention), with a
    deterministic hash-based fallback palette when gender isn't set, so the
    same person always gets the same color without needing to store one. */
+function avatarFallback(img) {
+  const b = img.parentNode; if (!b) return;
+  b.style.padding = ""; b.style.overflow = "";
+  b.style.background = img.dataset.bg; b.style.color = img.dataset.fg;
+  b.textContent = img.dataset.ini;
+}
 function avatarPalette(p) {
   if (p.gender === "Male") return ["#e6effb", "#2f6fb8"];
   if (p.gender === "Female") return ["#fbe4ec", "#c23572"];
@@ -411,7 +418,7 @@ const NAV = [
     ["treeAdmins", "Tree Admins", "👑"]
   ]},
   { group: "Social", items: [
-    ["wall", "Family Wall", "📝"], ["reels", "Reels", "🎬"], ["sharing", "Connections", "🔗🤝"]
+    ["wall", "Family Wall", "📝"], ["chat", "Family Chat", "💬"], ["reels", "Reels", "🎬"], ["sharing", "Connections", "🔗🤝"]
   ]},
   { group: "Account", items: [
     ["profile", "My Profile", "👤"], ["support", "Support", "🎧"]
@@ -456,14 +463,15 @@ async function logout() { skipClaimSearch = false; if (supabase) await supabase.
 
 /* ---------------- shell ---------------- */
 function topCenterHTML(page) {
-  if (page !== "tree" && page !== "wall") return "";
+  if (page !== "tree" && page !== "wall" && page !== "chat") return "";
   const search = page === "tree" ? `<input id="treeSearch" class="top-search" placeholder="Search by name or Person ID…" list="treeSearchList" onchange="treeSearch(this.value)"><datalist id="treeSearchList">${state.people.map(p => `<option value="${esc(p.name)} (${p.id})">`).join("")}</datalist>` : "";
-  return `<div class="topbar-center"><span class="top-title">${treeViewing ? esc(treeViewing.ownerName) + "'s Family Tree" : "My Family Tree"}</span>${search}<div class="view-switch"><button class="${page === "tree" ? "active" : ""}" onclick="go('tree')">Family Tree</button><button class="${page === "wall" ? "active" : ""}" onclick="go('wall')">Family Wall</button></div></div>`;
+  return `<div class="topbar-center"><span class="top-title">${treeViewing ? esc(treeViewing.ownerName) + "'s Family Tree" : "My Family Tree"}</span>${search}<div class="view-switch"><button class="${page === "tree" ? "active" : ""}" onclick="go('tree')">Family Tree</button><button class="${page === "wall" ? "active" : ""}" onclick="go('wall')">Family Wall</button><button class="${page === "chat" ? "active" : ""}" onclick="go('chat')">💬 Chat</button></div></div>`;
 }
 function render() {
   if (!loggedIn) { renderLogin(); return; }
   const page = (location.hash || "#home").slice(1);
   if (treeViewing && page !== "tree" && page !== "profile") exitTreeView(false);
+  if (page !== "chat") teardownChat();
   const app = document.getElementById("app");
   const flatNav = NAV.flatMap(g => g.items).filter(([id]) => id !== "add" || canEditTree()).concat(isStaff() ? ADMIN_NAV.items : []);
   app.innerHTML = `<div class="shell">
@@ -480,10 +488,11 @@ function render() {
       <aside class="sidebar">${navHTML(page)}</aside>
       <main class="content${page === "tree" ? " content-wide" : ""}">${pageView(page)}</main>
     </div>
-    <nav class="bottomnav">${flatNav.slice(0, 6).map(([id, label, icon]) => navItem(id, label, icon, page)).join("")}</nav>
+    <nav class="bottomnav">${["home", "tree", "people", "wall", "chat", "profile"].map(id => flatNav.find(x => x[0] === id)).filter(Boolean).map(([id, label, icon]) => navItem(id, label, icon, page)).join("")}</nav>
   </div>`;
   if (page === "tree") requestAnimationFrame(drawTreeConnectors);
   if (page === "merge") mergeInitSelects();
+  if (page === "chat") requestAnimationFrame(initChat);
   if (page === "profile") requestAnimationFrame(() => loadMemories(activeProfileId || me()?.id));
 }
 function switchRole() {}
@@ -491,7 +500,7 @@ function switchRole() {}
 function pageView(p) {
   const map = {
     home, tree, add, addRelative, people, merge, relationship, profile: () => profile(activeProfileId || me().id),
-    wall, reels, sharing, support, admin, production, treeAdmins
+    wall, chat, reels, sharing, support, admin, production, treeAdmins
   };
   if ((p === "admin" || p === "production") && !isStaff()) return accessDenied();
   if (p === "add" && !canEditTree()) return accessDenied("Tree admin access required", "Only this tree's owner or admins can add relatives. Ask the owner to promote you from the Tree Admins page.");
@@ -937,31 +946,73 @@ function drawTreeConnectors() {
     const kx = kr.map(o => o.r.x + o.r.w / 2);
     info.push({ dropX, startY, bottomStart, kids: kr, pBottom, kTop, minX: Math.min(dropX, ...kx), maxX: Math.max(dropX, ...kx) });
   });
-  // Give overlapping families their own horizontal "lane" so bus lines never merge into one tangle.
+  // ---- Every family unit (a couple + THEIR children) gets its own bus line ("lane"). ----
+  // Lanes are ordered so that as few lines as possible cross each other, and any crossing that is
+  // still unavoidable is drawn as a small "hop" so it never looks like two families are joined.
+  info.forEach((u, i) => { u.uid = i; u.straight = u.kids.length === 1 && Math.abs(u.maxX - u.minX) < 1.5; });
   const laneGroups = {};
-  info.forEach(u => { const k = u.pBottom + "|" + u.kTop; (laneGroups[k] = laneGroups[k] || []).push(u); });
-  Object.values(laneGroups).forEach(list => {
-    list.sort((a, b) => a.minX - b.minX);
-    const lanes = [];
-    list.forEach(u => {
-      let lane = lanes.findIndex(l => l.every(([a, b]) => u.maxX + 14 < a || u.minX - 14 > b));
-      if (lane < 0) { lane = lanes.length; lanes.push([]); }
-      lanes[lane].push([u.minX, u.maxX]);
-      u.lane = lane;
-    });
-    list.forEach(u => { u.laneCount = lanes.length; });
-  });
+  info.filter(u => !u.straight).forEach(u => { const k = u.pBottom + "|" + u.kTop; (laneGroups[k] = laneGroups[k] || []).push(u); });
+  Object.values(laneGroups).forEach(assignConnectorLanes);
+
+  const H = [], V = [], dots = [];
   info.forEach(u => {
+    if (u.bottomStart) dots.push([u.dropX, u.startY]);
+    if (u.straight) { // one child straight below its parents: no bus needed
+      const o = u.kids[0], cx = o.r.x + o.r.w / 2;
+      V.push({ x: cx, y1: u.startY, y2: o.r.y, uid: u.uid }); dots.push([cx, o.r.y]);
+      return;
+    }
     const busY = u.pBottom + (u.kTop - u.pBottom) * (u.lane + 1) / (u.laneCount + 1);
-    if (u.bottomStart) dot(u.dropX, u.startY);
-    line(u.dropX, u.startY, u.dropX, busY);
-    if (u.minX < u.maxX) line(u.minX, busY, u.maxX, busY);
-    u.kids.forEach(o => { const cx = o.r.x + o.r.w / 2; line(cx, busY, cx, o.r.y); dot(cx, o.r.y); });
+    V.push({ x: u.dropX, y1: u.startY, y2: busY, uid: u.uid });
+    if (u.minX < u.maxX) H.push({ y: busY, x1: u.minX, x2: u.maxX, uid: u.uid });
+    u.kids.forEach(o => { const cx = o.r.x + o.r.w / 2; V.push({ x: cx, y1: busY, y2: o.r.y, uid: u.uid }); dots.push([cx, o.r.y]); });
   });
+  H.forEach(h => line(h.x1, h.y, h.x2, h.y));
+  const HOP = 5;
+  V.forEach(v => {
+    const cuts = H.filter(h => h.uid !== v.uid && h.y > v.y1 + HOP + 2 && h.y < v.y2 - HOP - 2 && v.x > h.x1 + 3 && v.x < h.x2 - 3).map(h => h.y).sort((a, b) => a - b);
+    let d = `M ${v.x} ${v.y1}`;
+    cuts.forEach(y => { d += ` V ${y - HOP} A ${HOP} ${HOP} 0 0 1 ${v.x} ${y + HOP}`; });
+    d += ` V ${v.y2}`;
+    parts.push(`<path d="${d}" fill="none" stroke="${LINE}" stroke-width="2"/>`);
+  });
+  dots.forEach(([x, y]) => dot(x, y));
 
   svg.setAttribute("width", stage.scrollWidth);
   svg.setAttribute("height", stage.scrollHeight);
   svg.innerHTML = parts.join("");
+}
+/* Choose the vertical order (lane) of the family bus lines inside one parent-row/child-row gap.
+   Tries every order (up to 7 families) and keeps the one with the fewest line crossings. */
+function assignConnectorLanes(list) {
+  list.sort((a, b) => a.minX - b.minX);
+  const EPS = 0.5;
+  const overlap = (a, b) => !(a.maxX + 14 < b.minX || a.minX - 14 > b.maxX);
+  const inside = (x, u) => x > u.minX + EPS && x < u.maxX - EPS;
+  const crossCost = (a, b) => { // a's bus is ABOVE b's bus
+    let c = 0;
+    a.kids.forEach(o => { if (inside(o.r.x + o.r.w / 2, b)) c++; }); // a child drop of a passes b's bus
+    if (inside(b.dropX, a)) c++;                                     // b's parent drop passes a's bus
+    return c;
+  };
+  const layout = order => {
+    const lane = new Map(); let cost = 0, maxLane = 0;
+    order.forEach((u, i) => {
+      let l = 0;
+      for (let j = 0; j < i; j++) { const v = order[j]; if (overlap(u, v)) { l = Math.max(l, lane.get(v) + 1); cost += crossCost(v, u); } }
+      lane.set(u, l); if (l > maxLane) maxLane = l;
+    });
+    return { lane, maxLane, cost: cost * 100 + maxLane };
+  };
+  let best = layout(list);
+  if (list.length > 1 && list.length <= 7) {
+    const perm = (arr, k) => {
+      if (k === arr.length) { const r = layout(arr); if (r.cost < best.cost) best = r; return; }
+      for (let i = k; i < arr.length; i++) { [arr[k], arr[i]] = [arr[i], arr[k]]; perm(arr, k + 1); [arr[k], arr[i]] = [arr[i], arr[k]]; }
+    };
+    perm(list.slice(), 0);
+  }
+  list.forEach(u => { u.lane = best.lane.get(u); u.laneCount = best.maxLane + 1; });
 }
 window.addEventListener("resize", () => { if ((location.hash || "").slice(1) === "tree") drawTreeConnectors(); });
 
@@ -1965,6 +2016,99 @@ async function publishPost() {
 function likePost(id) { const p = state.posts.find(x => x.id === id); if (p) { p.likes++; save(); go("wall"); } }
 
 /* ---------------- V8: reels ---------------- */
+
+/* ---------------- Family Chat (one group chat per family tree) ---------------- */
+let chatMessages = [];
+let chatChannel = null;
+let chatReady = false;
+let chatLocalOnly = false; // true when the chat_messages table isn't installed yet / no Supabase
+function chatMine(m) { return m.sender_profile_id ? (currentUser && m.sender_profile_id === currentUser.id) : m.local === true; }
+function chatTime(iso) {
+  const d = new Date(iso); if (Number.isNaN(d.getTime())) return "";
+  const today = new Date().toDateString() === d.toDateString();
+  const t = d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+  return today ? t : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) + ", " + t;
+}
+function chatBubbleHTML(m, prev) {
+  const mine = chatMine(m);
+  const showName = !mine && (!prev || prev.sender_profile_id !== m.sender_profile_id);
+  const name = m.sender_name || "Family Member";
+  return `<div class="chat-msg ${mine ? "mine" : "theirs"}">
+    ${mine ? "" : `<div class="avatar chat-av" style="${showName ? "" : "visibility:hidden"}">${esc(initials(name))}</div>`}
+    <div class="chat-bubble">${showName ? `<div class="chat-name">${esc(name)}</div>` : ""}<div class="chat-text">${esc(m.body)}</div><div class="chat-time">${esc(chatTime(m.created_at))}</div></div>
+  </div>`;
+}
+function renderChatMessages(stick = true) {
+  const box = document.getElementById("chatBox"); if (!box) return;
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  box.innerHTML = chatMessages.length
+    ? chatMessages.map((m, i) => chatBubbleHTML(m, chatMessages[i - 1])).join("")
+    : `<div class="empty"><span class="big">💬</span><p class="muted">Abhi koi message nahi. Pehla message bhejiye!</p></div>`;
+  if (stick || nearBottom) box.scrollTop = box.scrollHeight;
+}
+function chat() {
+  const members = state.people.filter(p => p.status === "claimed").length;
+  return `<div class="page-head"><h2>💬 Family Chat</h2><p class="muted">Poore parivaar ka ek group chat${members ? ` · ${members} active member${members === 1 ? "" : "s"}` : ""}.</p></div>
+  <div class="card chat-card">
+    <div class="chat-room" id="chatBox"><p class="muted" style="text-align:center">Loading…</p></div>
+    <div class="chat-compose">
+      <textarea id="chatInput" rows="1" placeholder="Parivaar ko message likhiye…" maxlength="2000" onkeydown="chatKey(event)" oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px'"></textarea>
+      <button class="primary" onclick="sendChat()">Send ➤</button>
+    </div>
+    <div id="chatNote" class="muted" style="font-size:12px;margin-top:6px"></div>
+  </div>`;
+}
+async function initChat() {
+  const note = document.getElementById("chatNote");
+  chatReady = false;
+  if (!supabase || !currentUser || !state.treeId) {
+    chatLocalOnly = true; renderChatMessages();
+    if (note) note.textContent = "Demo mode: messages sirf is session mein dikhenge.";
+    return;
+  }
+  const { data, error } = await supabase.from("chat_messages").select("*").eq("tree_id", state.treeId).order("created_at", { ascending: false }).limit(200);
+  if (error) {
+    chatLocalOnly = true; chatMessages = chatMessages.filter(m => m.local); renderChatMessages();
+    if (note) note.textContent = /chat_messages|relation|schema cache/i.test(error.message) ? "Chat shuru karne ke liye Supabase mein supabase-chat.sql run kijiye." : error.message;
+    return;
+  }
+  chatLocalOnly = false;
+  chatMessages = (data || []).reverse();
+  renderChatMessages(true);
+  chatReady = true;
+  teardownChat(true);
+  chatChannel = supabase.channel("chat-" + state.treeId)
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "chat_messages", filter: "tree_id=eq." + state.treeId }, payload => {
+      if (chatMessages.some(m => m.id === payload.new.id)) return;
+      chatMessages.push(payload.new); renderChatMessages(chatMine(payload.new));
+    })
+    .on("postgres_changes", { event: "DELETE", schema: "public", table: "chat_messages" }, payload => {
+      chatMessages = chatMessages.filter(m => m.id !== payload.old.id); renderChatMessages(false);
+    })
+    .subscribe();
+}
+function teardownChat(keepMessages) {
+  if (chatChannel && supabase) { supabase.removeChannel(chatChannel); chatChannel = null; }
+  if (!keepMessages) chatReady = false;
+}
+function chatKey(e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } }
+async function sendChat() {
+  const box = document.getElementById("chatInput"); if (!box) return;
+  const body = box.value.trim(); if (!body) return;
+  if (body.length > 2000) return toast("Message bahut lamba hai (max 2000)");
+  const name = state.account.name || "Family Member";
+  if (!chatLocalOnly && supabase && currentUser && state.treeId) {
+    box.disabled = true;
+    const { data, error } = await supabase.from("chat_messages").insert({ tree_id: state.treeId, sender_profile_id: currentUser.id, sender_name: name, body }).select().single();
+    box.disabled = false;
+    if (error) { toast(error.message); box.focus(); return; }
+    if (!chatMessages.some(m => m.id === data.id)) chatMessages.push(data);
+  } else {
+    chatMessages.push({ id: crypto.randomUUID(), local: true, sender_name: name, body, created_at: new Date().toISOString() });
+  }
+  box.value = ""; box.style.height = "auto"; renderChatMessages(true); box.focus();
+}
+
 function reels() {
   return `<div class="page-head"><h2>Reels</h2><p class="muted">Short family videos — family only.</p></div>
   <button class="primary" style="margin-bottom:12px" onclick="toast('Demo: upload reel → Supabase Storage')">＋ Upload Reel</button>
@@ -2169,6 +2313,32 @@ function production() {
 }
 
 /* ---- GEDCOM import ---- */
+/* GEDCOM files carry photo URLs that can be short-lived (they 404 a day later). Copy each photo into our own
+   "avatars" bucket right now; if a photo can't be fetched, drop the dead link so the card shows initials. */
+async function persistImportedPhotos(people) {
+  const list = people.filter(p => p.avatar_url && /^https?:/i.test(p.avatar_url) && !String(p.avatar_url).includes("/storage/v1/object/public/avatars/"));
+  if (!list.length) return;
+  toast(`${list.length} photo save ho rahi hain…`);
+  let ok = 0, lost = 0, i = 0;
+  const worker = async () => {
+    while (i < list.length) {
+      const p = list[i++];
+      try {
+        const res = await fetch(p.avatar_url);
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const blob = await res.blob();
+        if (!/^image\//.test(blob.type)) throw new Error("not an image");
+        const ext = (blob.type.split("/")[1] || "jpg").replace("jpeg", "jpg").split("+")[0];
+        const path = `${currentUser.id}/${p.id}-${Date.now()}.${ext}`;
+        const { error } = await supabase.storage.from("avatars").upload(path, blob, { upsert: true, cacheControl: "3600", contentType: blob.type });
+        if (error) throw error;
+        p.avatar_url = supabase.storage.from("avatars").getPublicUrl(path).data.publicUrl; ok++;
+      } catch (e) { console.warn("photo import failed for", p.name, e); p.details = { ...(p.details || {}), source_photo: p.avatar_url }; p.avatar_url = null; lost++; }
+    }
+  };
+  await Promise.all([worker(), worker(), worker(), worker()]);
+  toast(`Photos: ${ok} save hui` + (lost ? `, ${lost} download nahi ho paayi` : ""));
+}
 async function importGedcomPicked(inputEl) {
   const file = inputEl.files && inputEl.files[0];
   inputEl.value = "";                       // allow picking the same file again
@@ -2202,6 +2372,7 @@ async function importGedcomPicked(inputEl) {
       }
     }
 
+    await persistImportedPhotos(people);
     const have = new Set(state.relationships.map(r => `${r.type}|${r.from}|${r.to}`));
     const newRels = rels.filter(r => !have.has(`${r.type}|${r.from}|${r.to}`));
     state.people.push(...people);
@@ -2218,6 +2389,7 @@ async function importGedcomPicked(inputEl) {
    scoped to the module — they are NOT attached to window automatically
    the way classic <script> globals are. */
 Object.assign(window, {
+  avatarFallback, sendChat, chatKey,
   openPersonTree, exitTreeView, openBranch, exitBranch,
   openChangeEmail, saveNewEmail,
   acceptConnection, addRelative, approveMerge, centerTree, changePhoto, compareMerge, mergeSelectedGroups,
