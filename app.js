@@ -79,6 +79,8 @@ let state = { account: {}, people: [], relationships: [], connections: [], merge
 let loggedIn = false;
 let currentUser = null;
 let treeScale = 1;
+const removedEdgeKeys = new Set(); // links the user removed on purpose (so auto-fixers never re-create them)
+const edgeKey = (a, b, t) => t === "spouse" ? [a, b].sort().join("|") + "|spouse" : a + "|" + b + "|" + t;
 let activeProfileId = null;
 let activeTicketId = null;
 let addRelativeTargetId = null;
@@ -199,6 +201,7 @@ function addEdge(from, to, type) {
   if (from === to) return null;
   if (edgeExists(from, to, type)) return null; // acceptance test 7: no duplicate edges
   const e = { id: nextRelId(), from, to, type, status: "confirmed" };
+  removedEdgeKeys.delete(edgeKey(from, to, type));
   state.relationships.push(e);
   return e;
 }
@@ -711,10 +714,10 @@ function tree() {
   const bp = branchView && personById(branchView.id);
   const banner2 = bp ? `<div class="tree-view-banner"><span><b>${esc(bp.name)}</b> ki family tree (unke parents, bhai-behen aur unke bachhe)</span><button type="button" class="primary" onclick="exitBranch()">← Meri tree par wapas</button></div>` : "";
   return `${banner}${banner2}<div class="tree-canvas" id="treeCanvas">
-    <div class="tree-stage" id="treeStage" style="position:relative">
+    <div class="tree-sizer" id="treeSizer"><div class="tree-stage" id="treeStage">
       <svg id="treeLines" style="position:absolute;top:0;left:0;pointer-events:none;overflow:visible"></svg>
       ${rows || "<p class='muted'>No relationships recorded yet — tap the ＋ badge on your card to start the graph.</p>"}
-    </div>
+    </div></div>
   </div>
   <div class="tree-controls">
     <button class="secondary" onclick="treeZoom(1.15)">＋ Zoom</button>
@@ -826,8 +829,69 @@ function treeSearch(val) {
   const id = idMatch ? idMatch[1] : (state.people.find(p => p.name.toLowerCase() === val.toLowerCase())?.id);
   if (id && personById(id)) centerTree(id); else toast("Person not found");
 }
-function treeZoom(n) { treeScale = Math.max(.5, Math.min(2.2, treeScale * n)); document.getElementById("treeStage").style.transform = `scale(${treeScale})`; requestAnimationFrame(drawTreeConnectors); }
-function treeReset() { treeScale = 1; const s = document.getElementById("treeStage"); if (s) s.style.transform = "scale(1)"; requestAnimationFrame(drawTreeConnectors); }
+/* ---- Zoom: buttons, two-finger pinch (mobile) and Ctrl+wheel / trackpad pinch (desktop) ----
+   The stage is scaled with a transform, and #treeSizer is given the SCALED size, so the canvas always
+   scrolls over exactly what is visible (zoomed-in tree is never cut off on the left/top). The point
+   between your two fingers stays fixed while zooming. */
+const TREE_MIN_SCALE = 0.35, TREE_MAX_SCALE = 2.5;
+function syncTreeSize() {
+  const stage = document.getElementById("treeStage"), sizer = document.getElementById("treeSizer");
+  if (!stage || !sizer) return;
+  stage.style.transform = `scale(${treeScale})`;
+  sizer.style.width = Math.ceil(stage.offsetWidth * treeScale) + "px";
+  sizer.style.height = Math.ceil(stage.offsetHeight * treeScale) + "px";
+}
+function setTreeScale(next, fx, fy) {
+  next = Math.max(TREE_MIN_SCALE, Math.min(TREE_MAX_SCALE, next));
+  const canvas = document.getElementById("treeCanvas"), sizer = document.getElementById("treeSizer");
+  if (!canvas || !sizer) { treeScale = next; return; }
+  if (fx === undefined) { // buttons: zoom around the middle of the visible canvas
+    const r = canvas.getBoundingClientRect();
+    fx = r.left + r.width / 2; fy = Math.min(Math.max(window.innerHeight / 2, r.top), r.bottom);
+  }
+  const before = sizer.getBoundingClientRect();
+  const px = (fx - before.left) / treeScale, py = (fy - before.top) / treeScale; // point under the fingers, in unscaled tree px
+  treeScale = next;
+  syncTreeSize();
+  const after = sizer.getBoundingClientRect();
+  canvas.scrollLeft += (after.left + px * next) - fx;
+  window.scrollBy(0, (after.top + py * next) - fy);
+}
+function treeZoom(n) { setTreeScale(treeScale * n); }
+function treeReset() { treeScale = 1; syncTreeSize(); centerTreeOnMe(); }
+function centerTreeOnMe() {
+  const canvas = document.getElementById("treeCanvas"), sizer = document.getElementById("treeSizer"), stage = document.getElementById("treeStage");
+  if (!canvas || !sizer || !stage) return;
+  const node = stage.querySelector(".branch-node.me"); if (!node) return;
+  let x = 0, n = node; while (n && n !== stage) { x += n.offsetLeft; n = n.offsetParent; }
+  canvas.scrollLeft = Math.max(0, sizer.offsetLeft + (x + node.offsetWidth / 2) * treeScale - canvas.clientWidth / 2);
+}
+(function initTreePinch() {
+  let pinch = null;
+  const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const inCanvas = e => !!(e.target && e.target.closest && e.target.closest("#treeCanvas"));
+  document.addEventListener("touchstart", e => {
+    if (e.touches.length === 2 && inCanvas(e)) { pinch = { d0: Math.max(dist(e.touches), 1), s0: treeScale }; e.preventDefault(); }
+  }, { passive: false });
+  document.addEventListener("touchmove", e => {
+    if (!pinch) return;
+    if (e.touches.length !== 2) return;
+    e.preventDefault();
+    const fx = (e.touches[0].clientX + e.touches[1].clientX) / 2, fy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    setTreeScale(pinch.s0 * dist(e.touches) / pinch.d0, fx, fy);
+  }, { passive: false });
+  const end = e => { if (pinch && e.touches.length < 2) pinch = null; };
+  document.addEventListener("touchend", end);
+  document.addEventListener("touchcancel", end);
+  // iOS Safari would otherwise zoom the whole page on pinch
+  document.addEventListener("gesturestart", e => { if (inCanvas(e)) e.preventDefault(); });
+  document.addEventListener("gesturechange", e => { if (inCanvas(e)) e.preventDefault(); });
+  document.addEventListener("wheel", e => {
+    if (!(e.ctrlKey || e.metaKey) || !inCanvas(e)) return;
+    e.preventDefault();
+    setTreeScale(treeScale * Math.exp(-e.deltaY * 0.0025), e.clientX, e.clientY);
+  }, { passive: false });
+})();
 function treeFocusMe() { branchView = null; treeCenterId = me().id; treeReset(); go("tree"); requestAnimationFrame(drawTreeConnectors); }
 
 /* Draw the org-chart style connector lines (branch lines + junction dots)
@@ -1083,6 +1147,9 @@ function drawTreeConnectors() {
   svg.setAttribute("width", stage.scrollWidth);
   svg.setAttribute("height", stage.scrollHeight);
   svg.innerHTML = parts.join("");
+  syncTreeSize();
+  const cv = document.getElementById("treeCanvas");
+  if (cv && cv.dataset.centered !== "1") { cv.dataset.centered = "1"; centerTreeOnMe(); } // first draw: bring "me" into view (matters on phones)
 }
 /* Choose the vertical order (lane) of the family bus lines inside one parent-row/child-row gap.
    Tries every order (up to 7 families) and keeps the one with the fewest line crossings. */
@@ -1453,7 +1520,7 @@ function syncSpouseParents() {
     const ps = parentsOf(c.id);
     if (ps.length !== 1) return;
     const sp = spousesOf(ps[0]);
-    if (sp.length === 1 && addEdge(sp[0], c.id, "parent")) changed = true;
+    if (sp.length === 1 && !removedEdgeKeys.has(edgeKey(sp[0], c.id, "parent")) && addEdge(sp[0], c.id, "parent")) changed = true;
   });
   return changed;
 }
@@ -1635,6 +1702,7 @@ function profile(id) {
     </div>
   </div>
   ${canEditPerson(p) ? personDetailsCard(p) : ""}
+  ${linksCardHTML(p)}
   ${memoriesCardHTML(p)}
   <div class="card"><h3>Photos &amp; Albums</h3><div class="photo-grid">
     <div class="album">📷</div><div class="album">👨‍👩‍👧</div><div class="album">🎉</div>
@@ -1701,6 +1769,52 @@ async function deletePerson(id) {
   await save();
   toast(`${name} deleted`);
   if (wasOnProfile) go("people"); else render();
+}
+/* "Linked family members": lets you remove a WRONG link (the two profiles stay, only the relationship goes). */
+function linksCardHTML(p) {
+  if (!p || treeViewing) return "";
+  const seen = new Set(), rows = [];
+  state.relationships.forEach(r => {
+    if (r.from !== p.id && r.to !== p.id) return;
+    const k = edgeKey(r.from, r.to, r.type); if (seen.has(k)) return; seen.add(k);
+    const o = personById(r.from === p.id ? r.to : r.from); if (!o) return;
+    const kind = r.type === "spouse" ? "Husband / Wife" : r.type === "parent" ? (r.from === p.id ? "Child (beta/beti)" : "Parent (maa/baap)") : r.type;
+    rows.push(`<div class="row"><span><b>${esc(o.name)}</b><br><span class="muted" style="font-size:12.5px">${esc(kind)}</span></span>
+      <button type="button" class="danger" style="padding:6px 12px;font-size:12.5px" onclick="removeLink('${esc(r.id)}')">✂️ Remove link</button></div>`);
+  });
+  if (!rows.length) return "";
+  return `<div class="card"><h3>🔗 Linked family members</h3>
+    <p class="muted" style="font-size:13px;margin:0 0 8px">Agar koi member galat link ho gaya hai to "Remove link" dabao. Dono profile rahenge, sirf rishta hat jayega.</p>${rows.join("")}</div>`;
+}
+async function removeLink(relId) {
+  if (treeViewing) { toast("Yeh tree sirf dekhne ke liye hai"); return; }
+  const r = state.relationships.find(x => x.id === relId); if (!r) return;
+  const a = personById(r.from), b = personById(r.to);
+  if (!confirm(`Remove the link between "${a ? a.name : "?"}" and "${b ? b.name : "?"}"?\n\nDono profile rahenge, sirf yeh rishta hat jayega.`)) return;
+  const same = x => x.type === r.type && ((x.from === r.from && x.to === r.to) || (r.type === "spouse" && x.from === r.to && x.to === r.from));
+  const snapshot = state.relationships;
+  state.relationships = state.relationships.filter(x => !same(x));
+  removedEdgeKeys.add(edgeKey(r.from, r.to, r.type));
+  if (supabase && currentUser && state.treeId) {
+    const restore = msg => { state.relationships = snapshot; removedEdgeKeys.delete(edgeKey(r.from, r.to, r.type)); toast(msg); render(); };
+    const rpc = await supabase.rpc("remove_relationship_everywhere", { p_relationship_id: relId });
+    if (rpc.error) {
+      if (!/remove_relationship_everywhere|function|schema cache/i.test(rpc.error.message)) { restore("Remove failed: " + rpc.error.message); return; }
+      // function not installed yet: remove the copies that live in MY tree
+      const mine = snapshot.filter(x => same(x) && (!x.tree_id || x.tree_id === state.treeId));
+      for (const x of mine) {
+        let q = await supabase.from("relationships").delete().eq("id", x.id).select();
+        if (q.error) { restore("Remove failed: " + q.error.message); return; }
+        if (!(q.data || []).length) {
+          q = await supabase.from("relationships").update({ status: "removed" }).eq("id", x.id).select();
+          if (q.error || !(q.data || []).length) { restore("Server did not allow removing this link. Run supabase-remove-link.sql in Supabase."); return; }
+        }
+      }
+      if (snapshot.some(x => same(x) && x.tree_id && x.tree_id !== state.treeId)) toast("Link removed from your tree; the other tree still has it. Run supabase-remove-link.sql to remove it everywhere.");
+    }
+  }
+  toast("Link removed");
+  render();
 }
 function fmtDate(d) { if (!d) return ""; const x = new Date(d); return Number.isNaN(x.getTime()) ? String(d) : x.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); }
 /* Read-only details card on the profile page, with an Edit button that opens the popup form. */
@@ -1801,12 +1915,30 @@ function openChangeEmail(id) {
     <div class="actions modal-foot"><button type="button" class="ghost" onclick="closeEditProfile()">Cancel</button><button type="button" class="primary" onclick="saveNewEmail('${esc(p.id)}')">Save email</button></div>`);
   document.getElementById("mpNewEmail")?.focus();
 }
+/* Changes the LOGIN (auth) email. Supabase may require the new address to be confirmed first. */
+async function changeLoginEmail(email) {
+  if (!supabase || !currentUser) return { status: "applied" }; // demo mode
+  const { data, error } = await supabase.auth.updateUser({ email }, { emailRedirectTo: window.location.origin });
+  if (error) {
+    const taken = error.code === "email_exists" || /already (been )?registered|already exists|already in use/i.test(error.message || "");
+    return { status: "error", message: taken ? `${email} pehle se kisi aur account mein registered hai. Koi doosra email daalo, ya us email wale account se login karo.` : error.message };
+  }
+  if ((data?.user?.email || "").toLowerCase() === email.toLowerCase()) { currentUser = data.user; return { status: "applied" }; }
+  try { localStorage.setItem("ft_pending_email", JSON.stringify({ uid: currentUser.id, email: email.toLowerCase() })); } catch (e) {}
+  return { status: "pending" };
+}
 async function saveNewEmail(id) {
   const p = personById(id);
   if (!p || !p.me) { toast("You can only change your own email"); return; }
   const email = document.getElementById("mpNewEmail").value.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast("Please enter a valid email"); return; }
-  if (email === (p.email || "").toLowerCase()) { toast("This is already your email"); return; }
+  if (email === (p.email || "").toLowerCase() && email === (currentUser?.email || "").toLowerCase()) { toast("This is already your email"); return; }
+  const res = await changeLoginEmail(email);
+  if (res.status === "error") { toast("Login email change failed: " + res.message); return; }
+  if (res.status === "pending") {
+    toast(`${email} par confirmation link bheja gaya hai. Link par click karte hi aapka login email badal jayega.`);
+    closeEditProfile(); render(); return; // card + profile email are synced automatically after you confirm
+  }
   p.email = email;
   state.account.email = email;
   await save();
@@ -1834,19 +1966,27 @@ async function saveProfileEdits(id) {
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast("Please enter a valid email"); return; }
   const mobile = g("mpMobile");
   if (mobile && !/^[+\d][\d\s-]{6,17}$/.test(mobile)) { toast("Please enter a valid mobile number"); return; }
+  // my own card: the email is also my login email, so change it in the account too
+  let emailPending = false;
+  const oldCardEmail = p.email;
+  if (p.me && email && supabase && currentUser && email.toLowerCase() !== (currentUser.email || "").toLowerCase()) {
+    const res = await changeLoginEmail(email);
+    if (res.status === "error") { toast("Login email change failed: " + res.message); return; }
+    emailPending = res.status === "pending";
+  }
   const dob = g("mpDob"), dod = g("mpDod");
   if (dob && dod && dod < dob) { toast("Date of death can't be before date of birth"); return; }
   p.name = [first, middle, last].filter(Boolean).join(" ");
   p.gender = document.getElementById("mpGender").value || undefined;
   p.dob = dob || undefined;
   p.mobile = mobile || undefined;
-  p.email = email || undefined;
+  p.email = emailPending ? oldCardEmail : (email || undefined);
   p.lifeStatus = dod ? "deceased" : "living";
   p.details = { ...(p.details || {}), firstName: first, middleName: middle, surname: last, dod: dod || "", state: g("mpState"), city: g("mpCity"), married: document.getElementById("mpMarried").value };
-  if (p.me) { state.account.name = p.name; if (email) state.account.email = email; }
+  if (p.me) { state.account.name = p.name; if (email && !emailPending) state.account.email = email; }
   await save();
-  if (p.me && supabase && currentUser) { try { await supabase.from("profiles").update({ display_name: p.name, ...(email ? { email } : {}) }).eq("id", currentUser.id); } catch (e) { console.warn("display_name update failed", e); } }
-  toast("Profile updated");
+  if (p.me && supabase && currentUser) { try { await supabase.from("profiles").update({ display_name: p.name, ...(email && !emailPending ? { email } : {}) }).eq("id", currentUser.id); } catch (e) { console.warn("display_name update failed", e); } }
+  toast(emailPending ? `Profile updated. ${email} par confirmation link bheja gaya hai — click karte hi login email badal jayega.` : "Profile updated");
   render();
   if (profileModalOrigin === "view") openProfilePopup(id); else closeEditProfile();
 }
@@ -2528,7 +2668,7 @@ Object.assign(window, {
   phoneLogin, pickAddRelativePhoto, publishPost, requestMerge, resolveTicket,
   reviewItem, saveAddRelative, sendReply, shareId, toast, treeFocusMe,
   treeReset, treeZoom, toggleTreeExpand, treeSearch, setTreeRole,
-  setAddRelativeMode, refreshExistingOptions, openMyProfile, saveProfileEdits, openEditProfile, closeEditProfile, openProfilePopup, openFullProfile, cancelEditProfile, deletePerson, searchRelativeByUid, linkByUniqueId, approveIncoming, rejectIncoming,
+  setAddRelativeMode, refreshExistingOptions, openMyProfile, saveProfileEdits, openEditProfile, closeEditProfile, openProfilePopup, openFullProfile, cancelEditProfile, deletePerson, removeLink, searchRelativeByUid, linkByUniqueId, approveIncoming, rejectIncoming,
   loadMemories, addMemory, deleteMemory,
   runClaimSearch, requestClaim, cancelClaim, startFreshProfile, approveClaim, rejectClaim,
   importGedcomPicked, setPeopleSearch, clearPeopleSearch, setPeopleSort
@@ -2671,7 +2811,7 @@ async function loadProductionState(user) {
     }
   } catch (e) { console.warn('family_one_hop unavailable', e); }
   const ids = people.map(p => p.id);
-  let relationships=[]; if (ids.length) { const { data, error } = await supabase.from('relationships').select('*').eq('tree_id', treeId); if (error) throw error; relationships=[...(data||[]), ...extRels.filter(x => !(data||[]).some(d => d.id === x.id))].filter(r=>r.status!=='removed' && ids.includes(r.person_a_id) && ids.includes(r.person_b_id)).map(r=>({id:r.id,from:r.person_a_id,to:r.person_b_id,type:r.relationship_type,status:r.status,tree_id:r.tree_id})); }
+  let relationships=[]; if (ids.length) { const { data, error } = await supabase.from('relationships').select('*').eq('tree_id', treeId); if (error) throw error; relationships=[...(data||[]), ...extRels.filter(x => !(data||[]).some(d => d.id === x.id))].filter(r=>{ if (r.status==='removed') { removedEdgeKeys.add(edgeKey(r.person_a_id, r.person_b_id, r.relationship_type)); return false; } return ids.includes(r.person_a_id) && ids.includes(r.person_b_id); }).map(r=>({id:r.id,from:r.person_a_id,to:r.person_b_id,type:r.relationship_type,status:r.status,tree_id:r.tree_id})); }
   const { data: posts, error: postErr } = await supabase.from('posts').select('*').eq('tree_id', treeId).order('created_at',{ascending:false}).limit(100); if (postErr) throw postErr;
   const { data: events, error: eventErr } = await supabase.from('events').select('*').eq('tree_id', treeId).order('event_date').limit(100); if (eventErr) throw eventErr;
   const { data: merges, error: mergeErr } = await supabase.from('merge_requests').select('*').order('created_at',{ascending:false}).limit(100); if (mergeErr) throw mergeErr;
@@ -2684,6 +2824,16 @@ async function loadProductionState(user) {
   const peopleById = Object.fromEntries(people.map(p=>[p.id,p]));
   state.people = people.map(p=>({id:p.id,created_at:p.created_at,personCode:p.person_code,name:p.full_name,gender:p.gender,status:p.status,dob:p.dob,mobile:p.mobile,email:p.email,avatar_url:p.avatar_url,me:p.claimed_by===user.id,claimed_by:p.claimed_by,created_by:p.created_by,privacy:'Family only',nickname:p.nickname,showNickname:p.show_nickname,birthPlace:p.birth_place,currentPlace:p.current_place,lifeStatus:p.life_status,details:p.details||{},treeRole:memberRoleById[p.id]||(p.claimed_by===user.id?'owner':'member'),savedRole:memberRoleById[p.id],external:!!p.__external}));
   state.relationships=relationships;
+  try { // the user confirmed an email change from the link we sent -> now sync card + profile with the new login email
+    const pend = JSON.parse(localStorage.getItem("ft_pending_email") || "null");
+    if (pend && pend.uid === user.id && user.email && user.email.toLowerCase() === pend.email) {
+      const mine = state.people.find(x => x.me); if (mine) mine.email = pend.email;
+      state.account.email = pend.email;
+      await supabase.from("profiles").update({ email: pend.email }).eq("id", user.id);
+      localStorage.removeItem("ft_pending_email");
+      save();
+    }
+  } catch (e) { console.warn("email sync failed", e); }
   if (syncSpouseParents()) save();
   state.posts=(posts||[]).map(p=>({id:p.id,author:p.author_profile_id===user.id?state.account.name:'Family Member',text:p.body||'',likes:0,comments:0,author_profile_id:p.author_profile_id}));
   state.events=(events||[]).map(e=>({id:e.id,emoji:'🎉',title:e.title,sub:e.event_date + ' · ' + e.event_type}));

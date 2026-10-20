@@ -175,11 +175,12 @@ button:disabled{opacity:.55;cursor:default}
 .tree-canvas{
   border:1px solid var(--line);border-radius:var(--radius-l);
   background:linear-gradient(135deg,#eaf3fb 0%,var(--paper) 55%,#fdf6e6 100%);
-  min-height:max(540px,calc(100vh - 190px));overflow:auto;padding:34px 24px;
+  min-height:max(540px,calc(100vh - 190px));overflow:auto;padding:34px 24px;position:relative;touch-action:pan-x pan-y;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;
 }
-.tree-stage{transform-origin:top center;transition:transform .18s ease-out;
-  /* grow to the widest generation row so nothing is clipped on the left; rows stay centred */
-  display:flex;flex-direction:column;align-items:center;width:max-content;min-width:100%}
+.tree-sizer{position:relative;margin:0 auto}
+.tree-stage{position:absolute;left:0;top:0;transform-origin:0 0;transition:none;
+  /* sized by its widest row; #treeSizer gets the scaled size so zoomed content is never clipped */
+  display:flex;flex-direction:column;align-items:center;width:max-content}
 .gen{display:flex;justify-content:center;gap:30px;position:relative;padding-bottom:64px}
 .branch-node{
   background:var(--paper-raised);border:1px solid var(--line);border-radius:16px;padding:16px 16px 13px;
