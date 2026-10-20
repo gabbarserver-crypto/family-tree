@@ -1824,6 +1824,27 @@ async function removeLink(relId) {
   toast("Link removed");
   render();
 }
+/* Delete MY profile / account.
+   - I am also in someone else's tree  -> my card stays there as UNCLAIMED (contact info + photo removed), account is deleted
+   - I am in no one else's tree        -> my account and all my data are deleted
+   Done by the delete_my_profile() database function (see supabase-delete-account.sql). */
+async function openDeleteMyProfile() {
+  if (!supabase || !currentUser) { toast("Please sign in"); return; }
+  const { data, error } = await supabase.rpc("my_profile_delete_preview");
+  if (error) { toast(/function|schema cache/i.test(error.message) ? "Run supabase-delete-account.sql in Supabase first" : error.message); return; }
+  const info = data || {};
+  const own = Math.max(0, (info.own_members || 0) - 1);
+  const msg = info.in_other_trees
+    ? `Aap doosron ke family tree mein bhi hain, isliye wahan aapka profile UNCLAIMED ban jayega (naam rahega; mobile, email aur photo hat jayenge).\n\nAapka account delete ho jayega${own ? `, aur aapka apna tree (${own} member) bhi hat jayega` : ""}. Yeh wapas nahi ho sakta.`
+    : `Aap kisi aur ke family tree mein nahi hain, isliye aapka account aur saara data${own ? ` (aapka apna tree aur uske ${own} member bhi)` : ""} hamesha ke liye delete ho jayega. Yeh wapas nahi ho sakta.`;
+  const typed = prompt(msg + "\n\nConfirm karne ke liye DELETE type karo:");
+  if (typed === null) return;
+  if (typed.trim().toUpperCase() !== "DELETE") { toast("Delete cancel kiya"); return; }
+  const r = await supabase.rpc("delete_my_profile");
+  if (r.error) { toast("Delete failed: " + r.error.message); return; }
+  await logout();
+  toast(r.data === "unclaimed" ? "Account delete ho gaya. Doosron ke tree mein aapka profile unclaimed ban gaya hai." : "Aapka account delete ho gaya.");
+}
 function fmtDate(d) { if (!d) return ""; const x = new Date(d); return Number.isNaN(x.getTime()) ? String(d) : x.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); }
 /* Read-only details card on the profile page, with an Edit button that opens the popup form. */
 function detailRowsHTML(p) {
@@ -1840,7 +1861,7 @@ function detailRowsHTML(p) {
 function personDetailsCard(p) {
   return `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
       <h3 style="margin:0">Personal details</h3>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">${p.me ? `<button class="secondary" onclick="openChangeEmail('${esc(p.id)}')">✉️ Change email</button>` : ""}${canEditPerson(p) ? `<button class="secondary" onclick="openEditProfile('${esc(p.id)}')">✏️ Edit</button>` : ""}${canDeletePerson(p) ? `<button class="danger" onclick="deletePerson('${esc(p.id)}')">🗑 Delete profile</button>` : ""}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${p.me ? `<button class="secondary" onclick="openChangeEmail('${esc(p.id)}')">✉️ Change email</button>` : ""}${p.me ? `<button class="danger" onclick="openDeleteMyProfile()">🗑 Delete my profile</button>` : ""}${canEditPerson(p) ? `<button class="secondary" onclick="openEditProfile('${esc(p.id)}')">✏️ Edit</button>` : ""}${canDeletePerson(p) ? `<button class="danger" onclick="deletePerson('${esc(p.id)}')">🗑 Delete profile</button>` : ""}</div>
     </div>
     ${detailRowsHTML(p)}
   </div>`;
@@ -2676,7 +2697,7 @@ Object.assign(window, {
   phoneLogin, pickAddRelativePhoto, publishPost, requestMerge, resolveTicket,
   reviewItem, saveAddRelative, sendReply, shareId, toast, treeFocusMe,
   treeReset, treeZoom, treeFit, toggleTreeExpand, treeSearch, setTreeRole,
-  setAddRelativeMode, refreshExistingOptions, openMyProfile, saveProfileEdits, openEditProfile, closeEditProfile, openProfilePopup, openFullProfile, cancelEditProfile, deletePerson, removeLink, searchRelativeByUid, linkByUniqueId, approveIncoming, rejectIncoming,
+  setAddRelativeMode, refreshExistingOptions, openMyProfile, saveProfileEdits, openEditProfile, closeEditProfile, openProfilePopup, openFullProfile, cancelEditProfile, deletePerson, removeLink, openDeleteMyProfile, searchRelativeByUid, linkByUniqueId, approveIncoming, rejectIncoming,
   loadMemories, addMemory, deleteMemory,
   runClaimSearch, requestClaim, cancelClaim, startFreshProfile, approveClaim, rejectClaim,
   importGedcomPicked, setPeopleSearch, clearPeopleSearch, setPeopleSort
@@ -2684,10 +2705,34 @@ Object.assign(window, {
 
 window.addEventListener("hashchange", render);
 
+/* Startup / login sequence.
+   After Google login the browser comes back to the app with a code/token in the URL. Supabase exchanges it
+   asynchronously, so the first boot used to run BEFORE the session existed and drew the login screen; the page
+   only worked after a manual refresh. Now: (1) only ONE boot runs at a time (extra requests are queued),
+   (2) getSession() is awaited - it waits for the redirect to be processed, (3) while that happens we show
+   "Signing you in..." instead of the login screen. */
+let bootRunning = false, bootQueued = false;
 async function bootAuthenticatedApp() {
+  if (bootRunning) { bootQueued = true; return; }
+  bootRunning = true;
+  try { await bootOnce(); }
+  finally { bootRunning = false; if (bootQueued) { bootQueued = false; bootAuthenticatedApp(); } }
+}
+async function bootOnce() {
   if (!supabase) { renderLogin(); return; }
-  const { data: { user }, error } = await supabase.auth.getUser();
-  if (error || !user) { loggedIn = false; renderLogin(); return; }
+  const returningFromLogin = /[?&#](code|access_token|refresh_token)=/.test(location.search + location.hash);
+  if (returningFromLogin && !loggedIn) {
+    const app = document.getElementById("app");
+    if (app) app.innerHTML = '<div style="min-height:100vh;display:grid;place-items:center;font-family:var(--font-body);color:var(--ink-soft)">Signing you in…</div>';
+  }
+  const { data: sdata } = await supabase.auth.getSession(); // waits until the OAuth redirect has been processed
+  let user = sdata?.session?.user || null;
+  if (user) {
+    const { data: u, error: ue } = await supabase.auth.getUser();
+    if (!ue && u?.user) user = u.user;
+    else if (ue && (ue.status === 401 || ue.status === 403)) user = null; // token really invalid; other errors (offline) keep the session
+  }
+  if (!user) { loggedIn = false; renderLogin(); return; }
   currentUser = user;
   loggedIn = true;
   try {
@@ -2855,9 +2900,13 @@ async function loadProductionState(user) {
   if (state.incoming.length) setTimeout(() => toast(`You have ${state.incoming.length} connection request${state.incoming.length === 1 ? "" : "s"} — see Connections & Sharing`), 600);
 }
 
-supabase?.auth.onAuthStateChange((event) => {
-  if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') setTimeout(bootAuthenticatedApp, 0);
-  if (event === 'SIGNED_OUT') { loggedIn=false; render(); }
+supabase?.auth.onAuthStateChange((event, session) => {
+  if (event === 'SIGNED_OUT') { loggedIn = false; render(); return; }
+  if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session?.user) {
+    // boot only when we are not already logged in as this user (SIGNED_IN also fires on tab refocus)
+    if (!(loggedIn && currentUser?.id === session.user.id)) setTimeout(bootAuthenticatedApp, 0);
+  }
+  if ((event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') && session?.user) currentUser = session.user; // no full reload on every token refresh
 });
 
 bootAuthenticatedApp();
