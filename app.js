@@ -819,10 +819,34 @@ function exitTreeView(rerender = true) {
   if (rerender) { go("tree"); requestAnimationFrame(drawTreeConnectors); }
 }
 
+/* Re-draw ONLY the tree (not the whole app) and keep the view steady:
+   - scroll position + zoom are preserved (a full render() rebuilt the canvas, reset scroll and re-centred on "me",
+     which is what made the layout "jump" on every ＋ tap)
+   - the card you tapped is anchored: it stays under your finger even if the layout re-flows around it. */
+function refreshTreeInPlace(anchorKey, r0) {
+  const main = document.querySelector("main.content"), oldCv = document.getElementById("treeCanvas");
+  if (!main || !oldCv || (location.hash || "").slice(1) !== "tree") { render(); requestAnimationFrame(drawTreeConnectors); return; }
+  const sl = oldCv.scrollLeft, st = oldCv.scrollTop;
+  main.style.minHeight = main.offsetHeight + "px"; // page must not collapse (and scroll-jump) while we swap the markup
+  main.innerHTML = pageView("tree");
+  const cv = document.getElementById("treeCanvas");
+  if (cv) cv.dataset.centered = "1"; // do NOT re-centre on "me"
+  drawTreeConnectors();               // synchronous: sizes the canvas, so scroll can be restored below
+  if (cv) {
+    cv.scrollLeft = sl; cv.scrollTop = st;
+    const el = anchorKey && document.getElementById(anchorKey);
+    if (el && r0) {
+      const r1 = el.getBoundingClientRect();
+      cv.scrollLeft += r1.left - r0.left;
+      window.scrollBy(0, r1.top - r0.top);
+    }
+  }
+  main.style.minHeight = "";
+}
 function toggleTreeExpand(id) {
+  const key = nodeElId(id), el = document.getElementById(key), r0 = el ? el.getBoundingClientRect() : null;
   if (treeExpanded.has(id)) treeExpanded.delete(id); else treeExpanded.add(id);
-  render();
-  requestAnimationFrame(drawTreeConnectors);
+  refreshTreeInPlace(key, r0);
 }
 
 function centerTree(id) { branchView = null; treeCenterId = id; treeScale = 1; go("tree"); requestAnimationFrame(drawTreeConnectors); }
@@ -1192,6 +1216,10 @@ function assignConnectorLanes(list) {
   list.forEach(u => { u.lane = best.lane.get(u); u.laneCount = best.maxLane + 1; });
 }
 window.addEventListener("resize", () => { if ((location.hash || "").slice(1) === "tree") drawTreeConnectors(); });
+// web fonts (Fraunces/Inter) load late and change text metrics -> re-measure so cards and connector lines stay aligned
+if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener("loadingdone", () => { if ((location.hash || "").slice(1) === "tree") drawTreeConnectors(); });
+// phone rotation / address-bar show-hide
+window.addEventListener("orientationchange", () => setTimeout(() => { if ((location.hash || "").slice(1) === "tree") drawTreeConnectors(); }, 250));
 
 /* ---------------- add person — creates real graph edges ---------------- */
 function add() {

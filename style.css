@@ -28,10 +28,13 @@
   --shadow-2:0 10px 30px rgba(47,28,71,.10);
   --font-display:"Fraunces",Georgia,serif;
   --font-body:"Inter",-apple-system,BlinkMacSystemFont,sans-serif;
+  --node-w:140px;          /* fixed tree card width: layout no longer depends on font/name length */
+  --bottom-nav-h:64px;
 }
 
 *{box-sizing:border-box}
-html{-webkit-tap-highlight-color:transparent}
+html{-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%;text-size-adjust:100%;scrollbar-gutter:stable}
+img,svg,video{max-width:100%}
 body{
   margin:0;
   font-family:var(--font-body);
@@ -54,7 +57,7 @@ a{color:var(--plum)}
 .eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:var(--gold-deep);font-weight:700}
 
 /* ---------- shell / nav ---------- */
-.shell{min-height:100vh;display:flex;flex-direction:column}
+.shell{min-height:100vh;min-height:100dvh;display:flex;flex-direction:column}
 .topbar{
   height:64px;background:var(--paper-raised);border-bottom:1px solid var(--line);
   display:flex;align-items:center;justify-content:space-between;padding:0 20px;
@@ -144,14 +147,14 @@ button:disabled{opacity:.55;cursor:default}
 .empty .big{font-size:38px;display:block;margin-bottom:8px}
 
 .toast{
-  position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--plum-deep);color:#fff;
+  position:fixed;left:50%;bottom:90px;transform:translateX(-50%);max-width:calc(100vw - 32px);text-align:center;background:var(--plum-deep);color:#fff;
   padding:12px 18px;border-radius:999px;z-index:200;font-size:13.5px;font-weight:600;box-shadow:var(--shadow-2);
   animation:toastin .18s ease-out;
 }
 @keyframes toastin{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
 
 /* ---------- login ---------- */
-.login{min-height:100vh;display:grid;place-items:center;padding:20px;
+.login{min-height:100vh;min-height:100dvh;display:grid;place-items:center;padding:20px;
   background:radial-gradient(1200px 700px at 15% -10%,#efe4d3 0%,transparent 60%),
              radial-gradient(1000px 700px at 110% 10%,#e6dced 0%,transparent 55%),
              var(--paper);
@@ -175,7 +178,7 @@ button:disabled{opacity:.55;cursor:default}
 .tree-canvas{
   border:1px solid var(--line);border-radius:var(--radius-l);
   background:linear-gradient(135deg,#eaf3fb 0%,var(--paper) 55%,#fdf6e6 100%);
-  min-height:max(540px,calc(100vh - 190px));overflow:auto;padding:34px 24px;position:relative;touch-action:pan-x pan-y;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;
+  min-height:max(540px,calc(100vh - 190px));min-height:max(540px,calc(100dvh - 190px));overflow:auto;overflow-anchor:none;padding:34px 24px;position:relative;touch-action:pan-x pan-y;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;
 }
 .tree-sizer{position:relative;margin:0 auto}
 .tree-stage{position:absolute;left:0;top:0;transform-origin:0 0;transition:none;
@@ -184,10 +187,10 @@ button:disabled{opacity:.55;cursor:default}
 .gen{display:flex;justify-content:center;gap:30px;position:relative;padding-bottom:64px}
 .branch-node{
   background:var(--paper-raised);border:1px solid var(--line);border-radius:16px;padding:16px 16px 13px;
-  min-width:132px;text-align:center;box-shadow:0 4px 14px rgba(41,58,74,.10);cursor:pointer;
+  width:var(--node-w);flex:none;text-align:center;box-shadow:0 4px 14px rgba(41,58,74,.10);cursor:pointer;
   transition:border-color .15s,transform .1s,box-shadow .15s;
 }
-.branch-node:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(41,58,74,.14)}
+@media (hover:hover){.branch-node:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(41,58,74,.14)}}
 .branch-node.me{background:var(--plum-deep);border-color:var(--plum-deep)}
 .branch-node.me strong,.branch-node.me .mini{color:#fff}
 .branch-node.me .mini.rel{color:var(--gold)}
@@ -198,12 +201,12 @@ button:disabled{opacity:.55;cursor:default}
   box-shadow:0 0 0 3px var(--paper-raised),0 0 0 4px var(--line);
 }
 .branch-node .photo.claimed{box-shadow:0 0 0 3px var(--paper-raised),0 0 0 4px var(--sage)}
-.branch-node strong{font-size:13.5px;display:block;color:var(--ink);font-weight:700}
+.branch-node strong{font-size:13.5px;display:block;color:var(--ink);font-weight:700;overflow-wrap:anywhere;line-height:1.25}
 .branch-node .mini{font-size:11px;color:var(--sage);font-weight:600;margin-top:2px}
 .branch-node .mini.rel{color:var(--gold-deep);font-weight:700;text-transform:uppercase;letter-spacing:.03em;font-size:10px;margin-top:4px}
 
 .tree-badge{
-  position:absolute;top:-9px;width:23px;height:23px;border-radius:50%;display:flex;align-items:center;
+  padding:0;line-height:1;position:absolute;top:-9px;width:23px;height:23px;border-radius:50%;display:flex;align-items:center;
   justify-content:center;font-size:12px;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.22);z-index:2;
   border:2px solid #fff;
 }
@@ -222,6 +225,7 @@ button:disabled{opacity:.55;cursor:default}
   font-size:12.5px;font-weight:600;display:flex;align-items:center;justify-content:center;min-height:96px;
 }
 .branch-node.add-node:hover{border-color:var(--gold-deep);color:var(--gold-deep);transform:none;box-shadow:none}
+.branch-node.add-node{line-height:1.3;padding:12px 8px}
 
 /* ---------- profile ---------- */
 .profile-head{display:grid;grid-template-columns:110px 1fr;gap:22px;align-items:start}
@@ -237,7 +241,7 @@ button:disabled{opacity:.55;cursor:default}
 
 /* ---------- reels ---------- */
 .reels-wrap{background:#1b1224;border-radius:var(--radius-l);overflow:hidden}
-.reels-feed{height:min(72vh,640px);overflow-y:auto;scroll-snap-type:y mandatory}
+.reels-feed{height:min(72vh,640px);height:min(72dvh,640px);overflow-y:auto;scroll-snap-type:y mandatory}
 .reel{
   height:100%;scroll-snap-align:start;display:flex;align-items:flex-end;padding:26px;position:relative;color:#fff;
 }
@@ -257,44 +261,13 @@ button:disabled{opacity:.55;cursor:default}
 .pill-urgent{color:var(--terracotta)}
 .pill-high{color:var(--gold-deep)}
 
-/* ---------- responsive ---------- */
-@media(max-width:900px){
-  .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .grid.g4{grid-template-columns:repeat(2,minmax(0,1fr))}
-}
-@media(max-width:760px){
-  .sidebar{display:none}
-  .content{padding:16px 14px 90px}
-  .layout{display:block}
-  .bottomnav{
-    display:flex;position:fixed;left:0;right:0;bottom:0;background:var(--paper-raised);
-    border-top:1px solid var(--line);z-index:30;padding:6px 4px calc(6px + env(safe-area-inset-bottom));
-    overflow-x:auto;gap:2px;
-  }
-  .bottomnav .nav{flex-direction:column;gap:2px;padding:8px 10px;font-size:10.5px;min-width:60px;text-align:center;border-radius:12px}
-  .bottomnav .nav .ic{font-size:19px}
-  .bottomnav .nav.active{background:var(--plum-tint);color:var(--plum-deep)}
-  .grid{grid-template-columns:1fr 1fr}
-  .grid.g4{grid-template-columns:1fr 1fr}
-  .profile-head{grid-template-columns:1fr;text-align:center}
-  .profile-head .avatar.lg{margin:0 auto}
-  .topbar .role-switch{display:none}
-}
-
-
 /* header: title + search + tree/wall switch; zoom controls under the tree */
 .topbar-center{display:flex;align-items:center;gap:16px;flex:1;min-width:0;margin:0 20px}
 .top-title{font-family:var(--font-display);font-weight:700;font-size:20px;color:var(--plum-deep);white-space:nowrap}
 .top-search{border:1px solid var(--line);border-radius:10px;padding:9px 12px;min-width:220px;max-width:340px;flex:1;background:var(--paper);font:inherit;font-size:14px}
 .tree-controls{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin-top:14px}
-@media(max-width:900px){
-  .topbar{height:auto;flex-wrap:wrap;padding:8px 12px;gap:8px}
-  .topbar-center{order:3;width:100%;margin:0;flex-wrap:wrap;gap:10px}
-  .top-title{display:none}
-  .top-search{min-width:0;max-width:none}
-}
 
-.branch-node .mini.of{font-size:10px;font-weight:500;color:var(--ink-soft);margin-top:3px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:auto;margin-right:auto}
+.branch-node .mini.of{font-size:10px;font-weight:500;color:var(--ink-soft);margin-top:3px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:auto;margin-right:auto}
 .branch-node.me .mini.of{color:#e8dff5}
 
 /* edit-profile popup */
@@ -323,7 +296,6 @@ button:disabled{opacity:.55;cursor:default}
 .chat-compose textarea{flex:1;min-height:42px;max-height:120px;resize:none;border:1px solid var(--line);border-radius:var(--radius-s);padding:10px 13px;background:var(--paper);font:inherit}
 .chat-compose textarea:focus{border-color:var(--plum);background:#fff;outline:0}
 .chat-card #chatNote{padding:0 16px 10px}
-@media (max-width:760px){.chat-room{height:calc(100vh - 300px)}.chat-bubble{max-width:86%}}
 
 /* chat members / presence */
 .chat-layout{display:grid;grid-template-columns:minmax(0,1fr) 270px;gap:16px;align-items:start}
@@ -341,12 +313,146 @@ button:disabled{opacity:.55;cursor:default}
 .chat-member-name{display:flex;flex-direction:column;font-size:13.5px;font-weight:600;min-width:0}
 .chat-member-name small{font-size:11px;font-weight:600}
 .online-txt{color:#2fa866}
-@media (max-width:900px){.chat-layout{grid-template-columns:1fr}.chat-members{max-height:240px;order:-1}}
 
 /* pinch gestures must zoom the TREE, never the whole page (page zoom pushed the header off-screen on phones) */
 html,body{touch-action:pan-x pan-y}
 
 /* Logout in the header on phones (the sidebar that holds it is hidden below 760px) */
 .top-logout{display:none;align-items:center;gap:4px;border:1px solid var(--line);background:var(--paper);border-radius:999px;padding:6px 12px;font-size:12px;font-weight:700;color:var(--plum);white-space:nowrap}
-@media(max-width:760px){.top-logout{display:inline-flex}}
-@media(max-width:480px){.top-name{display:none}}
+
+/* ==========================================================================
+   RESPONSIVE — one consolidated block (desktop → tablet → phone)
+   Must stay LAST so it wins over the base rules above.
+   ========================================================================== */
+
+/* ---- tablet / small laptop ---- */
+@media(max-width:1100px){
+  .content{padding:22px 20px 100px}
+}
+@media(max-width:900px){
+  .grid,.grid.g4{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .topbar{height:auto;flex-wrap:wrap;padding:8px 12px;gap:8px}
+  .topbar-center{order:3;width:100%;margin:0;flex-wrap:wrap;gap:10px}
+  .top-title{display:none}
+  .top-search{min-width:0;max-width:none}
+  .chat-layout{grid-template-columns:1fr}
+  .chat-members{max-height:240px;order:-1}
+}
+
+/* ---- phone ---- */
+@media(max-width:760px){
+  :root{--node-w:116px}
+  body{font-size:15px}
+  h2{font-size:22px}
+  h3{font-size:17px}
+
+  /* shell: no sidebar, fixed bottom tab bar, safe-area aware */
+  .sidebar{display:none}
+  .layout{display:block}
+  .topbar{
+    padding:calc(8px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 8px calc(12px + env(safe-area-inset-left));
+  }
+  /* the 2-row header (title + search + switch) is tall: let it scroll away so the tree gets the screen */
+  .topbar:has(.topbar-center){position:static}
+  .brand{font-size:19px}
+  .brand small{display:none}
+  .top-actions{gap:8px}
+  .topbar .role-switch{display:none}
+  .top-logout{display:inline-flex;min-height:36px}
+  .content{padding:14px 12px calc(var(--bottom-nav-h) + 28px + env(safe-area-inset-bottom))}
+  .content.content-wide{padding:10px 8px calc(var(--bottom-nav-h) + 28px + env(safe-area-inset-bottom))}
+  .page-head{margin-bottom:14px}
+
+  .bottomnav{
+    display:flex;position:fixed;left:0;right:0;bottom:0;background:var(--paper-raised);
+    border-top:1px solid var(--line);z-index:30;gap:2px;box-shadow:0 -4px 16px rgba(47,28,71,.06);
+    padding:6px max(4px,env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(4px,env(safe-area-inset-left));
+  }
+  .bottomnav .nav{
+    flex:1 1 0;min-width:0;min-height:52px;margin:0;padding:6px 2px;flex-direction:column;justify-content:center;
+    gap:2px;font-size:10.5px;text-align:center;border-radius:12px;
+  }
+  .bottomnav .nav span:last-child{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bottomnav .nav .ic{width:auto;font-size:20px;line-height:1}
+  .bottomnav .nav.active{background:var(--plum-tint);color:var(--plum-deep)}
+
+  /* header controls */
+  .topbar-center{gap:8px}
+  .top-search{flex:1 1 100%;width:100%;padding:10px 12px}
+  .view-switch{max-width:100%;overflow-x:auto;scrollbar-width:none}
+  .view-switch::-webkit-scrollbar{display:none}
+  .view-switch button{padding:8px 14px;white-space:nowrap}
+
+  /* cards, grids, forms */
+  .card{padding:14px;border-radius:14px}
+  .grid,.grid.g4{grid-template-columns:1fr 1fr;gap:10px}
+  .grid.g2{grid-template-columns:1fr}
+  .stat{font-size:26px}
+  .row{flex-wrap:wrap}
+  .form{max-width:none}
+  /* >=16px stops iOS Safari from zooming the page when an input is focused */
+  .field input,.field select,.field textarea,.top-search,.chat-compose textarea{font-size:16px}
+  .actions{gap:8px}
+  .actions>.primary,.actions>.secondary,.actions>.danger,.actions>.ghost{flex:1 1 auto}
+  .primary,.secondary,.danger,.ghost{min-height:44px}
+  .iconbtn{width:44px;height:44px}
+  .profile-head{grid-template-columns:1fr;text-align:center}
+  .profile-head .avatar.lg{margin:0 auto}
+  .photo-grid{gap:8px}
+  .login-card{padding:28px 20px}
+
+  /* family tree */
+  .tree-canvas{border-radius:16px;padding:22px 12px;min-height:max(420px,calc(100vh - 300px));min-height:max(420px,calc(100dvh - 300px))}
+  .branch-node{padding:12px 8px 10px;border-radius:14px}
+  .branch-node .photo{width:48px;height:48px;font-size:14px;margin-bottom:8px}
+  .branch-node strong{font-size:12.5px}
+  .branch-node .mini{font-size:10.5px}
+  .tree-badge{width:28px;height:28px;font-size:14px;top:-11px}
+  .tree-badge.left{left:-10px}
+  .tree-badge.right{right:-10px}
+  .tree-badge.right.own-tree{width:30px;height:30px;top:-12px}
+  .tree-controls{gap:6px;justify-content:stretch}
+  .tree-controls button{flex:1 1 auto;padding:10px 8px;font-size:13px}
+  .tree-view-banner{padding:10px 12px}
+  .tree-view-banner span{min-width:0;flex-basis:100%}
+
+  /* modals become bottom sheets */
+  .modal-overlay{align-items:flex-end;padding:0}
+  .modal-card{max-width:none;border-radius:var(--radius-l) var(--radius-l) 0 0;max-height:92vh;max-height:92dvh;animation:sheetin .2s ease-out}
+  .modal-head{padding:14px 16px}
+  .modal-body{padding:14px 16px;overscroll-behavior:contain}
+  .modal-foot{padding:12px 16px calc(12px + env(safe-area-inset-bottom));flex-wrap:wrap}
+
+  /* toast sits above the bottom bar */
+  .toast{bottom:calc(var(--bottom-nav-h) + 20px + env(safe-area-inset-bottom))}
+
+  /* chat + reels use the real visible height (dvh) */
+  .chat-room{height:calc(100vh - 330px);height:calc(100dvh - 330px);min-height:260px}
+  .chat-bubble{max-width:86%}
+  .chat-compose{padding:10px}
+  .reels-feed{height:calc(100vh - 230px);height:calc(100dvh - 230px);min-height:420px}
+  .reel{padding:18px}
+}
+@keyframes sheetin{from{transform:translateY(24px);opacity:.6}to{transform:none;opacity:1}}
+
+/* ---- small phones ---- */
+@media(max-width:480px){
+  .top-name{display:none}
+  .grid:not(.g4){grid-template-columns:1fr}
+  .login-card h1{font-size:24px}
+  .view-switch button{padding:8px 11px;font-size:12.5px}
+}
+
+/* ---- touch devices: comfortable tap targets ---- */
+@media (pointer:coarse){
+  .nav{min-height:44px}
+  .chat-member{padding:10px 6px}
+  .view-switch button{min-height:38px}
+}
+
+/* ---- phone in landscape: keep the tab bar slim ---- */
+@media (max-height:480px) and (orientation:landscape) and (max-width:900px){
+  .bottomnav .nav{flex-direction:row;min-height:40px;gap:6px;font-size:11px}
+  .bottomnav .nav .ic{font-size:16px}
+  .content{padding-bottom:70px}
+}
