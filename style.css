@@ -342,3 +342,11 @@ button:disabled{opacity:.55;cursor:default}
 .chat-member-name small{font-size:11px;font-weight:600}
 .online-txt{color:#2fa866}
 @media (max-width:900px){.chat-layout{grid-template-columns:1fr}.chat-members{max-height:240px;order:-1}}
+
+/* pinch gestures must zoom the TREE, never the whole page (page zoom pushed the header off-screen on phones) */
+html,body{touch-action:pan-x pan-y}
+
+/* Logout in the header on phones (the sidebar that holds it is hidden below 760px) */
+.top-logout{display:none;align-items:center;gap:4px;border:1px solid var(--line);background:var(--paper);border-radius:999px;padding:6px 12px;font-size:12px;font-weight:700;color:var(--plum);white-space:nowrap}
+@media(max-width:760px){.top-logout{display:inline-flex}}
+@media(max-width:480px){.top-name{display:none}}

@@ -434,7 +434,7 @@ function navHTML(page) {
   if (isStaff()) groups.push(ADMIN_NAV);
   return groups.map(g => `<div class="navgroup"><div class="navgroup-label">${g.group}</div>${
     g.items.map(([id, label, icon]) => navItem(id, label, icon, page)).join("")
-  }</div>`).join("") + `<button class="nav logout"><span class="ic">🚪</span><span onclick="logout()">Logout</span></button>`;
+  }</div>`).join("") + `<button class="nav logout" onclick="logout()"><span class="ic">🚪</span><span>Logout</span></button>`;
 }
 function navItem(id, label, icon, page) {
   return `<button class="nav ${page === id ? "active" : ""}" onclick="go('${id}')"><span class="ic">${icon}</span><span>${label}</span></button>`;
@@ -483,8 +483,9 @@ function render() {
       ${topCenterHTML(page)}
       <div class="top-actions">
         
-        <span class="muted" style="font-size:13px;cursor:pointer" title="My Profile" onclick="openMyProfile()">${esc(state.account.name)}</span>
+        <span class="muted top-name" style="font-size:13px;cursor:pointer" title="My Profile" onclick="openMyProfile()">${esc(state.account.name)}</span>
         <div style="cursor:pointer" title="My Profile" onclick="openMyProfile()">${myself() ? avatarHTML(myself()) : `<div class="avatar">${esc(initials(state.account.name))}</div>`}</div>
+        <button type="button" class="top-logout" title="Logout" onclick="logout()">🚪 Logout</button>
       </div>
     </header>
     <div class="layout">
@@ -722,6 +723,7 @@ function tree() {
   <div class="tree-controls">
     <button class="secondary" onclick="treeZoom(1.15)">＋ Zoom</button>
     <button class="secondary" onclick="treeZoom(0.87)">－ Zoom</button>
+    <button class="ghost" onclick="treeFit()">⤢ Fit</button>
     <button class="ghost" onclick="treeReset()">Reset</button>
     <button class="ghost" onclick="treeFocusMe()">🎯 Focus Me</button>
   </div>`;
@@ -858,6 +860,12 @@ function setTreeScale(next, fx, fy) {
   window.scrollBy(0, (after.top + py * next) - fy);
 }
 function treeZoom(n) { setTreeScale(treeScale * n); }
+function treeFit() { // whole tree visible on screen
+  const canvas = document.getElementById("treeCanvas"), stage = document.getElementById("treeStage");
+  if (!canvas || !stage) return;
+  treeScale = Math.max(TREE_MIN_SCALE, Math.min(1, (canvas.clientWidth - 48) / Math.max(stage.offsetWidth, 1)));
+  syncTreeSize(); canvas.scrollLeft = 0;
+}
 function treeReset() { treeScale = 1; syncTreeSize(); centerTreeOnMe(); }
 function centerTreeOnMe() {
   const canvas = document.getElementById("treeCanvas"), sizer = document.getElementById("treeSizer"), stage = document.getElementById("treeStage");
@@ -2667,7 +2675,7 @@ Object.assign(window, {
   invite, likePost, likeReel, logout, openAddRelative, openProfile, openTicket,
   phoneLogin, pickAddRelativePhoto, publishPost, requestMerge, resolveTicket,
   reviewItem, saveAddRelative, sendReply, shareId, toast, treeFocusMe,
-  treeReset, treeZoom, toggleTreeExpand, treeSearch, setTreeRole,
+  treeReset, treeZoom, treeFit, toggleTreeExpand, treeSearch, setTreeRole,
   setAddRelativeMode, refreshExistingOptions, openMyProfile, saveProfileEdits, openEditProfile, closeEditProfile, openProfilePopup, openFullProfile, cancelEditProfile, deletePerson, removeLink, searchRelativeByUid, linkByUniqueId, approveIncoming, rejectIncoming,
   loadMemories, addMemory, deleteMemory,
   runClaimSearch, requestClaim, cancelClaim, startFreshProfile, approveClaim, rejectClaim,
