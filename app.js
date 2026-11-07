@@ -1166,6 +1166,26 @@ function centerTreeOnMe() {
   let x = 0, n = node; while (n && n !== stage) { x += n.offsetLeft; n = n.offsetParent; }
   canvas.scrollLeft = Math.max(0, sizer.offsetLeft + (x + node.offsetWidth / 2) * treeScale - canvas.clientWidth / 2);
 }
+/* Mouse drag-to-pan for the Branch tree (touch keeps native scrolling). A drag never counts as a click on a card/button. */
+(function initTreeMousePan() {
+  let pan = null, moved = false;
+  document.addEventListener("pointerdown", e => {
+    if (e.pointerType !== "mouse" || e.button !== 0) return;
+    const cv = e.target.closest && e.target.closest("#treeCanvas"); if (!cv) return;
+    if (e.target.closest("input,textarea,select,a")) return;
+    pan = { x: e.clientX, y: e.clientY, l: cv.scrollLeft, t: cv.scrollTop, cv }; moved = false;
+  });
+  window.addEventListener("pointermove", e => {
+    if (!pan) return;
+    const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
+    if (!moved && Math.abs(dx) + Math.abs(dy) > 5) { moved = true; pan.cv.classList.add("grab"); }
+    if (moved) { pan.cv.scrollLeft = pan.l - dx; pan.cv.scrollTop = pan.t - dy; e.preventDefault(); }
+  });
+  const end = () => { if (!pan) return; pan.cv.classList.remove("grab"); pan = null; setTimeout(() => { moved = false; }, 0); };
+  window.addEventListener("pointerup", end); window.addEventListener("pointercancel", end);
+  document.addEventListener("click", e => { if (moved) { e.stopPropagation(); e.preventDefault(); } }, true);
+  document.addEventListener("dragstart", e => { if (e.target.closest && e.target.closest("#treeCanvas")) e.preventDefault(); });
+})();
 (function initTreePinch() {
   let pinch = null;
   const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
@@ -2558,6 +2578,48 @@ function relationship() {
   <div class="field"><label>Person B</label><select id="rb" onchange="">${opts}</select></div>
   <button class="primary" style="justify-self:start" onclick="findRelation()">Find Relationship</button><div id="relout"></div></div>`;
 }
+/* Relationship path drawn as a small family tree: parents sit above children, spouses side by side,
+   and every line is labelled (Father, Wife, Son ...). A and B are highlighted. */
+function relationTreeHTML(fromId, path) {
+  const W = 132, H = 66, CX = 176, RY = 118, PAD = 24;
+  const ids = [fromId, ...path.map(s => s.personId)];
+  const pos = [{ col: 0, row: 0 }]; const taken = new Set(["0,0"]);
+  path.forEach((st, i) => {
+    const prev = pos[i]; let col = prev.col, row = prev.row + (st.dir === "up" ? -1 : st.dir === "down" ? 1 : 0);
+    if (st.dir === "spouse" || taken.has(col + "," + row)) { col++; while (taken.has(col + "," + row)) col++; }
+    taken.add(col + "," + row); pos.push({ col, row });
+  });
+  const minRow = Math.min(...pos.map(q => q.row)), maxRow = Math.max(...pos.map(q => q.row)), maxCol = Math.max(...pos.map(q => q.col));
+  const X = q => PAD + q.col * CX, Y = q => PAD + (q.row - minRow) * RY;
+  const totalW = PAD * 2 + maxCol * CX + W, totalH = PAD * 2 + (maxRow - minRow) * RY + H;
+  const label = (st, person) => {
+    const g = person && person.gender;
+    if (st.dir === "up") return g === "Male" ? "Father" : g === "Female" ? "Mother" : "Parent";
+    if (st.dir === "down") return g === "Male" ? "Son" : g === "Female" ? "Daughter" : "Child";
+    return g === "Male" ? "Husband" : g === "Female" ? "Wife" : "Spouse";
+  };
+  let lines = "", pills = "";
+  path.forEach((st, i) => {
+    const A = pos[i], B = pos[i + 1], pr = personById(ids[i + 1]);
+    let lx, ly;
+    if (st.dir === "spouse") {
+      const y = Y(A) + H / 2, x1 = X(A) + W, x2 = X(B);
+      lines += `<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" class="rt-spouse"/><circle cx="${(x1 + x2) / 2}" cy="${y}" r="5" class="rt-ring"/>`;
+      lx = (x1 + x2) / 2; ly = y - 16;
+    } else {
+      const upper = st.dir === "up" ? B : A, lower = st.dir === "up" ? A : B;
+      const x1 = X(upper) + W / 2, y1 = Y(upper) + H, x2 = X(lower) + W / 2, y2 = Y(lower), mid = (y1 + y2) / 2;
+      lines += `<path d="M${x1} ${y1} V${mid} H${x2} V${y2}" class="rt-line"/>`;
+      lx = (x1 + x2) / 2; ly = mid;
+    }
+    pills += `<span class="rt-pill" style="left:${lx}px;top:${ly}px">${esc(label(st, pr))}</span>`;
+  });
+  const cards = ids.map((id, i) => {
+    const pp = personById(id) || { name: "?" }, q = pos[i], end = i === 0 ? "start" : i === ids.length - 1 ? "end" : "";
+    return `<div class="rt-card ${end}" style="left:${X(q)}px;top:${Y(q)}px;width:${W}px;height:${H}px">${avatarHTML(pp, "rt-av")}<span class="rt-name">${esc(pp.name)}</span>${end ? `<span class="rt-tag">${end === "start" ? "A" : "B"}</span>` : ""}</div>`;
+  }).join("");
+  return `<div class="rt-wrap"><div class="rt-canvas" style="width:${totalW}px;height:${totalH}px"><svg width="${totalW}" height="${totalH}" class="rt-svg">${lines}</svg>${pills}${cards}</div></div>`;
+}
 function findRelation() {
   const a = state.people.find(p => p.id === document.getElementById("ra").value);
   const b = state.people.find(p => p.id === document.getElementById("rb").value);
@@ -2569,7 +2631,7 @@ function findRelation() {
   }
   box.innerHTML = `<div class="card" style="margin-top:10px">
     <strong>${esc(b.name)} is ${a.id === b.id ? "" : `${result.label} of`} ${esc(a.name)}${a.id === b.id ? " (same person)" : ""}.</strong>
-    <p class="muted" style="margin-top:8px">Relationship path: ${result.chain.map(n => `<b>${esc(n)}</b>`).join(" → ")}</p>
+    ${result.path.length ? relationTreeHTML(a.id, result.path) : ""}
   </div>`;
 }
 
