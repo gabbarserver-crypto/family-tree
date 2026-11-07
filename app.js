@@ -496,7 +496,7 @@ async function logout() { skipClaimSearch = false; if (supabase) await supabase.
 /* ---------------- shell ---------------- */
 function topCenterHTML(page) {
   if (page !== "tree" && page !== "wall" && page !== "chat") return "";
-  const search = page === "tree" ? `<input id="treeSearch" class="top-search" placeholder="Search by name or Person ID…" list="treeSearchList" onchange="treeSearch(this.value)"><datalist id="treeSearchList">${state.people.map(p => `<option value="${esc(p.name)} (${p.id})">`).join("")}</datalist>` : "";
+  const search = page === "tree" ? `<div class="top-search-wrap"><input id="treeSearch" class="top-search" placeholder="Search name, nickname or Person ID…" autocomplete="off" oninput="treeSearchInput(this.value)" onfocus="treeSearchInput(this.value)" onkeydown="treeSearchKey(event)"><div id="treeSearchResults" class="search-results" hidden></div></div>` : "";
   return `<div class="topbar-center"><span class="top-title">${treeViewing ? esc(treeViewing.ownerName) + "'s Family Tree" : "My Family Tree"}</span>${search}${page === "tree" ? treeStyleSwitchHTML() : ""}<div class="view-switch"><button class="${page === "tree" ? "active" : ""}" onclick="go('tree')">Family Tree</button><button class="${page === "wall" ? "active" : ""}" onclick="go('wall')">Family Wall</button><button class="${page === "chat" ? "active" : ""}" onclick="go('chat')">💬 Chat</button></div></div>`;
 }
 function render() {
@@ -1082,11 +1082,47 @@ function toggleTreeExpand(id) {
 }
 
 function centerTree(id) { branchView = null; treeCenterId = id; treeScale = 1; go("tree"); requestAnimationFrame(drawTreeConnectors); }
-function treeSearch(val) {
-  const idMatch = val.match(/\(([^)]+)\)\s*$/);
-  const id = idMatch ? idMatch[1] : (state.people.find(p => p.name.toLowerCase() === val.toLowerCase())?.id);
-  if (id && personById(id)) centerTree(id); else toast("Person not found");
+/* Live tree search: type part of a name, nickname or Person ID; pick a result to jump to that person
+   (Branch view re-centres on them, Chart view opens their family line) and flash their card. */
+function treeSearchMatches(val) {
+  const q = String(val || "").trim().toLowerCase(); if (!q) return [];
+  const tokens = q.split(/\s+/);
+  const hay = p => [p.name, p.nickname, p.personCode, p.id].filter(Boolean).join(" ").toLowerCase();
+  const startsAt = p => (p.name || "").toLowerCase().startsWith(q) ? 0 : (p.personCode || p.id || "").toLowerCase() === q ? 0 : 1;
+  return state.people.filter(p => !(p.details && p.details.deleted) && tokens.every(t => hay(p).includes(t)))
+    .sort((a, b) => startsAt(a) - startsAt(b) || String(a.name).localeCompare(String(b.name))).slice(0, 8);
 }
+function treeSearchInput(val) {
+  const box = document.getElementById("treeSearchResults"); if (!box) return;
+  if (!String(val || "").trim()) { box.hidden = true; box.innerHTML = ""; return; }
+  const list = treeSearchMatches(val);
+  const meId = (myself() || me() || {}).id;
+  box.innerHTML = list.length ? list.map(p => {
+    let rel = ""; try { if (meId) rel = deriveRelationship(meId, p.id).label; } catch (e) {}
+    const yr = p.dob ? String(p.dob).slice(0, 4) : "";
+    return `<button type="button" class="sr-item" onmousedown="event.preventDefault();treeSearchPick('${esc(p.id)}')">${avatarHTML(p, "sr-av")}<span class="sr-txt"><b>${esc(p.name)}</b><span class="muted">${esc([rel && rel !== "Not connected" ? rel : "", yr, p.personCode || p.id].filter(Boolean).join(" · "))}${p.status === "unclaimed" ? " · Unclaimed" : ""}</span></span></button>`;
+  }).join("") : `<div class="sr-empty muted">Koi match nahi mila</div>`;
+  box.hidden = false;
+}
+function treeSearchKey(e) {
+  if (e.key === "Escape") { const b = document.getElementById("treeSearchResults"); if (b) b.hidden = true; e.target.blur(); return; }
+  if (e.key === "Enter") { e.preventDefault(); const first = treeSearchMatches(e.target.value)[0]; if (first) treeSearchPick(first.id); else toast("Person not found"); }
+}
+function treeSearchPick(id) {
+  const box = document.getElementById("treeSearchResults"); if (box) box.hidden = true;
+  if (!personById(id)) { toast("Person not found"); return; }
+  if (treeStyle === "chart") chartGoFamily(id); else centerTree(id);
+  flashFoundCard(id);
+}
+function flashFoundCard(id, tries) {
+  tries = tries || 0;
+  const el = document.getElementById(nodeElId(id)) || [...document.querySelectorAll(".ch-card")].find(x => x.dataset.id === id);
+  if (!el) { if (tries < 12) setTimeout(() => flashFoundCard(id, tries + 1), 100); return; }
+  try { el.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" }); } catch (e) {}
+  el.classList.add("search-hit"); setTimeout(() => el.classList.remove("search-hit"), 2600);
+}
+document.addEventListener("click", e => { if (!e.target.closest || !e.target.closest(".top-search-wrap")) { const b = document.getElementById("treeSearchResults"); if (b) b.hidden = true; } });
+function treeSearch(val) { const m = treeSearchMatches(val)[0]; if (m) treeSearchPick(m.id); else toast("Person not found"); }
 /* ---- Zoom: buttons, two-finger pinch (mobile) and Ctrl+wheel / trackpad pinch (desktop) ----
    The stage is scaled with a transform, and #treeSizer is given the SCALED size, so the canvas always
    scrolls over exactly what is visible (zoomed-in tree is never cut off on the left/top). The point
@@ -3025,11 +3061,12 @@ Object.assign(window, {
   invite, likePost, likeReel, logout, openAddRelative, openProfile, openTicket,
   phoneLogin, pickAddRelativePhoto, publishPost, requestMerge, resolveTicket,
   reviewItem, saveAddRelative, sendReply, shareId, toast, treeFocusMe,
-  treeReset, treeZoom, treeFit, toggleTreeExpand, treeSearch, setTreeRole,
+  treeReset, treeZoom, treeFit, toggleTreeExpand, treeSearch, treeSearchInput, treeSearchKey, treeSearchPick, setTreeRole,
   openTransferProfile, closeTransferModal, copyTransferCode, cancelTransferProfile, redeemTransferCode,
   setAddRelativeMode, refreshExistingOptions, openMyProfile, saveProfileEdits, openEditProfile, closeEditProfile, openProfilePopup, openFullProfile, cancelEditProfile, deletePerson, removeLink, openDeleteMyProfile, searchRelativeByUid, linkByUniqueId, approveIncoming, rejectIncoming,
   loadMemories, addMemory, deleteMemory,
   runClaimSearch, requestClaim, cancelClaim, startFreshProfile, approveClaim, rejectClaim,
+  openJoinPreview, closeJoinPreview, sendJoinRequest, approveJoin, rejectJoin, cancelJoin, ackJoinRejected,
   importGedcomPicked, setPeopleSearch, clearPeopleSearch, setPeopleSort
 });
 

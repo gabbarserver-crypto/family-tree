@@ -498,3 +498,19 @@ html,body{touch-action:pan-x pan-y}
 .ch-menu button{border:0;background:transparent;text-align:left;padding:9px 10px;border-radius:8px;font-size:14px;cursor:pointer}
 .ch-menu button:hover{background:#f3eef8}
 @media (max-width:760px){.ch-canvas{height:calc(100vh - 230px)}}
+
+/* tree search dropdown */
+.top-search-wrap{position:relative;flex:1;min-width:220px;max-width:340px}
+.top-search-wrap .top-search{width:100%;max-width:none;min-width:0;box-sizing:border-box}
+.search-results{position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:60;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(40,20,60,.18);padding:6px;max-height:360px;overflow:auto}
+.search-results[hidden]{display:none}
+.sr-item{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:0;border-radius:8px;padding:7px 8px;cursor:pointer;font:inherit}
+.sr-item:hover{background:var(--paper)}
+.sr-item .sr-av{width:34px;height:34px;flex:none;font-size:12px}
+.sr-txt{display:flex;flex-direction:column;min-width:0;line-height:1.25}
+.sr-txt b{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sr-txt .muted{font-size:12px}
+.sr-empty{padding:10px;font-size:13px}
+@keyframes searchHit{0%,100%{box-shadow:0 0 0 0 rgba(224,165,38,0)}30%{box-shadow:0 0 0 6px rgba(224,165,38,.75)}}
+.search-hit{animation:searchHit .9s ease-in-out 3;outline:2px solid #e0a526;outline-offset:2px}
+@media (max-width:760px){.top-search-wrap{flex:1 1 100%;max-width:none;min-width:0}}
