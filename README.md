@@ -17,8 +17,7 @@ instead of one basic app plus a pile of disconnected standalone HTML demos.
 - **V11** — Support Center (staff ticket queue + chat) and user-facing "Create Ticket"
 - **V11** — Production Dashboard: system health & release pipeline
 
-A **"View as" role switch** in the top bar lets you preview the Member,
-Support, and Admin experiences in this demo without a real auth backend.
+Roles (member / support / admin) come from the `admin_roles` and `support_staff` tables after login.
 
 ## New UI
 - Design tokens in `style.css`: plum + marigold gold + sage palette, Fraunces
@@ -39,8 +38,9 @@ Support, and Admin experiences in this demo without a real auth backend.
 - Updated V11 roadmap
 
 ## Supabase
-Run `supabase-v11-support.sql` after the earlier V7/V8/V9/V10 migrations
-(these `.sql` files are NOT in this zip — keep them in your repo and review their RLS policies before going live).
+SQL files are in `supabase/`. Run order: your earlier V7–V11 migrations (not in this zip — keep them in your repo), then `supabase-chat.sql`, `supabase-remove-link.sql`, `supabase-hardening.sql`, `supabase-join-tree.sql`, `supabase-admin-claim.sql`.
+Review all RLS policies before going live.
+The app also expects `person-memories.sql`, `claim-existing-profile.sql` and `supabase-v11-support.sql` — these are NOT in this zip.
 
 Create a private Storage bucket:
 `support-attachments`
@@ -55,3 +55,41 @@ Support staff are not family members. Support access must be limited to the tick
 - Staff/admin screens are hidden client-side only. Real protection must come from Supabase Row Level Security on `support_tickets`, `merge_requests`, `admin_roles`, `support_staff`, etc.
 - All user-entered text rendered via `innerHTML` must go through `esc()` (now escapes `& < > " '`).
 - TODO: make merge approval a single atomic Supabase RPC instead of delete + per-row upsert from the browser.
+
+## Setup
+```bash
+npm install
+cp .env.example .env.local   # fill VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY
+npm run dev
+```
+Static assets live in `public/assets/` (served at `/assets/*`).
+
+## Changelog (review pass)
+- Fixed stored XSS: names in the Relationship Finder path are now escaped.
+- GEDCOM import: O(1) person lookup; local-file photo paths are no longer used as image URLs (kept in `details.photo_file`).
+- Chat: sender name is set server-side by trigger; per-user rate limit (`supabase-hardening.sql`).
+- Added `.gitignore`, `.env.example`, `vite.config.js`; consolidated assets; moved SQL to `supabase/`; removed the unused Next.js example.
+
+## Join a family tree (new)
+Run `supabase/supabase-join-tree.sql` once in the Supabase SQL editor (after your earlier migrations).
+- New user searches their name -> **"Ye main hu"** -> sees the tree (names/years only) + the list of tree admins -> **Join**.
+- **Pending**: can only ADD new profiles/links. No edit/delete of anything that existed before (enforced in the database by `join_sync` / `join_remove_person`).
+- **Approved** by an owner/admin: can also edit old *unclaimed* profiles.
+- **Rejected / cancelled**: every profile, link and membership that person added to that tree is rolled back (soft-deleted).
+- Owners/admins see requests (with how many profiles the person already added) in *Connections & Sharing*.
+
+## Chart view (new)
+Tree page now has a **🌿 Branch / 🧬 Chart** switch in the top bar (choice is remembered).
+Chart view is an iMeUsWe-style top-down chart: white portrait cards, coloured initials or photo, green ring for registered members,
+spouse line with a hollow circle, bus line down to the children. Starts from the top of *your* family line; a dropdown lets you start from
+another family line. Tap a card for the profile, drag to pan, ＋/－/Fit to zoom (Ctrl+wheel also works). Built from the same relationship graph.
+
+## Admin by claim, admin management, profile transfer (new)
+Run `supabase/supabase-admin-claim.sql` once (after `supabase-join-tree.sql`).
+- **Claiming a profile makes that user an admin** of the tree (add + edit). Claiming stays optional; unclaimed profiles are managed by admins.
+- An admin stays admin until **another admin removes them** (Tree Admins page). Removing admin does not unclaim the profile.
+- **Any admin can add or remove admins**; the target must be a claimed profile. The tree owner can never be removed, so a tree always has an admin.
+- **Transfer profile**: a claimed (non-owner) profile can be handed to another account with a single-use 48h code (stored hashed). The receiver enters it under "Transfer code hai?" on the first-login screen, becomes the claimant + admin, and the sender stays in the tree as admin with a fresh empty card (same name, no contact details) until another admin removes them.
+- **Another email for an already-claimed profile**: can't take it over. They join with a new profile; when an admin approves (with a confirm warning) they become admin.
+- Everything is logged in `tree_admin_log`.
+- Optional backfill (commented in the SQL) makes already-claimed members admins too.

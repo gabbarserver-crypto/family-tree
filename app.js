@@ -101,9 +101,32 @@ const RELATION_TYPES = {
 
 function save() { return persistState(); }
 
+/* Joined tree: every write goes through the join_sync() database function, which decides per row what this
+   member may do. We only send rows that are new, or that this member is allowed to edit. */
+function personToRow(p) {
+  return { id: p.id, person_code: p.personCode || p.id, full_name: p.name, dob: normalizeDate(p.dob), gender: p.gender || null, mobile: p.mobile || null, email: p.email || null, avatar_url: p.avatar_url || null, status: p.status || "unclaimed",
+    nickname: p.nickname || null, show_nickname: !!p.showNickname, birth_place: p.birthPlace || null, current_place: p.currentPlace || null, life_status: p.lifeStatus || "living", details: p.details || {} };
+}
+let joinSyncChain = Promise.resolve();
+function joinSyncState() {
+  joinSyncChain = joinSyncChain.then(async () => {
+    const j = state.joined; if (!j) return;
+    const people = state.people.filter(p => !p.external && (!j.known.has(p.id) || canEditPerson(p))).map(personToRow);
+    const rels = state.relationships.filter(r => !j.knownRels.has(r.id) || r.status === "removed").map(r => ({ id: isUuid(r.id) ? r.id : crypto.randomUUID(), person_a_id: r.from, person_b_id: r.to, relationship_type: r.type, status: r.status === "removed" ? "removed" : "active" }));
+    if (!people.length && !rels.length) return;
+    const { data, error } = await supabase.rpc("join_sync", { p_tree_id: j.treeId, p_people: people, p_rels: rels });
+    if (error) { console.error("join_sync failed", error); toast("Server save failed: " + error.message); return; }
+    state.people.forEach(p => j.known.add(p.id));
+    state.relationships.forEach(r => { if (isUuid(r.id)) j.knownRels.add(r.id); });
+    if (data && data.skipped) toast("Kuch changes allowed nahi the (approval ke baad purane profile edit ho sakte hain)");
+  }).catch(e => { console.error(e); toast("Server save failed: " + (e.message || e)); });
+  return joinSyncChain;
+}
+
 async function persistState() {
   if (treeViewing) return; // read-only while viewing another person's tree
   if (!supabase || !currentUser || !state.treeId) return;
+  if (state.joined) return joinSyncState();
   try {
     // Only write persons this user owns/claims; rewriting other people's rows is what RLS rejects (403 / 42501) and it fails the whole batch.
     const peopleRows = state.people.filter(p => p.me || p.claimed_by === currentUser.id || p.created_by === currentUser.id).map(p => ({
@@ -177,9 +200,15 @@ function personTreeRole(p) { return (p && p.treeRole) || (p && p.me ? "owner" : 
 function myTreeRole() { return personTreeRole(me()); }
 function isTreeOwner() { return myTreeRole() === "owner"; }
 function canEditTree() { if (treeViewing) return false; return myTreeRole() === "owner" || myTreeRole() === "admin"; }
+/* Any tree admin (or the owner) can add or remove other admins. The owner itself can never be removed. */
+function canManageAdmins() { return canEditTree(); }
 /* Anyone can add relatives directly onto their own card, even if they're
    not a tree owner/admin. Everyone else's card still needs edit rights. */
-function canAddRelativeTo(targetId) { if (treeViewing) return false; return canEditTree() || targetId === me().id; }
+function canAddRelativeTo(targetId) { if (treeViewing) return false; if (state.joined) return true; return canEditTree() || targetId === me().id; }
+/* Joined-tree mode: a new member who asked to join someone else's tree.
+   pending  = may ADD new profiles/links only (cannot edit or delete anything that existed before)
+   approved = may also edit old unclaimed profiles. The server (join_sync) enforces the same rules. */
+function isPendingJoiner() { return !!state.joined && state.joined.status === "pending"; }
 function treeRoleLabel(r) { return r === "owner" ? "Owner" : r === "admin" ? "Admin" : "Member"; }
 function treeRoleBadgeClass(r) { return r === "owner" ? "sage" : r === "admin" ? "plum" : ""; }
 
@@ -462,13 +491,13 @@ async function phoneLogin() {
   const phone = prompt('Enter mobile number with country code, e.g. +9198XXXXXXXX'); if (!phone) return;
   try { await sendPhoneOtp(phone); const otp = prompt('Enter the OTP you received'); if (!otp) return; await verifyPhoneOtp(phone, otp); await bootAuthenticatedApp(); } catch(e) { toast(e.message); }
 }
-async function logout() { skipClaimSearch = false; if (supabase) await supabase.auth.signOut(); loggedIn = false; currentUser = null; state = { account: {}, people: [], relationships: [], connections: [], mergeRequests: [], events: [], posts: [], reels: [], tickets: [], audit: [], treeId: null }; location.hash = 'home'; render(); }
+async function logout() { skipClaimSearch = false; if (supabase) await supabase.auth.signOut(); loggedIn = false; currentUser = null; state = { account: {}, people: [], relationships: [], connections: [], mergeRequests: [], events: [], posts: [], reels: [], tickets: [], audit: [], treeId: null, joined: null }; location.hash = 'home'; render(); }
 
 /* ---------------- shell ---------------- */
 function topCenterHTML(page) {
   if (page !== "tree" && page !== "wall" && page !== "chat") return "";
   const search = page === "tree" ? `<input id="treeSearch" class="top-search" placeholder="Search by name or Person ID…" list="treeSearchList" onchange="treeSearch(this.value)"><datalist id="treeSearchList">${state.people.map(p => `<option value="${esc(p.name)} (${p.id})">`).join("")}</datalist>` : "";
-  return `<div class="topbar-center"><span class="top-title">${treeViewing ? esc(treeViewing.ownerName) + "'s Family Tree" : "My Family Tree"}</span>${search}<div class="view-switch"><button class="${page === "tree" ? "active" : ""}" onclick="go('tree')">Family Tree</button><button class="${page === "wall" ? "active" : ""}" onclick="go('wall')">Family Wall</button><button class="${page === "chat" ? "active" : ""}" onclick="go('chat')">💬 Chat</button></div></div>`;
+  return `<div class="topbar-center"><span class="top-title">${treeViewing ? esc(treeViewing.ownerName) + "'s Family Tree" : "My Family Tree"}</span>${search}${page === "tree" ? treeStyleSwitchHTML() : ""}<div class="view-switch"><button class="${page === "tree" ? "active" : ""}" onclick="go('tree')">Family Tree</button><button class="${page === "wall" ? "active" : ""}" onclick="go('wall')">Family Wall</button><button class="${page === "chat" ? "active" : ""}" onclick="go('chat')">💬 Chat</button></div></div>`;
 }
 function render() {
   if (!loggedIn) { renderLogin(); return; }
@@ -490,11 +519,11 @@ function render() {
     </header>
     <div class="layout">
       <aside class="sidebar">${navHTML(page)}</aside>
-      <main class="content${page === "tree" ? " content-wide" : ""}">${pageView(page)}</main>
+      <main class="content${page === "tree" ? " content-wide" : ""}">${joinBannerHTML()}${pageView(page)}</main>
     </div>
     <nav class="bottomnav">${["home", "tree", "people", "wall", "chat", "profile"].map(id => flatNav.find(x => x[0] === id)).filter(Boolean).map(([id, label, icon]) => navItem(id, label, icon, page)).join("")}</nav>
   </div>`;
-  if (page === "tree") requestAnimationFrame(drawTreeConnectors);
+  if (page === "tree") requestAnimationFrame(treeStyle === "chart" ? chartAfterRender : drawTreeConnectors);
   if (page === "merge") mergeInitSelects();
   if (page === "chat") requestAnimationFrame(initChat);
   if (page === "profile") requestAnimationFrame(() => loadMemories(activeProfileId || me()?.id));
@@ -582,7 +611,210 @@ function orderGenerations(byGen, levels) {
     out.forEach((id, i) => { idx[id] = i; });
   });
 }
-function tree() {
+/* ==========================================================================
+   Chart view — classic top-down descendant chart (iMeUsWe-style):
+   white portrait cards, coloured initials / photo, spouse line with a small hollow circle,
+   a bus line that drops from that circle to each child. Built from the same relationship graph.
+   ========================================================================== */
+let treeStyle = (() => { try { return localStorage.getItem("ft_tree_style") === "chart" ? "chart" : "branch"; } catch (e) { return "branch"; } })();
+let chartRootId = null, chartScale = null, chartDragMoved = false;
+const CHD = { cw: 112, ch: 150, gapS: 48, gap: 22, vgap: 64, pad: 40, avY: 44 };
+let chartHistory = [], chartFocusId = null;
+function setTreeStyle(s) { treeStyle = s === "chart" ? "chart" : "branch"; try { localStorage.setItem("ft_tree_style", treeStyle); } catch (e) {} chartScale = null; render(); }
+function treeStyleSwitchHTML() {
+  return `<div class="view-switch style-switch"><button class="${treeStyle === "branch" ? "active" : ""}" onclick="setTreeStyle('branch')">🌿 Branch</button><button class="${treeStyle === "chart" ? "active" : ""}" onclick="setTreeStyle('chart')">🧬 Chart</button></div>`;
+}
+/* climb to the top of the family line (father's side first; a married-in person with no parents climbs via the spouse) */
+function chartTopAncestor(id) {
+  const seen = new Set(); let cur = id;
+  while (cur && !seen.has(cur)) {
+    seen.add(cur);
+    const ps = parentsOf(cur).filter(x => personById(x));
+    if (!ps.length) {
+      // only a married-in person who is the START of the climb (no parents of their own) follows the spouse's line
+      const sp = cur === id && spousesOf(cur).find(s => !seen.has(s) && parentsOf(s).some(x => personById(x)));
+      if (sp) { cur = sp; continue; }
+      break;
+    }
+    cur = ps.find(x => personById(x).gender === "Male") || ps[0];
+  }
+  return cur;
+}
+function chartRoots() {
+  const seen = new Set(), out = [];
+  state.people.forEach(p => { const r = chartTopAncestor(p.id); if (r && !seen.has(r)) { seen.add(r); out.push(r); } });
+  return out;
+}
+function chartLayout(rootId) {
+  const placed = new Set();
+  const dobKey = id => String(personById(id)?.dob || "9999");
+  const byBirth = (a, b) => dobKey(a).localeCompare(dobKey(b));
+  const kidsOf = x => childrenOf(x).filter(c => personById(c) && !placed.has(c));
+  function unit(pid) {
+    placed.add(pid);
+    const sps = spousesOf(pid).filter(s => personById(s) && !placed.has(s));
+    sps.forEach(s => placed.add(s));
+    const left = [], right = [];
+    sps.forEach((s, i) => (i % 2 === 0 ? right : left).push(s));
+    const cards = [...left.reverse(), pid, ...right];
+    const map = new Map();
+    new Set([...kidsOf(pid), ...sps.flatMap(kidsOf)]).forEach(c => {
+      const ps = parentsOf(c); const key = sps.find(s => ps.includes(s)) || pid;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(c);
+    });
+    const groups = [];
+    cards.forEach(cid => { if (map.has(cid)) groups.push({ key: cid, kids: map.get(cid).sort(byBirth) }); });
+    groups.forEach(g => { g.nodes = g.kids.filter(k => !placed.has(k)).map(k => unit(k)); });
+    const kids = groups.flatMap(g => g.nodes);
+    const uw = cards.length * CHD.cw + (cards.length - 1) * CHD.gapS;
+    const kw = kids.reduce((s, n) => s + n.w, 0) + Math.max(0, kids.length - 1) * CHD.gap;
+    return { pid, cards, groups, kids, uw, kw, w: Math.max(uw, kw) };
+  }
+  const root = unit(rootId);
+  const cardsOut = [], lines = []; let maxY = 0;
+  const X = (x, i) => x + i * (CHD.cw + CHD.gapS);
+  function place(n, x0, y) {
+    const ux = x0 + (n.w - n.uw) / 2;
+    n.cards.forEach((id, i) => cardsOut.push({ id, x: X(ux, i), y, spouse: id !== n.pid }));
+    maxY = Math.max(maxY, y + CHD.ch);
+    const midY = y + CHD.avY, bottom = y + CHD.ch, busY = bottom + CHD.vgap / 2, topY = bottom + CHD.vgap;
+    const hasKids = key => n.groups.some(g => g.key === key && g.nodes.length);
+    const pi = n.cards.indexOf(n.pid);
+    // spouse lines (+ circle when that couple has children)
+    n.cards.forEach((id, i) => {
+      if (i === pi) return;
+      const near = i > pi ? i - 1 : i + 1;                       // the neighbour on the side facing the main person
+      const a = Math.min(i, near), b = Math.max(i, near);
+      const xa = X(ux, a) + CHD.cw, xb = X(ux, b);
+      lines.push(`M${xa} ${midY}H${xb}`);
+      if (hasKids(id)) lines.push({ circle: [(xa + xb) / 2, midY] });
+    });
+    // children
+    let cx = x0 + (n.w - n.kw) / 2;
+    n.groups.forEach(g => {
+      if (!g.nodes.length) return;
+      const i = n.cards.indexOf(g.key);
+      let dx, dy;
+      if (g.key === n.pid && n.cards.length === 1) { dx = X(ux, i) + CHD.cw / 2; dy = bottom; }
+      else if (g.key === n.pid) { dx = X(ux, i) + CHD.cw / 2; dy = bottom; }
+      else { const near = i > pi ? i - 1 : i + 1; dx = (X(ux, Math.min(i, near)) + CHD.cw + X(ux, Math.max(i, near))) / 2; dy = midY; }
+      g.nodes.forEach(k => {
+        const kux = cx + (k.w - k.uw) / 2, kpi = k.cards.indexOf(k.pid);
+        const ax = X(kux, kpi) + CHD.cw / 2, r = 7;
+        if (Math.abs(ax - dx) < 2 * r) lines.push(`M${dx} ${dy}V${topY}`);
+        else { const s = ax > dx ? 1 : -1; lines.push(`M${dx} ${dy}V${busY - r}Q${dx} ${busY} ${dx + s * r} ${busY}H${ax - s * r}Q${ax} ${busY} ${ax} ${busY + r}V${topY}`); }
+        place(k, cx, topY);
+        cx += k.w + CHD.gap;
+      });
+    });
+  }
+  place(root, CHD.pad, CHD.pad);
+  return { cards: cardsOut, lines, W: root.w + CHD.pad * 2, H: maxY + CHD.pad };
+}
+function chartCardHTML(c) {
+  const p = personById(c.id); if (!p) return "";
+  const [bg, fg] = avatarPalette(p);
+  const yearOf = v => { const m = String(v || "").match(/\b(1[0-9]{3}|20[0-9]{2})\b/); return m ? m[1] : ""; };
+  const by = yearOf(p.dob), dod = yearOf(p.details?.dod || p.details?.death_date);
+  const yrs = by ? `${by} -${dod ? " " + dod : ""}` : (dod ? `- ${dod}` : "-");
+  const reg = p.claimed_by || p.status === "claimed" || p.me;
+  const av = p.avatar_url
+    ? `<span class="ch-av${reg ? " reg" : ""}"><img src="${esc(p.avatar_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-ini="${esc(initials(p.name))}" data-bg="${bg}" data-fg="${fg}" onerror="avatarFallback(this)"></span>`
+    : `<span class="ch-av${reg ? " reg" : ""}" style="background:${bg};color:${fg}">${esc(initials(p.name))}</span>`;
+  const badge = c.spouse && parentsOf(p.id).some(x => personById(x))
+    ? `<span class="ch-badge" role="button" title="Inke parivaar ka tree dekhein" onclick="event.stopPropagation();chartGoFamily('${esc(p.id)}')"><svg viewBox="0 0 24 24" width="15" height="15"><circle cx="12" cy="7" r="4.2" fill="#b3b3b3"/><circle cx="7" cy="14.5" r="4.2" fill="#b3b3b3"/><circle cx="17" cy="14.5" r="4.2" fill="#b3b3b3"/></svg></span>` : "";
+  const add = canAddRelativeTo(p.id)
+    ? `<span class="ch-add" role="button" title="Relative add karein" onclick="event.stopPropagation();chartAddMenu(event,'${esc(p.id)}')"><svg viewBox="0 0 24 24" width="19" height="19"><circle cx="10" cy="7" r="4" fill="#f07d3c"/><path d="M2 20c0-4 3.5-6.5 8-6.5s8 2.5 8 6.5z" fill="#f07d3c"/><circle cx="19" cy="17" r="4.4" fill="#f07d3c" stroke="#fff" stroke-width="1.2"/><path d="M19 15v4M17 17h4" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg></span>` : "";
+  return `<button type="button" class="ch-card${p.me ? " me" : ""}${p.lifeStatus === "deceased" ? " gone" : ""}" data-id="${esc(p.id)}" style="left:${c.x}px;top:${c.y}px" title="${esc(p.name)}" onclick="chartOpen('${esc(p.id)}')">${add}${badge}${av}<b>${esc(p.name)}</b><span class="ch-yrs">${esc(yrs)}</span></button>`;
+}
+function treeChart() {
+  const roots = chartRoots();
+  if (!chartRootId || !personById(chartRootId) || !roots.includes(chartRootId)) {
+    const startFrom = treeCenterId && personById(treeCenterId) ? treeCenterId : (me() && me().id);
+    chartRootId = chartTopAncestor(startFrom) || roots[0];
+  }
+  if (!chartRootId) return `<div class="empty card"><span class="big">🌳</span><h3>Tree khali hai</h3><p class="muted">Pehle kuch family members add karein.</p></div>`;
+  const L = chartLayout(chartRootId);
+  const rp = personById(chartRootId), last = rp ? nameParts(rp).last : "";
+  const title = treeViewing ? `${treeViewing.ownerName}'s Family Tree` : `${last ? last + " " : ""}Family Tree`;
+  const sc = chartScale || 1;
+  const svg = `<svg class="ch-lines" width="${L.W}" height="${L.H}" viewBox="0 0 ${L.W} ${L.H}">${L.lines.map(l => typeof l === "string" ? `<path d="${l}"/>` : `<circle cx="${l.circle[0]}" cy="${l.circle[1]}" r="4"/>`).join("")}</svg>`;
+  return `<div class="ch-wrap">
+    <div class="ch-bar"><b>${chartHistory.length ? `<button class="ghost" style="padding:3px 10px;margin-right:8px" onclick="chartBack()">← Wapas</button>` : ""}${esc(title)}</b>
+      <span class="ch-tools">
+        ${roots.length > 1 ? `<select onchange="chartSetRoot(this.value)" title="Chart kahan se shuru ho">${roots.map(r => `<option value="${esc(r)}" ${r === chartRootId ? "selected" : ""}>${esc(personById(r)?.name || "?")}</option>`).join("")}</select>` : ""}
+        <button class="ghost" onclick="chartZoom(1/1.2)" title="Zoom out">－</button><span id="chartPct" class="muted">${Math.round(sc * 100)}%</span><button class="ghost" onclick="chartZoom(1.2)" title="Zoom in">＋</button><button class="ghost" onclick="chartFit()">Fit</button>
+      </span></div>
+    <div class="ch-canvas" id="chartCanvas" data-w="${L.W}" data-h="${L.H}" onpointerdown="chartPanStart(event)" onwheel="chartWheel(event)">
+      <div id="chartSizer" style="width:${L.W * sc}px;height:${L.H * sc}px"><div id="chartInner" style="width:${L.W}px;height:${L.H}px;transform:scale(${sc})">${svg}${L.cards.map(chartCardHTML).join("")}</div></div>
+    </div>
+    <p class="muted" style="font-size:12.5px;margin:8px 2px 0">Kisi bhi card par tap karein — profile khulega. Drag karke ghumayein, ＋/－ se zoom karein.</p>
+  </div>`;
+}
+function chartApplyScale(s, keepCenter) {
+  const cv = document.getElementById("chartCanvas"), inner = document.getElementById("chartInner"), sizer = document.getElementById("chartSizer");
+  if (!cv || !inner) return;
+  const W = +cv.dataset.w, H = +cv.dataset.h, old = chartScale || 1;
+  const cxr = (cv.scrollLeft + cv.clientWidth / 2) / old, cyr = (cv.scrollTop + cv.clientHeight / 2) / old;
+  chartScale = Math.max(0.15, Math.min(2.5, s));
+  inner.style.transform = `scale(${chartScale})`;
+  sizer.style.width = W * chartScale + "px"; sizer.style.height = H * chartScale + "px";
+  if (keepCenter) { cv.scrollLeft = cxr * chartScale - cv.clientWidth / 2; cv.scrollTop = cyr * chartScale - cv.clientHeight / 2; }
+  const pct = document.getElementById("chartPct"); if (pct) pct.textContent = Math.round(chartScale * 100) + "%";
+}
+function chartZoom(f) { chartApplyScale((chartScale || 1) * f, true); }
+function chartFit() {
+  const cv = document.getElementById("chartCanvas"); if (!cv) return;
+  const s = Math.min(1, (cv.clientWidth - 8) / +cv.dataset.w, (cv.clientHeight - 8) / +cv.dataset.h);
+  chartApplyScale(Math.max(0.15, s), false); cv.scrollLeft = 0; cv.scrollTop = 0;
+}
+function chartAfterRender() { // first draw: fit the whole chart on screen, then centre on "me"
+  const cv = document.getElementById("chartCanvas"); if (!cv) return;
+  if (chartScale === null) {
+    const w = +cv.dataset.w; chartApplyScale(Math.max(0.3, Math.min(1, (cv.clientWidth - 8) / w)), false);
+  }
+  const m = (chartFocusId && [...document.querySelectorAll(".ch-card")].find(x => x.dataset.id === chartFocusId)) || document.querySelector(".ch-card.me");
+  chartFocusId = null;
+  if (m) { cv.scrollLeft = Math.max(0, (m.offsetLeft + CHD.cw / 2) * chartScale - cv.clientWidth / 2); cv.scrollTop = 0; }
+}
+function chartSetRoot(id) { chartRootId = id; chartHistory = []; chartScale = null; render(); }
+function chartGoFamily(personId) { // open the family line this married-in person comes from
+  const top = chartTopAncestor(personId); if (!top) return;
+  chartHistory.push({ root: chartRootId, focus: personId });
+  chartRootId = top; chartFocusId = personId; chartScale = null; render();
+}
+function chartBack() {
+  const h = chartHistory.pop(); if (!h) return;
+  chartRootId = h.root; chartFocusId = h.focus; chartScale = null; render();
+}
+function chartAddMenu(e, id) {
+  document.getElementById("chartMenu")?.remove();
+  const np = parentsOf(id).length;
+  const items = Object.entries(RELATION_TYPES).filter(([k, t]) => !(t.edgeType === "parent" && np >= 2));
+  const m = document.createElement("div"); m.id = "chartMenu"; m.className = "ch-menu";
+  m.innerHTML = `<div class="ch-menu-h">${esc(personById(id)?.name || "")} ka…</div>` + items.map(([k, t]) => `<button type="button" data-k="${k}">${esc(t.label)} add karein</button>`).join("");
+  document.body.appendChild(m);
+  const r = e.currentTarget.getBoundingClientRect();
+  m.style.left = Math.max(8, Math.min(r.left, window.innerWidth - m.offsetWidth - 8)) + "px";
+  m.style.top = Math.max(8, Math.min(r.bottom + 4, window.innerHeight - m.offsetHeight - 8)) + "px";
+  m.onclick = ev => { const k = ev.target.dataset && ev.target.dataset.k; m.remove(); if (k) openAddRelative(id, k); };
+  setTimeout(() => document.addEventListener("click", function once() { document.getElementById("chartMenu")?.remove(); document.removeEventListener("click", once); }), 0);
+}
+function chartOpen(id) { if (chartDragMoved) return; openProfilePopup(id); }
+function chartWheel(e) { if (!(e.ctrlKey || e.metaKey)) return; e.preventDefault(); chartZoom(e.deltaY < 0 ? 1.1 : 1 / 1.1); }
+let chartPan = null;
+function chartPanStart(e) {
+  if (e.pointerType !== "mouse" || e.button !== 0) return; // touch keeps native scrolling
+  const cv = document.getElementById("chartCanvas"); if (!cv) return;
+  chartPan = { x: e.clientX, y: e.clientY, l: cv.scrollLeft, t: cv.scrollTop }; chartDragMoved = false; cv.classList.add("grab");
+  const mv = ev => { if (!chartPan) return; const dx = ev.clientX - chartPan.x, dy = ev.clientY - chartPan.y; if (Math.abs(dx) + Math.abs(dy) > 5) chartDragMoved = true; cv.scrollLeft = chartPan.l - dx; cv.scrollTop = chartPan.t - dy; };
+  const up = () => { chartPan = null; cv.classList.remove("grab"); window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); setTimeout(() => { chartDragMoved = false; }, 0); };
+  window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up);
+}
+
+function tree() { return treeStyle === "chart" ? treeChart() : treeBranch(); }
+function treeBranch() {
   const centerId = treeCenterId || me().id;
   const gens = computeGenerations(centerId); // {personId: genIndex}
   const byGen = {};
@@ -1565,6 +1797,7 @@ async function saveAddRelative() {
     toast("Brother/Sister add karne ke liye pehle is person ke parents (Father/Mother) add karein"); return;
   }
   if (!canAddRelativeTo(addRelativeTargetId)) { toast("Only this tree's owner or admins can add relatives to other people"); return; }
+  if (addRelativeMode === "uid" && state.joined) { toast("Unique ID se link karna join approve hone ke baad se"); return; }
   if (addRelativeMode === "uid") { await linkByUniqueId(); return; }
   if (addRelativeMode === "existing") {
     const exId = document.getElementById("arExistingPerson").value;
@@ -1758,6 +1991,12 @@ function nameParts(p) {
 }
 function canEditPerson(p) {
   if (!p || treeViewing) return false;
+  if (state.joined) {
+    const mineAdded = !!currentUser && p.created_by === currentUser.id;
+    if (isPendingJoiner()) return mineAdded;                       // pending: only what I added myself
+    if (p.me) return true;
+    return mineAdded || (p.status === "unclaimed" && !p.claimed_by); // approved: old unclaimed profiles too
+  }
   if (p.me) return true;
   // other people's profiles: only while unclaimed, and only by the tree owner/admins or whoever created the profile
   return p.status === "unclaimed" && (canEditTree() || (!!currentUser && p.created_by === currentUser.id));
@@ -1778,7 +2017,10 @@ async function deletePerson(id) {
   const wasOnProfile = activeProfileId === id;
   if (activeProfileId === id) activeProfileId = null;
   closeEditProfile();
-  if (supabase && currentUser && state.treeId) {
+  if (state.joined) {
+    const { error } = await supabase.rpc("join_remove_person", { p_tree_id: state.joined.treeId, p_person_id: id });
+    if (error) { state.people = snapshot.people; state.relationships = snapshot.relationships; toast("Delete failed: " + error.message); render(); return; }
+  } else if (supabase && currentUser && state.treeId) {
     // NOTE: with Supabase Row Level Security a DELETE that isn't allowed does NOT raise an error - it just
     // deletes 0 rows, so the person came back after refresh. We now check how many rows were really removed
     // and fall back to a "soft delete" (hidden everywhere) when hard delete is blocked.
@@ -1831,7 +2073,11 @@ async function removeLink(relId) {
   const snapshot = state.relationships;
   state.relationships = state.relationships.filter(x => !same(x));
   removedEdgeKeys.add(edgeKey(r.from, r.to, r.type));
-  if (supabase && currentUser && state.treeId) {
+  if (state.joined) {
+    const rows = snapshot.filter(same).map(x => ({ id: x.id, person_a_id: x.from, person_b_id: x.to, relationship_type: x.type, status: "removed" }));
+    const { data, error } = await supabase.rpc("join_sync", { p_tree_id: state.joined.treeId, p_people: [], p_rels: rows });
+    if (error || (data && data.skipped && !data.updated)) { state.relationships = snapshot; removedEdgeKeys.delete(edgeKey(r.from, r.to, r.type)); toast(error ? "Remove failed: " + error.message : "Approval ke baad hi purane links hata sakte hain"); render(); return; }
+  } else if (supabase && currentUser && state.treeId) {
     const restore = msg => { state.relationships = snapshot; removedEdgeKeys.delete(edgeKey(r.from, r.to, r.type)); toast(msg); render(); };
     const rpc = await supabase.rpc("remove_relationship_everywhere", { p_relationship_id: relId });
     if (rpc.error) {
@@ -1889,7 +2135,7 @@ function detailRowsHTML(p) {
 function personDetailsCard(p) {
   return `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
       <h3 style="margin:0">Personal details</h3>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">${p.me ? `<button class="secondary" onclick="openChangeEmail('${esc(p.id)}')">✉️ Change email</button>` : ""}${p.me ? `<button class="danger" onclick="openDeleteMyProfile()">🗑 Delete my profile</button>` : ""}${canEditPerson(p) ? `<button class="secondary" onclick="openEditProfile('${esc(p.id)}')">✏️ Edit</button>` : ""}${canDeletePerson(p) ? `<button class="danger" onclick="deletePerson('${esc(p.id)}')">🗑 Delete profile</button>` : ""}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${p.me ? `<button class="secondary" onclick="openChangeEmail('${esc(p.id)}')">✉️ Change email</button>` : ""}${p.me && supabase && personTreeRole(p) !== "owner" ? `<button class="secondary" onclick="openTransferProfile('${esc(p.id)}')">🔁 Transfer profile</button>` : ""}${p.me ? `<button class="danger" onclick="openDeleteMyProfile()">🗑 Delete my profile</button>` : ""}${canEditPerson(p) ? `<button class="secondary" onclick="openEditProfile('${esc(p.id)}')">✏️ Edit</button>` : ""}${canDeletePerson(p) ? `<button class="danger" onclick="deletePerson('${esc(p.id)}')">🗑 Delete profile</button>` : ""}</div>
     </div>
     ${detailRowsHTML(p)}
   </div>`;
@@ -2287,7 +2533,7 @@ function findRelation() {
   }
   box.innerHTML = `<div class="card" style="margin-top:10px">
     <strong>${esc(b.name)} is ${a.id === b.id ? "" : `${result.label} of`} ${esc(a.name)}${a.id === b.id ? " (same person)" : ""}.</strong>
-    <p class="muted" style="margin-top:8px">Relationship path: ${result.chain.map(n => `<b>${n}</b>`).join(" → ")}</p>
+    <p class="muted" style="margin-top:8px">Relationship path: ${result.chain.map(n => `<b>${esc(n)}</b>`).join(" → ")}</p>
   </div>`;
 }
 
@@ -2465,6 +2711,8 @@ function sharing() {
     <div class="field"><label>Scope</label><select id="inviteScope"><option>Person profile</option><option>Family tree</option></select></div>
     <button class="primary" style="justify-self:start" onclick="invite()">Send Invite</button>
   </div>
+  ${(state.incomingJoins || []).length ? `<div class="card"><h3>🙋 Tree join requests</h3>${state.incomingJoins.map(r => `<div class="row"><span><b>${esc(r.requester_name)}</b> tree join karna chahta hai${r.person_name ? ` (profile: <b>${esc(r.person_name)}</b>)` : ""}.<br><span class="muted" style="font-size:12.5px">Ab tak ${esc(r.added_profiles)} naye profile add kiye. Approve karne par wo purane profiles bhi edit kar sakega. Reject karne par uske add kiye sab profiles hat jayenge.</span></span>
+      <span style="display:flex;gap:8px"><button class="primary" onclick="approveJoin('${esc(r.request_id)}')">Approve</button><button class="danger" onclick="rejectJoin('${esc(r.request_id)}', ${Number(r.added_profiles) || 0})">Reject</button></span></div>`).join("")}</div>` : ""}
   ${(state.incomingClaims || []).length ? `<div class="card"><h3>Profile claim requests</h3>${state.incomingClaims.map(r => `<div class="row"><span><b>${esc(r.requester_name || "Someone")}</b> says the profile <b>${esc(r.person_name)}</b> is them.<br><span class="muted" style="font-size:12.5px">Any tree admin can approve. Approve only if you know this person. They will get control of that profile.</span></span>
       <span style="display:flex;gap:8px"><button class="primary" onclick="approveClaim('${esc(r.request_id)}')">Approve</button><button class="ghost" onclick="rejectClaim('${esc(r.request_id)}')">Decline</button></span></div>`).join("")}</div>` : ""}
   ${(state.incoming || []).length ? `<div class="card"><h3>Connection requests for you</h3>${state.incoming.map(r => {
@@ -2583,36 +2831,88 @@ function treeAdmins() {
   const members = state.people.filter(p => personTreeRole(p) === "member");
   const rowFor = p => {
     const role = personTreeRole(p);
-    const canManage = isTreeOwner() && role !== "owner";
+    const canManage = canManageAdmins() && role !== "owner";
     return `<div class="row">
       <span style="display:flex;align-items:center;gap:10px">${avatarHTML(p)}<span>${esc(p.name)}${p.me ? " <span class='muted' style='font-size:12px'>(You)</span>" : ""}</span></span>
       <span style="display:flex;align-items:center;gap:8px">
         <span class="badge ${treeRoleBadgeClass(role)}">${treeRoleLabel(role)}</span>
         ${canManage ? (role === "admin"
           ? `<button class="ghost" onclick="setTreeRole('${p.id}','member')">Remove Admin</button>`
-          : `<button class="secondary" onclick="setTreeRole('${p.id}','admin')">Make Admin</button>`) : ""}
+          : (p.claimed_by || p.status === "claimed"
+              ? `<button class="secondary" onclick="setTreeRole('${p.id}','admin')">Make Admin</button>`
+              : `<span class="muted" style="font-size:12px">Not claimed yet</span>`)) : ""}
       </span>
     </div>`;
   };
-  return `<div class="page-head"><h2>👑 Tree Admins</h2><p class="muted">People who can add and edit relatives in <b>${esc(me()?.name || "your")}'s</b> family tree. Admins can manage this tree only — not other people's trees.</p></div>
-  ${!isTreeOwner() ? `<div class="card" style="margin-bottom:14px"><span class="muted">Only the tree owner (${esc(owners[0]?.name || "—")}) can promote or remove admins. You can view the list below.</span></div>` : ""}
+  return `<div class="page-head"><h2>👑 Tree Admins</h2><p class="muted">People who can add and edit relatives in <b>${esc(me()?.name || "your")}'s</b> family tree. Anyone who claims a profile becomes an admin automatically, and stays admin until another admin removes them. The owner cannot be removed.</p></div>
+  ${!canManageAdmins() ? `<div class="card" style="margin-bottom:14px"><span class="muted">Only tree admins (and the owner, ${esc(owners[0]?.name || "—")}) can add or remove admins. You can view the list below.</span></div>` : ""}
   <div class="card"><h3>Owner</h3>${owners.length ? owners.map(rowFor).join("") : "<p class='muted'>No owner set.</p>"}</div>
   <div class="card"><h3>Admins <span class="muted" style="font-size:12.5px;font-weight:400">— can add &amp; edit relatives in this tree</span></h3>
-    ${admins.length ? admins.map(rowFor).join("") : "<p class='muted'>No admins yet. Promote a family member below.</p>"}
+    ${admins.length ? admins.map(rowFor).join("") : "<p class='muted'>No admins besides the owner yet. Anyone who claims a profile becomes one, or promote a claimed member below.</p>"}
   </div>
   <div class="card"><h3>Members</h3>
     ${members.length ? members.map(rowFor).join("") : "<p class='muted'>No other members yet.</p>"}
   </div>`;
 }
-function setTreeRole(personId, role) {
-  if (!isTreeOwner()) { toast("Only the tree owner can change admin roles"); return; }
+async function setTreeRole(personId, role) {
+  if (!canManageAdmins()) { toast("Only a tree owner or admin can change admin roles"); return; }
   const p = personById(personId);
   if (!p) return;
   if (personTreeRole(p) === "owner") { toast("Can't change the owner's role"); return; }
-  p.treeRole = role;
-  save();
+  if (role === "admin" && !(p.claimed_by || p.status === "claimed")) { toast("Only a claimed profile (a person with an account) can be made admin"); return; }
+  if (role === "member" && !confirm(p.me ? "Aap khud ko admin se hata rahe hain. Profile aapki hi rahegi, par aap add/edit nahi kar paoge. Continue?" : `${p.name} ko admin se hatayein? Unki profile claimed hi rahegi.`)) return;
+  if (supabase && currentUser) {
+    // The database decides: caller must be owner/admin, target must be claimed, owner can't be touched.
+    const { error } = await supabase.rpc("set_tree_admin", { p_tree_id: state.joined ? state.joined.treeId : state.treeId, p_person_id: p.id, p_make_admin: role === "admin" });
+    if (error) { toast(/set_tree_admin|function|schema cache/i.test(error.message) ? "Run supabase-admin-claim.sql in Supabase first" : error.message); return; }
+  }
+  p.treeRole = role; p.savedRole = role;
   toast(role === "admin" ? `${p.name} is now an admin of this tree` : `${p.name} is no longer an admin`);
   go("treeAdmins");
+}
+
+/* ---------------- Transfer my claimed profile to another account ---------------- */
+/* Single-use code, valid 48h, stored hashed in the database. The receiver redeems it on their first-login screen.
+   After the transfer the receiver owns the profile (and is admin); the sender stays admin with a fresh empty card. The tree owner's profile can't be transferred. */
+async function openTransferProfile(id) {
+  const p = personById(id);
+  if (!p || !p.me) { toast("You can only transfer your own profile"); return; }
+  if (personTreeRole(p) === "owner") { toast("Tree owner ka profile transfer nahi ho sakta"); return; }
+  if (!supabase || !currentUser) { toast("Please sign in"); return; }
+  if (!confirm("Ye profile kisi doosre account ko transfer karein?\n\nTransfer hone par wo person is profile ka owner (aur admin) ban jayega, aur aap is tree mein admin bane rahoge (aapko ek naya khaali card milega). Jab tak koi doosra admin aapko na hataye, admin rahoge.\n\nPehle ek code banega jo aap us person ko doge.")) return;
+  const { data, error } = await supabase.rpc("create_profile_transfer", { p_person_id: p.id });
+  if (error) { toast(/create_profile_transfer|function|schema cache/i.test(error.message) ? "Run supabase-admin-claim.sql in Supabase first" : error.message); return; }
+  document.getElementById("transferModal")?.remove();
+  const ov = document.createElement("div"); ov.className = "modal-overlay"; ov.id = "transferModal";
+  ov.innerHTML = `<div class="modal-card"><div class="modal-head"><h3>🔁 Transfer code</h3><button class="ghost" onclick="closeTransferModal()">✕</button></div>
+    <div class="modal-body">
+      <p class="muted" style="margin:0">Ye code us person ko bhejiye jo ye profile lega. Wo naye account se login karke <b>"Transfer code hai"</b> mein daalega. Code 48 ghante tak chalega aur sirf ek baar.</p>
+      <div class="card" style="padding:16px;text-align:center"><div style="font-size:26px;letter-spacing:3px;font-weight:700" id="transferCodeText">${esc(data.code)}</div></div>
+      <p class="muted" style="font-size:12.5px;margin:0">Valid till ${esc(fmtDate(data.expires_at))}. Isse sirf us insaan ko do jis par aap bharosa karte ho.</p>
+    </div>
+    <div class="modal-foot">
+      <button class="ghost" onclick="cancelTransferProfile('${esc(p.id)}')">Cancel transfer</button>
+      <button class="primary" onclick="copyTransferCode()">Copy code</button>
+    </div></div>`;
+  document.body.appendChild(ov);
+}
+function closeTransferModal() { document.getElementById("transferModal")?.remove(); }
+async function copyTransferCode() {
+  const t = document.getElementById("transferCodeText")?.textContent || "";
+  try { await navigator.clipboard.writeText(t); toast("Code copy ho gaya"); } catch (e) { toast("Code select karke copy karo"); }
+}
+async function cancelTransferProfile(personId) {
+  const { error } = await supabase.rpc("cancel_profile_transfer", { p_person_id: personId });
+  closeTransferModal();
+  toast(error ? error.message : "Transfer cancel ho gaya");
+}
+async function redeemTransferCode() {
+  const code = document.getElementById("trCode")?.value.trim();
+  if (!code) { toast("Transfer code daaliye"); return; }
+  const { error } = await supabase.rpc("accept_profile_transfer", { p_code: code });
+  if (error) { toast(/accept_profile_transfer|function|schema cache/i.test(error.message) ? "Run supabase-admin-claim.sql in Supabase first" : error.message); return; }
+  toast("Profile aapko transfer ho gaya. Ab aap is tree ke admin hain.");
+  location.hash = "tree"; bootAuthenticatedApp();
 }
 
 /* ---------------- V11: production dashboard ---------------- */
@@ -2671,6 +2971,7 @@ async function importGedcomPicked(inputEl) {
   inputEl.value = "";                       // allow picking the same file again
   if (!file) return;
   if (treeViewing) return toast("Read-only while viewing another person's tree");
+  if (state.joined) return toast("GEDCOM import sirf apni tree mein ho sakta hai");
   if (!currentUser || !state.treeId) return toast("Please sign in first");
   try {
     toast("Reading GEDCOM file…");
@@ -2725,6 +3026,7 @@ Object.assign(window, {
   phoneLogin, pickAddRelativePhoto, publishPost, requestMerge, resolveTicket,
   reviewItem, saveAddRelative, sendReply, shareId, toast, treeFocusMe,
   treeReset, treeZoom, treeFit, toggleTreeExpand, treeSearch, setTreeRole,
+  openTransferProfile, closeTransferModal, copyTransferCode, cancelTransferProfile, redeemTransferCode,
   setAddRelativeMode, refreshExistingOptions, openMyProfile, saveProfileEdits, openEditProfile, closeEditProfile, openProfilePopup, openFullProfile, cancelEditProfile, deletePerson, removeLink, openDeleteMyProfile, searchRelativeByUid, linkByUniqueId, approveIncoming, rejectIncoming,
   loadMemories, addMemory, deleteMemory,
   runClaimSearch, requestClaim, cancelClaim, startFreshProfile, approveClaim, rejectClaim,
@@ -2765,10 +3067,115 @@ async function bootOnce() {
   loggedIn = true;
   try {
     await ensureProfileAndTree(user);
-    if (await needsClaimStep(user)) { await renderClaimStep(); return; }
+    await resolveJoinState(user);
+    if (!state.joined && await needsClaimStep(user)) { await renderClaimStep(); return; }
     await loadProductionState(user);
     render();
   } catch (e) { console.error(e); toast('Could not load your family data: ' + e.message); render(); }
+}
+
+/* ---------------- join someone's tree: preview -> request -> (pending: add only) -> approve / reject ---------------- */
+async function resolveJoinState(user) {
+  state.joined = null; state.joinNotice = null;
+  let data = null;
+  try { const r = await supabase.rpc("my_join_state"); if (!r.error) data = r.data; } catch (e) {}
+  if (!data) return; // SQL not installed yet, or never asked to join -> normal behaviour
+  if (data.status === "pending" || data.status === "approved") {
+    state.joined = { requestId: data.request_id, treeId: data.tree_id, personId: data.person_id, status: data.status, treeName: data.tree_name, known: new Set(), knownRels: new Set() };
+    state.treeId = data.tree_id;
+    if (data.status === "pending") startJoinPoll();
+  } else if (data.status === "rejected" && localStorage.getItem("ft_join_rej_" + data.request_id) !== "1") {
+    state.joinNotice = { requestId: data.request_id, treeName: data.tree_name };
+  }
+}
+let joinPoll = null;
+/* While pending, check every 30s so the member sees the decision without logging in again. */
+function startJoinPoll() {
+  if (joinPoll) return;
+  joinPoll = setInterval(async () => {
+    if (!state.joined || state.joined.status !== "pending" || !currentUser) { clearInterval(joinPoll); joinPoll = null; return; }
+    try {
+      const r = await supabase.rpc("my_join_state"); const s = r.data && r.data.status;
+      if (s && s !== "pending") { clearInterval(joinPoll); joinPoll = null; toast(s === "approved" ? "Aapki join request approve ho gayi!" : "Aapki join request reject ho gayi"); bootAuthenticatedApp(); }
+    } catch (e) {}
+  }, 30000);
+}
+function joinBannerHTML() {
+  if (!state.joined || state.joined.status !== "pending") return "";
+  return `<div class="card" style="margin-bottom:14px;border-left:4px solid var(--gold,#e0a526)"><b>⏳ Join request pending</b> — ${esc(state.joined.treeName || "is tree")} ke admin ka approval baaki hai.<br>
+    <span class="muted" style="font-size:13px">Abhi aap sirf <b>naye profiles add</b> kar sakte ho. Purane profiles edit/delete nahi ho sakte. Approve hone par edit bhi kar paoge. Agar request reject hui to aapke add kiye saare profiles bhi hata diye jayenge.</span>
+    <div style="margin-top:8px"><button class="ghost" onclick="cancelJoin()">Request cancel karo</button></div></div>`;
+}
+async function cancelJoin() {
+  if (!state.joined) return;
+  if (!confirm("Request cancel karne par aapke add kiye hue naye profiles bhi hat jayenge. Cancel karein?")) return;
+  const { error } = await supabase.rpc("cancel_join_request", { p_request_id: state.joined.requestId });
+  if (error) { toast(error.message); return; }
+  toast("Request cancel ho gayi");
+  location.hash = "home"; bootAuthenticatedApp();
+}
+function previewTreeHTML(d, focusId) {
+  const ppl = d.persons || [], rels = d.relationships || [];
+  const gen = Object.fromEntries(ppl.map(p => [p.id, 0]));
+  for (let i = 0; i < 40; i++) {
+    let ch = false;
+    rels.forEach(r => {
+      if (!(r.person_a_id in gen) || !(r.person_b_id in gen)) return;
+      if (r.relationship_type === "parent") { if (gen[r.person_b_id] < gen[r.person_a_id] + 1) { gen[r.person_b_id] = gen[r.person_a_id] + 1; ch = true; } }
+      else if (r.relationship_type === "spouse") { const m = Math.max(gen[r.person_a_id], gen[r.person_b_id]); if (gen[r.person_a_id] !== m || gen[r.person_b_id] !== m) { gen[r.person_a_id] = gen[r.person_b_id] = m; ch = true; } }
+    });
+    if (!ch) break;
+  }
+  const rows = {};
+  ppl.forEach(p => (rows[gen[p.id]] ||= []).push(p));
+  return Object.keys(rows).map(Number).sort((a, b) => a - b).map(g => `<div class="jp-row"><div class="jp-label">Generation ${g + 1}</div><div class="jp-chips">${rows[g].map(p =>
+    `<span class="jp-chip${p.id === focusId ? " focus" : ""}">${esc(p.full_name || "?")}${p.birth_year ? ` <small>${esc(p.birth_year)}</small>` : ""}${p.id === focusId ? " 👈" : ""}</span>`).join("")}</div></div>`).join("");
+}
+async function openJoinPreview(personId) {
+  const { data: d, error } = await supabase.rpc("join_preview", { p_person_id: personId });
+  if (error) { toast(/join_preview|function|schema cache/i.test(error.message) ? "Run supabase-join-tree.sql in Supabase first" : error.message); return; }
+  const adm = (d.admins || []).map(a => `<div class="row"><span>${esc(a.name)}</span><span class="badge ${a.role === "owner" ? "sage" : "plum"}">${a.role === "owner" ? "Owner" : "Admin"}</span></div>`).join("") || "<p class='muted'>No admins listed.</p>";
+  const ov = document.createElement("div"); ov.className = "modal-overlay"; ov.id = "joinPreview";
+  ov.innerHTML = `<div class="modal-card"><div class="modal-head"><h3>🌳 ${esc(d.tree_name || "Family tree")}</h3><button class="ghost" onclick="closeJoinPreview()">✕</button></div>
+    <div class="modal-body">
+      <p class="muted" style="margin:0">Ye tree dekhiye. Agar isme aap hain (👈), to join request bhejiye. Sirf naam/saal dikhaye ja rahe hain — phone/email nahi.</p>
+      <div class="card" style="padding:12px"><h4 style="margin:0 0 6px">Tree Admins</h4>${adm}</div>
+      <div>${previewTreeHTML(d, d.focus_person_id) || "<p class='muted'>Tree khali hai.</p>"}</div>
+    </div>
+    <div class="modal-foot">
+      <button class="ghost" onclick="closeJoinPreview()">Wapas</button>
+      <button class="secondary" onclick="sendJoinRequest('${esc(d.tree_id)}', null)">Mera profile isme nahi — naya banao</button>
+      <button class="primary" onclick="sendJoinRequest('${esc(d.tree_id)}', '${esc(d.focus_person_id)}')">✅ Ye main hu — Join karo</button>
+    </div></div>`;
+  document.body.appendChild(ov);
+}
+function closeJoinPreview() { document.getElementById("joinPreview")?.remove(); }
+async function sendJoinRequest(treeId, personId) {
+  const { error } = await supabase.rpc("request_join_tree", { p_tree_id: treeId, p_person_id: personId });
+  if (error) {
+    // A claimed profile can't be taken over with another email. Joining with a new profile is the safe route; an admin approves it.
+    toast(/already belongs/i.test(error.message) ? "Ye profile pehle se claimed hai. \"Naya banao\" se join karo; admin approve karega to aap bhi admin ban jaoge." : error.message);
+    return;
+  }
+  closeJoinPreview();
+  toast("Join request bhej di gayi. Approval tak aap naye profiles add kar sakte hain.");
+  location.hash = "tree"; bootAuthenticatedApp();
+}
+async function approveJoin(requestId) {
+  if (!confirm("Approve karne par ye person is tree ka ADMIN ban jayega (profiles add aur edit kar sakega, aur doosre admin ko hata bhi sakega). Sirf tab approve karo jab aap isse jaante ho. Approve karein?")) return;
+  const { error } = await supabase.rpc("approve_join_request", { p_request_id: requestId });
+  if (error) { toast(error.message); return; }
+  toast("Approved. Ye person ab tree admin hai.");
+  try { await loadProductionState(currentUser); } catch (e) { console.error(e); }
+  render();
+}
+async function rejectJoin(requestId, added) {
+  if (!confirm(`Reject karne par is person ke add kiye ${added || 0} profile(s) aur unke links bhi hat jayenge. Reject karein?`)) return;
+  const { data, error } = await supabase.rpc("reject_join_request", { p_request_id: requestId });
+  if (error) { toast(error.message); return; }
+  toast(`Rejected. ${data?.profiles_removed ?? 0} profile(s) hata diye gaye.`);
+  try { await loadProductionState(currentUser); } catch (e) { console.error(e); }
+  render();
 }
 
 /* ---------------- first-login: find & claim a profile someone already made ---------------- */
@@ -2792,7 +3199,8 @@ async function renderClaimStep() {
   document.getElementById('app').innerHTML = `<main class="login"><section class="login-card" style="max-width:560px">
     <div class="eyebrow">Welcome</div>
     <h1 style="font-size:28px">Is your profile already made by someone?</h1>
-    <p class="muted">A relative may already have added you to the family tree. Search below instead of creating a duplicate. The more details you fill, the narrower the results.</p>
+    <p class="muted">A relative may already have added you to the family tree. Search below, tap <b>"Ye main hu"</b> to see that tree and its admins, then send a join request.</p>
+    ${state.joinNotice ? `<div class="card" style="margin:12px 0;border-left:4px solid #c0392b"><b>Aapki join request reject ho gayi</b> (${esc(state.joinNotice.treeName || "tree")}). Us request ke saath add kiye profiles hata diye gaye hain. Aap dobara search kar sakte hain ya naya profile bana sakte hain.<br><button class="ghost" style="margin-top:6px" onclick="ackJoinRejected()">Theek hai</button></div>` : ""}
     ${pending.length ? `<div class="card" style="margin:12px 0"><h3>Waiting for approval</h3>${pending.map(r => `<div class="row"><span><b>${esc(r.person_name)}</b><br><span class="muted" style="font-size:12.5px">The person who added this profile must approve your request.</span></span><button class="ghost" onclick="cancelClaim('${esc(r.request_id)}')">Cancel</button></div>`).join('')}</div>` : ''}
     <div class="form" style="margin-top:10px">
       ${f('clName', 'Your name *', 'e.g. Pooja Sharma', `value="${esc(state.account?.name || '')}"`)}
@@ -2804,6 +3212,10 @@ async function renderClaimStep() {
     </div>
     <div id="clResults" style="margin-top:14px"></div>
     <hr class="divider">
+    <div class="card" style="margin:0 0 12px"><h3 style="margin-top:0">Transfer code hai?</h3>
+      <p class="muted" style="font-size:12.5px;margin:0 0 8px">Agar kisi ne apna profile aapko transfer kiya hai, uska code yahan daaliye.</p>
+      <div style="display:flex;gap:8px"><input id="trCode" placeholder="XXXX-XXXX-XXXX-XXXX" autocomplete="off" style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();redeemTransferCode()}"><button class="secondary" onclick="redeemTransferCode()">Use code</button></div>
+    </div>
     <button class="ghost full" onclick="startFreshProfile()">Not found — create a new profile</button>
     <button class="ghost full" style="margin-top:8px" onclick="logout()">Logout</button>
   </section></main>`;
@@ -2819,8 +3231,9 @@ async function runClaimSearch() {
   if (!data || !data.length) { box.innerHTML = '<p class="muted">No matching profile found. Try fewer fields, or create a new profile.</p>'; return; }
   box.innerHTML = data.map(r => `<div class="row"><span><b>${esc(r.full_name)}</b> <span class="muted" style="font-size:12.5px">${esc(r.person_code || '')}</span><br>
     <span class="muted" style="font-size:12.5px">${[r.birth_year ? 'Born ' + r.birth_year : '', r.current_place || '', r.added_by_name ? 'Added by ' + r.added_by_name : ''].filter(Boolean).map(esc).join(' · ')}</span></span>
-    <button class="primary" onclick="requestClaim('${esc(r.person_id)}')">This is me</button></div>`).join('');
+    <button class="primary" onclick="openJoinPreview('${esc(r.person_id)}')">Ye main hu →</button></div>`).join('');
 }
+function ackJoinRejected() { if (state.joinNotice) localStorage.setItem("ft_join_rej_" + state.joinNotice.requestId, "1"); state.joinNotice = null; renderClaimStep(); }
 async function requestClaim(personId) {
   const { error } = await supabase.rpc('request_profile_claim', { p_person_id: personId });
   if (error) { toast(error.message); return; }
@@ -2862,8 +3275,34 @@ async function ensureProfileAndTree(user) {
   state.treeId = tree.id;
 }
 
+async function loadJoinedState(user) {
+  const j = state.joined;
+  const { data, error } = await supabase.rpc("get_joined_tree", { p_tree_id: j.treeId });
+  if (error) throw error;
+  j.status = data.access === "pending" ? "pending" : "approved";
+  const roleById = Object.fromEntries((data.members || []).map(m => [m.person_id, m.role]));
+  const people = (data.persons || []).filter(p => p.status !== "merged");
+  state.people = people.map(p => {
+    const mine = p.id === j.personId || p.claimed_by === user.id;
+    return { id: p.id, created_at: p.created_at, personCode: p.person_code, name: p.full_name, gender: p.gender, status: p.status, dob: p.dob, mobile: p.mobile, email: p.email, avatar_url: p.avatar_url,
+      me: mine, claimed_by: p.claimed_by, created_by: p.created_by, privacy: "Family only", nickname: p.nickname, showNickname: p.show_nickname, birthPlace: p.birth_place, currentPlace: p.current_place,
+      lifeStatus: p.life_status, details: p.details || {}, treeRole: roleById[p.id] || "member", savedRole: roleById[p.id] || "member", external: false };
+  });
+  const ids = new Set(state.people.map(p => p.id));
+  state.relationships = (data.relationships || []).filter(r => ids.has(r.person_a_id) && ids.has(r.person_b_id))
+    .map(r => ({ id: r.id, from: r.person_a_id, to: r.person_b_id, type: r.relationship_type, status: r.status, tree_id: r.tree_id }));
+  j.known = new Set(state.people.map(p => p.id));
+  j.knownRels = new Set(state.relationships.map(r => r.id));
+  state.account.role = "member";
+  state.posts = []; state.events = []; state.reels = []; state.tickets = []; state.mergeRequests = []; state.connections = [];
+  state.incomingClaims = []; state.incoming = []; state.incomingJoins = [];
+  activeTicketId = null;
+  if (!state.people.some(p => p.me) && state.people[0]) state.people[0].me = true; // never leave the UI without a "me" card
+}
+
 async function loadProductionState(user) {
   treeViewing = null;
+  if (state.joined) return loadJoinedState(user);
   const treeId = state.treeId;
   const { data: members, error: me } = await supabase.from('tree_members').select('person_id, role').eq('tree_id', treeId); if (me) throw me;
   const memberIds = (members || []).map(x => x.person_id);
@@ -2925,6 +3364,8 @@ async function loadProductionState(user) {
   activeTicketId=state.tickets[0]?.id||null;
   try { const ic = await supabase.rpc('my_incoming_claims'); state.incomingClaims = ic.error ? [] : (ic.data || []); } catch (e) { state.incomingClaims = []; }
   try { const inc = await supabase.rpc('my_incoming_connections'); state.incoming = inc.error ? [] : (inc.data || []); } catch (e) { state.incoming = []; }
+  try { const ij = await supabase.rpc('my_incoming_join_requests'); state.incomingJoins = ij.error ? [] : (ij.data || []); } catch (e) { state.incomingJoins = []; }
+  if (state.incomingJoins.length) setTimeout(() => toast(`${state.incomingJoins.length} naye member tree join karna chahte hain — Connections & Sharing mein dekhein`), 900);
   if (state.incoming.length) setTimeout(() => toast(`You have ${state.incoming.length} connection request${state.incoming.length === 1 ? "" : "s"} — see Connections & Sharing`), 600);
 }
 

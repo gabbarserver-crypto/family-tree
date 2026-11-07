@@ -51,16 +51,19 @@ function personName(indi) {
 export function gedcomToTree(records, { createdBy = null, existingCodes = new Set(), existingGedIds = new Set() } = {}) {
   const codes = new Set(existingCodes);
   const newCode = () => { let c; do { c = "P-" + Math.floor(10000 + Math.random() * 89999); } while (codes.has(c)); codes.add(c); return c; };
-  const report = { persons: 0, families: 0, spouseEdges: 0, parentEdges: 0, skippedDuplicates: 0, danglingRefs: 0, photos: 0 };
+  const report = { persons: 0, families: 0, spouseEdges: 0, parentEdges: 0, skippedDuplicates: 0, danglingRefs: 0, photos: 0, photosSkipped: 0 };
 
   const idMap = new Map();   // GEDCOM xref -> new person id
+  const byId = new Map();    // new person id -> person (O(1) lookup)
   const people = [];
   for (const r of records.filter(x => x.tag === "INDI")) {
     if (existingGedIds.has(r.xref)) { report.skippedDuplicates++; continue; }   // re-import safe
     const birt = child(r, "BIRT"), deat = child(r, "DEAT");
     const rawDob = birt ? val(birt, "DATE") : "";
     const sex = val(r, "SEX").toUpperCase();
-    const photo = child(r, "OBJE") ? val(child(r, "OBJE"), "FILE") : "";
+    const rawPhoto = child(r, "OBJE") ? val(child(r, "OBJE"), "FILE") : "";
+    const photo = /^https?:\/\//i.test(rawPhoto) ? rawPhoto : "";            // local paths (C:\\x.jpg) can't load in a browser
+    const photoSkipped = !!rawPhoto && !photo;
     const details = { gedcom_id: r.xref, source: "gedcom" };
     if (rawDob && !gedDateToISO(rawDob)) details.dob_text = rawDob;
     if (deat) { details.death_date = val(deat, "DATE") || null; details.death_place = val(deat, "PLAC") || null; }
@@ -72,7 +75,8 @@ export function gedcomToTree(records, { createdBy = null, existingCodes = new Se
       avatar_url: photo || null, status: "unclaimed", created_by: createdBy, details
     };
     if (photo) report.photos++;
-    idMap.set(r.xref, p.id); people.push(p); report.persons++;
+    if (photoSkipped) { details.photo_file = rawPhoto; report.photosSkipped++; }
+    idMap.set(r.xref, p.id); byId.set(p.id, p); people.push(p); report.persons++;
   }
 
   const relationships = [], seen = new Set();
@@ -93,7 +97,7 @@ export function gedcomToTree(records, { createdBy = null, existingCodes = new Se
     }
     const marr = child(f, "MARR");                                   // keep marriage date if present
     if (marr && val(marr, "DATE") && idMap.has(h)) {
-      const p = people.find(x => x.id === idMap.get(h)); if (p) (p.details.marriages ||= []).push({ spouse_gedcom_id: w, date: val(marr, "DATE") });
+      const p = byId.get(idMap.get(h)); if (p) (p.details.marriages ||= []).push({ spouse_gedcom_id: w, date: val(marr, "DATE") });
     }
   }
   return { people, relationships, report };
