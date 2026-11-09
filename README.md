@@ -102,3 +102,10 @@ Run `supabase/supabase-admin-claim.sql` once (after `supabase-join-tree.sql`).
 - Bottom nav: Home, Tree, People, Wall, Chat + **More** (opens a sheet with every page, incl. Connections, Support, Merge, Relationship, Tree Admins, Admin).
 - Fixed: `setTreeStyle`, `chart*` and `setPrivacy` handlers were never exported to `window`, so the Branch/Chart switch, the Chart toolbar and the Privacy dropdown did nothing.
 - Packaging: removed unused duplicate `assets/`, root `logo.png`, duplicate root SQL files and the stale `supabase-client-example.js`; added `.gitignore` and `.env.example`.
+
+## Person wall (new)
+Run `supabase/supabase-person-wall.sql` once in Supabase (SQL editor).
+- Card click -> profile popup -> **📝 Wall**: shows what family members wrote on that person's wall.
+- Write a **new post**, **🏷 tag** people from the tree, **❤️ like** and **💬 comment**. Authors (and the wall owner) can delete posts/comments.
+- Who can see/write: the tree owner and anyone whose claimed profile is a member of a tree that contains that person (same rule as Family Chat).
+- **Wall tab** = family feed: everyone's posts in the tree, newest first (with ❤️ / 💬 / tags). **＋ New post** writes on *your own* wall. Re-run `supabase-person-wall.sql` after updating (it adds `list_wall_feed`).

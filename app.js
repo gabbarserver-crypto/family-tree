@@ -533,6 +533,7 @@ function render() {
     <nav class="bottomnav">${BOTTOM_TABS.map(id => flatNav.find(x => x[0] === id)).filter(Boolean).map(([id, label, icon]) => navItem(id, BOTTOM_LABELS[id] || label, icon, page)).join("")}<button class="nav ${BOTTOM_TABS.includes(page) ? "" : "active"}" onclick="openMoreMenu()" aria-label="More pages"><span class="ic">☰</span><span>More</span></button></nav>
   </div>`;
   if (page === "tree") requestAnimationFrame(treeStyle === "chart" ? chartAfterRender : drawTreeConnectors);
+  if (page === "wall") requestAnimationFrame(loadWallFeed);
   if (page === "merge") mergeInitSelects();
   if (page === "chat") requestAnimationFrame(initChat);
   if (page === "profile") requestAnimationFrame(() => loadMemories(activeProfileId || me()?.id));
@@ -995,7 +996,10 @@ function branchNode(p, isCenter) {
     : isBranchRoot ? "Back to my tree" : branchable ? "Open " + esc(p.name) + "'s family tree" : "Center tree on " + esc(p.name);
   const badgeClick = ownTree ? `openPersonTree('${p.id}')`
     : isBranchRoot ? `exitBranch()` : branchable ? `openBranch('${p.id}')` : (branchView ? `exitBranch()` : `centerTree('${p.id}')`);
-  const centerBadge = `<button type="button" class="tree-badge right own-tree" title="${badgeTitle}" onclick="event.stopPropagation();${badgeClick}"><img src="/assets/tree-icon.png" alt="Tree"></button>`;
+  // The tree icon only shows when this person really HAS a tree of their own: an account/tree of their own, or their own parents
+  // recorded (e.g. a wife whose mother/father are added). Otherwise there is nothing to open, so no icon.
+  const hasOwnTree = ownTree || isBranchRoot || parentsOf(p.id).some(x => personById(x));
+  const centerBadge = hasOwnTree ? `<button type="button" class="tree-badge right own-tree" title="${badgeTitle}" onclick="event.stopPropagation();${badgeClick}"><img src="/assets/tree-icon-grey.png" alt="Tree"></button>` : "";
   const dodYear = p.details?.dod ? new Date(p.details.dod).getFullYear() : "";
   const years = p.dob ? `${new Date(p.dob).getFullYear()} –${dodYear ? " " + dodYear : ""}` : (dodYear ? `– ${dodYear}` : "–");
   return `<div class="branch-node ${p.me ? "me" : ""} ${isCenter && !p.me ? "me" : ""}" id="${nodeElId(p.id)}" style="position:relative;cursor:pointer" title="View profile" onclick="openProfilePopup('${p.id}')">
@@ -2243,6 +2247,183 @@ function profileModalShell(html) {
   m.innerHTML = `<div class="modal-card" role="dialog" aria-modal="true">${html}</div>`;
   return m;
 }
+/* Which profile fields are filled, and how much of the profile that is (middle name / date of death are optional, so not counted). */
+function profileFieldList(p) {
+  const n = nameParts(p), d = p.details || {};
+  const married = d.married === "yes" ? "Married" : d.married === "no" ? "Unmarried" : "";
+  return [
+    ["Name", [n.first, n.middle, n.last].filter(Boolean).join(" "), !!(n.first && n.last)],
+    ["Gender", p.gender, !!p.gender],
+    ["Date of birth", fmtDate(p.dob), !!p.dob],
+    ["Photo", p.avatar_url ? "Added" : "", !!p.avatar_url],
+    ["Mobile", p.mobile, !!p.mobile],
+    ["Email", p.email, !!p.email],
+    ["State", d.state, !!d.state],
+    ["City", d.city, !!d.city],
+    ["Married", married, !!married]
+  ];
+}
+function profileCompletion(p) {
+  const f = profileFieldList(p), done = f.filter(x => x[2]).length;
+  return { done, total: f.length, pct: Math.round(done * 100 / f.length), missing: f.filter(x => !x[2]).map(x => x[0]) };
+}
+/* Popup body: only the details that are actually filled, plus a completion bar. */
+function filledDetailsHTML(p) {
+  const c = profileCompletion(p), d = p.details || {};
+  const row = (label, val) => val ? `<div class="row"><span class="muted">${label}</span><span>${esc(val)}</span></div>` : "";
+  const married = d.married === "yes" ? "Married" : d.married === "no" ? "Unmarried" : "";
+  const bar = `<div class="pc-wrap"><div class="pc-head"><b>Profile ${c.pct}% complete</b><span class="muted">${c.done}/${c.total} details</span></div>
+    <div class="pc-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${c.pct}"><span style="width:${c.pct}%"></span></div>
+    ${c.missing.length ? `<div class="muted pc-miss">Baaki: ${esc(c.missing.join(", "))}</div>` : `<div class="muted pc-miss">Saari details bhari hui hain ✓</div>`}</div>`;
+  return bar + row("Date of death", fmtDate(d.dod)) + profileFieldList(p).map(([label, val]) => label === "Name" || label === "Photo" ? "" : row(label, val)).join("");
+}
+/* ---------------- person wall: posts, likes, comments, tags. Used in the person's Wall popup (ctx "m") and in the Wall tab feed (ctx "f") ---------------- */
+let wallPersonId = null, wallTags = [], wallOpenComments = new Set(), wallComposerOnly = false;
+function fmtDateTime(d) { if (!d) return ""; const x = new Date(d); return Number.isNaN(x.getTime()) ? "" : x.toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }); }
+function wallErr(e) { const m = e.message || ""; return /No access/i.test(m) ? m : /list_person_wall|list_wall_feed|toggle_wall_like|add_person_wall_post|list_wall_comments|add_wall_comment|function|schema cache/i.test(m) ? "Run supabase-person-wall.sql in Supabase first" : (m || "Something went wrong"); }
+function wallComposerHTML(placeholder) {
+  return `<div class="wall-compose">
+    <textarea id="wallText" rows="3" maxlength="2000" placeholder="${esc(placeholder)}"></textarea>
+    <div id="wallTagChips" class="wall-chips"></div>
+    <div id="wallTagPicker" hidden></div>
+    <div class="wall-compose-actions"><button type="button" class="ghost" onclick="wallToggleTagPicker()">🏷 Tag</button><button type="button" class="primary" onclick="wallPost()">Post</button></div>
+  </div>`;
+}
+function openPersonWall(id) {
+  const p = personById(id); if (!p) return;
+  wallPersonId = id; wallTags = []; wallOpenComments = new Set(); wallComposerOnly = false;
+  profileModalOrigin = "view"; profileModalLocked = false;
+  profileModalShell(`<div class="modal-head"><h3>📝 ${esc(p.name)}'s Wall</h3><button type="button" class="ghost" aria-label="Close" onclick="closeEditProfile()">✕</button></div>
+    <div class="modal-body">
+      ${wallComposerHTML("Write on " + p.name + "'s wall…")}
+      <div id="wallList"><p class="muted">Loading…</p></div>
+    </div>
+    <div class="actions modal-foot"><button type="button" class="ghost" onclick="openProfilePopup('${esc(id)}')">← Profile</button></div>`);
+  loadPersonWall();
+}
+/* "New post" on the Wall tab: always writes on MY OWN wall. */
+function openNewWallPost() {
+  const mp = myself();
+  if (!mp) { toast("Pehle apna profile claim karo"); return; }
+  wallPersonId = mp.id; wallTags = []; wallOpenComments = new Set(); wallComposerOnly = true;
+  profileModalOrigin = "view"; profileModalLocked = false;
+  profileModalShell(`<div class="modal-head"><h3>✍️ New post</h3><button type="button" class="ghost" aria-label="Close" onclick="closeEditProfile()">✕</button></div>
+    <div class="modal-body">
+      ${wallComposerHTML("Kya share karna hai, " + (mp.name || "") + "?")}
+      <p class="muted" style="font-size:12.5px;margin:0">Ye post aapki apni wall par jayegi aur poori family ke feed me dikhegi.</p>
+    </div>`);
+}
+function wallRenderTags() {
+  const box = document.getElementById("wallTagChips"); if (!box) return;
+  box.innerHTML = wallTags.map(t => `<span class="wall-chip">🏷 ${esc(personById(t)?.name || "")}<button type="button" aria-label="Remove tag" onclick="wallRemoveTag('${esc(t)}')">✕</button></span>`).join("");
+}
+function wallRenderTagPicker() {
+  const el = document.getElementById("wallTagPicker"); if (!el) return;
+  const opts = mergeCandidates().filter(x => x.id !== wallPersonId && !wallTags.includes(x.id)).sort((a, b) => a.name.localeCompare(b.name))
+    .map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("");
+  el.innerHTML = `<select onchange="wallAddTag(this.value)"><option value="">Select a person to tag…</option>${opts}</select>`;
+}
+function wallToggleTagPicker() { const el = document.getElementById("wallTagPicker"); if (!el) return; el.hidden = !el.hidden; if (!el.hidden) wallRenderTagPicker(); }
+function wallAddTag(pid) { if (!pid || wallTags.includes(pid)) return; wallTags.push(pid); wallRenderTags(); wallRenderTagPicker(); }
+function wallRemoveTag(pid) { wallTags = wallTags.filter(x => x !== pid); wallRenderTags(); wallRenderTagPicker(); }
+async function wallPost() {
+  const t = document.getElementById("wallText"); const body = (t?.value || "").trim();
+  if (!body) { toast("Write something first"); return; }
+  if (!supabase || !currentUser) { toast("Sign in to post"); return; }
+  const { error } = await supabase.rpc("add_person_wall_post", { p_person_id: wallPersonId, p_body: body, p_tagged: wallTags });
+  if (error) { toast(wallErr(error)); return; }
+  toast("Posted");
+  if (wallComposerOnly) closeEditProfile();
+  else { t.value = ""; wallTags = []; wallRenderTags(); const pk = document.getElementById("wallTagPicker"); if (pk) pk.hidden = true; loadPersonWall(); }
+  if (document.getElementById("wallFeed")) loadWallFeed(); // Wall tab is open behind the popup: refresh it too
+}
+function wallPostHTML(m, ctx) {
+  const tags = (m.tagged || []).map(t => `<button type="button" class="wall-chip link" onclick="openProfilePopup('${esc(t.id)}')">🏷 ${esc(t.name)}</button>`).join("");
+  const id = esc(m.id), k = ctx + "-" + id;
+  const onWall = m.person_id && !m.on_own_wall ? ` <span class="muted">›</span> <button type="button" class="wall-link" onclick="openPersonWall('${esc(m.person_id)}')">${esc(m.person_name || "")}'s wall</button>` : "";
+  return `<div class="wall-post" id="wp-${k}">
+    <div class="wall-post-head"><span><b>${esc(m.author_name || "Family member")}</b>${onWall} <span class="muted">· ${esc(fmtDateTime(m.created_at))}</span></span>
+      ${m.can_delete ? `<button type="button" class="ghost" title="Delete" onclick="wallDeletePost('${id}','${ctx}')">🗑</button>` : ""}</div>
+    <div class="wall-body">${esc(m.body)}</div>
+    ${tags ? `<div class="wall-chips">With ${tags}</div>` : ""}
+    <div class="wall-actions">
+      <button type="button" class="wall-act${m.liked_by_me ? " on" : ""}" id="wl-${k}" onclick="wallLike('${id}','${ctx}')">${m.liked_by_me ? "❤️" : "🤍"} <span>${Number(m.like_count) || 0}</span></button>
+      <button type="button" class="wall-act" onclick="wallToggleComments('${id}','${ctx}')">💬 <span id="wcn-${k}">${Number(m.comment_count) || 0}</span></button>
+    </div>
+    <div class="wall-comments" id="wc-${k}" hidden></div>
+  </div>`;
+}
+function wallReopenComments(ctx) { [...wallOpenComments].filter(x => x.startsWith(ctx + ":")).forEach(x => wallLoadComments(x.slice(ctx.length + 1), ctx)); }
+async function loadPersonWall() {
+  const pid = wallPersonId;
+  const box = document.getElementById("wallList"); if (!box) return;
+  if (!supabase || !currentUser) { box.innerHTML = '<p class="muted">Sign in to see the wall.</p>'; return; }
+  const { data, error } = await supabase.rpc("list_person_wall", { p_person_id: pid });
+  const now = document.getElementById("wallList");
+  if (!now || wallPersonId !== pid) return; // closed or switched to another person
+  if (error) { now.innerHTML = `<p class="muted">${esc(wallErr(error))}</p>`; return; }
+  now.innerHTML = (data || []).map(m => wallPostHTML(m, "m")).join("") || '<p class="muted">Abhi kisi ne kuchh nahi likha. Pehli post aap likho.</p>';
+  wallReopenComments("m");
+}
+/* Wall tab: everyone's posts in the tree, newest first. */
+async function loadWallFeed() {
+  const box = document.getElementById("wallFeed"); if (!box) return;
+  if (!supabase || !currentUser || !state.treeId) { box.innerHTML = '<p class="muted">Sign in to see the family feed.</p>'; return; }
+  const { data, error } = await supabase.rpc("list_wall_feed", { p_tree_id: state.treeId });
+  const now = document.getElementById("wallFeed"); if (!now) return;
+  if (error) { now.innerHTML = `<p class="muted">${esc(wallErr(error))}</p>`; return; }
+  now.innerHTML = (data || []).map(m => wallPostHTML(m, "f")).join("") || '<p class="muted">Abhi kisi ne kuchh post nahi kiya. "New post" se shuruaat karo.</p>';
+  wallReopenComments("f");
+}
+function wallRefresh(ctx) { if (ctx === "f") loadWallFeed(); else { loadPersonWall(); if (document.getElementById("wallFeed")) loadWallFeed(); } }
+async function wallLike(postId, ctx) {
+  const { data, error } = await supabase.rpc("toggle_wall_like", { p_post_id: postId });
+  if (error) { toast(wallErr(error)); return; }
+  const r = Array.isArray(data) ? data[0] : data; if (!r) return;
+  const b = document.getElementById("wl-" + ctx + "-" + postId); if (!b) return;
+  b.classList.toggle("on", !!r.liked);
+  b.innerHTML = `${r.liked ? "❤️" : "🤍"} <span>${Number(r.like_count) || 0}</span>`;
+}
+function wallToggleComments(postId, ctx) {
+  const box = document.getElementById("wc-" + ctx + "-" + postId); if (!box) return;
+  const key = ctx + ":" + postId;
+  if (!box.hidden) { box.hidden = true; wallOpenComments.delete(key); return; }
+  wallOpenComments.add(key); wallLoadComments(postId, ctx);
+}
+async function wallLoadComments(postId, ctx) {
+  const k = ctx + "-" + postId;
+  const box = document.getElementById("wc-" + k); if (!box) return;
+  box.hidden = false;
+  const { data, error } = await supabase.rpc("list_wall_comments", { p_post_id: postId });
+  if (error) { box.innerHTML = `<p class="muted">${esc(wallErr(error))}</p>`; return; }
+  const typed = document.getElementById("wci-" + k)?.value || "";
+  const list = (data || []).map(c => `<div class="wall-comment"><span><b>${esc(c.author_name || "Family member")}</b> <span class="muted">· ${esc(fmtDateTime(c.created_at))}</span>
+      <div class="wall-body">${esc(c.body)}</div></span>
+      ${c.can_delete ? `<button type="button" class="ghost" title="Delete" onclick="wallDeleteComment('${esc(c.id)}','${esc(postId)}','${ctx}')">🗑</button>` : ""}</div>`).join("");
+  box.innerHTML = `${list || '<p class="muted" style="margin:0 0 8px">Abhi koi comment nahi.</p>'}
+    <div class="wall-cform"><input id="wci-${k}" maxlength="1000" placeholder="Write a comment…" onkeydown="if(event.key==='Enter'){wallAddComment('${esc(postId)}','${ctx}')}"><button type="button" class="primary" onclick="wallAddComment('${esc(postId)}','${ctx}')">Send</button></div>`;
+  const inp = document.getElementById("wci-" + k); if (inp) inp.value = typed;
+  const n = document.getElementById("wcn-" + k); if (n) n.textContent = (data || []).length;
+}
+async function wallAddComment(postId, ctx) {
+  const inp = document.getElementById("wci-" + ctx + "-" + postId); const body = (inp?.value || "").trim();
+  if (!body) return;
+  const { error } = await supabase.rpc("add_wall_comment", { p_post_id: postId, p_body: body });
+  if (error) { toast(wallErr(error)); return; }
+  inp.value = ""; wallLoadComments(postId, ctx);
+}
+async function wallDeleteComment(id, postId, ctx) {
+  if (!confirm("Delete this comment?")) return;
+  const { error } = await supabase.rpc("delete_wall_comment", { p_id: id });
+  if (error) { toast(wallErr(error)); return; }
+  wallLoadComments(postId, ctx);
+}
+async function wallDeletePost(id, ctx) {
+  if (!confirm("Delete this post?")) return;
+  const { error } = await supabase.rpc("delete_person_wall_post", { p_id: id });
+  if (error) { toast(wallErr(error)); return; }
+  wallOpenComments.delete(ctx + ":" + id); wallRefresh(ctx);
+}
 /* Popup that shows a person's profile (opened by clicking a card in the tree). */
 function openProfilePopup(id) {
   const p = personById(id); if (!p) return;
@@ -2255,9 +2436,10 @@ function openProfilePopup(id) {
         <div><div style="font-family:var(--font-display);font-size:20px;font-weight:700">${esc(p.name)}</div>
         <div class="muted" style="font-size:12.5px;margin:2px 0 6px">${esc(rel)} · ${esc(p.personCode || p.id)}</div>
         ${p.status === "unclaimed" ? '<span class="badge">Unclaimed</span>' : '<span class="badge sage">Claimed</span>'}</div></div>
-      <div>${detailRowsHTML(p)}</div>
+      <div>${filledDetailsHTML(p)}</div>
     </div>
     <div class="actions modal-foot">
+      <button type="button" class="secondary" onclick="openPersonWall('${esc(p.id)}')">📝 Wall</button>
       <button type="button" class="ghost" onclick="openFullProfile('${esc(p.id)}')">Open full profile</button>
       ${canEditPerson(p) ? `<button type="button" class="primary" onclick="openEditProfile('${esc(p.id)}', true)">✏️ Edit</button>` : ""}
     </div>`);
@@ -2663,17 +2845,10 @@ function findRelation() {
 
 /* ---------------- V6: family wall ---------------- */
 function wall() {
-  return `<div class="page-head"><h2>Family Wall</h2><p class="muted">Share updates and keep track of family events.</p></div>
-  <div class="card"><h3>Create Post</h3>
-    <textarea id="postText" placeholder="Share something with your family..."></textarea>
-    <div class="actions" style="margin-top:10px">
-      <button class="primary" onclick="publishPost()">Publish</button>
-      <button class="secondary" onclick="toast('Demo: photo picker')">📷 Photo</button>
-      <button class="secondary" onclick="toast('Demo: event composer')">🎉 Event</button>
-    </div>
-  </div>
+  return `<div class="page-head"><h2>Family Wall</h2><p class="muted">Poori family ki posts ek jagah. Apni wall par likhne ke liye "New post" dabao.</p></div>
+  <div class="actions" style="margin-bottom:12px"><button class="primary" onclick="openNewWallPost()">＋ New post</button></div>
   <div class="card"><h3>Upcoming Family Events</h3>${state.events.map(e => `<div class="event-chip"><span class="em">${e.emoji}</span><div><strong>${esc(e.title)}</strong><div class="muted" style="font-size:12.5px">${e.sub}</div></div></div>`).join("")}</div>
-  <div class="card" id="feed"><h3>Feed</h3>${state.posts.map(postHTML).join("")}</div>`;
+  <div class="card" id="feed"><h3>Feed</h3><div id="wallFeed" class="wall-feed"><p class="muted">Loading…</p></div></div>`;
 }
 function postHTML(p) { return `<div class="post" data-id="${p.id}"><div class="post-head"><div class="avatar">${esc(initials(p.author))}</div><strong>${esc(p.author)}</strong></div><p>${esc(p.text)}</p><div class="actions"><button class="ghost" onclick="likePost(${p.id})">❤️ ${p.likes}</button><button class="ghost">💬 ${p.comments}</button></div></div>`; }
 async function publishPost() {
@@ -3139,7 +3314,7 @@ Object.assign(window, {
   openJoinPreview, closeJoinPreview, sendJoinRequest, approveJoin, rejectJoin, cancelJoin, ackJoinRejected,
   importGedcomPicked, setPeopleSearch, clearPeopleSearch, setPeopleSort, openMoreMenu, closeMoreMenu,
   /* these were used by inline onclick/onchange but never exported, so the Branch/Chart switch, the whole Chart toolbar and the profile Privacy dropdown did nothing */
-  setTreeStyle, chartAddMenu, chartBack, chartFit, chartGoFamily, chartOpen, chartSetRoot, chartZoom, chartPanStart, chartWheel, setPrivacy
+  openPersonWall, openNewWallPost, wallToggleTagPicker, wallAddTag, wallRemoveTag, wallPost, wallLike, wallToggleComments, wallAddComment, wallDeleteComment, wallDeletePost, setTreeStyle, chartAddMenu, chartBack, chartFit, chartGoFamily, chartOpen, chartSetRoot, chartZoom, chartPanStart, chartWheel, setPrivacy
 });
 
 window.addEventListener("hashchange", render);
