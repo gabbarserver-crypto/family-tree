@@ -537,6 +537,9 @@ new MutationObserver(() => { if (cityObserverQueued) return; cityObserverQueued 
   .observe(document.body, { childList: true, subtree: true });
 /* Dashboard "Poora horoscope dekhein": paste a full https:// address here to open that site in a new tab; leave "" to open the in-app Horoscope page. */
 const HOROSCOPE_URL = "";
+/* Android APK download link shown on the dashboard. Upload the APK as public/FamilyTree.apk in the repo (Vercel serves it at /FamilyTree.apk),
+   or paste a full https:// link here (e.g. a GitHub Release link). Set to "" to hide the card. */
+const APK_URL = "/FamilyTree.apk";
 const GAMES_URL = "https://games.1infinity.online/games/auth.html?redirect=index.html";
 const NAV = [
   { group: "Family", items: [
@@ -1118,6 +1121,14 @@ async function dqShare() {
   dqDownload();
 }
 
+/* Android app download card (hidden inside the installed app itself) */
+function apkCardHTML() {
+  if (!APK_URL || isNativeApp()) return "";
+  return `<div class="card"><h3>📱 Android App</h3>
+    <p class="muted" style="margin:4px 0 10px">Install the FamilyTree app on your Android phone. If the phone warns about an unknown source, allow it once for your browser/file manager.</p>
+    <div class="actions"><a class="primary" style="display:inline-block;text-decoration:none;padding:10px 16px;border-radius:10px" href="${esc(APK_URL)}" download="FamilyTree.apk" rel="noopener">⬇️ Download Android APK</a></div></div>`;
+}
+
 /* ---------------- home ---------------- */
 function home() {
   const upcoming = state.events.slice(0, 2);
@@ -1136,6 +1147,7 @@ function home() {
     <button class="secondary" onclick="go('wall')">📝 Family Wall</button>
     <button class="secondary" onclick="go('games')">🎮 Games ↗</button>
   </div></div>
+  ${apkCardHTML()}
   ${horoMiniHTML()}
   <div class="card"><h3>Upcoming</h3>${upcoming.map(e => `<div class="event-chip"><span class="em">${e.emoji}</span><div><strong>${esc(e.title)}</strong><div class="muted" style="font-size:12.5px">${e.sub}</div></div></div>`).join("")}
   <button class="ghost" style="margin-top:8px" onclick="go('wall')">See all events →</button></div>`;
