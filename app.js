@@ -3343,6 +3343,7 @@ function openRelationChart(id) {
   profileModalShell(`<div class="modal-head"><h3>${REL_ICON_SVG} Relation chart</h3><button type="button" class="ghost" aria-label="Close" onclick="closeEditProfile()">✕</button></div>
     <div class="modal-body">${body}</div>
     <div class="actions modal-foot"><button type="button" class="ghost" onclick="openProfilePopup('${esc(id)}')">← Profile</button></div>`);
+  fitRelTrees();
 }
 /* Full edit form. fromView = true when it was reached from the profile popup. */
 function openEditProfile(id, fromView) {
@@ -3782,11 +3783,22 @@ async function approveMerge(i) {
 }
 
 /* ---------------- relationship finder — real graph traversal + path ---------------- */
+/* Person pickers: alphabetical list + type-to-filter (native datalist). Label = "Name · Person ID" so equal names stay distinguishable. */
+function relPickLabel(p) { return `${p.name} · ${p.personCode || p.id}`; }
+function relPickValue(inputId) {
+  const v = (document.getElementById(inputId)?.value || "").trim().toLowerCase(); if (!v) return null;
+  const all = state.people;
+  return all.find(p => relPickLabel(p).toLowerCase() === v) || all.find(p => (p.name || "").trim().toLowerCase() === v) || null;
+}
 function relationship() {
-  const opts = state.people.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+  const sorted = [...state.people].sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }));
+  const opts = sorted.map(p => `<option value="${esc(relPickLabel(p))}"></option>`).join("");
+  const mine = me();
+  const field = (id, label, val) => `<div class="field"><label>${label}</label><input id="${id}" list="relPeople" autocomplete="off" placeholder="Naam ya Person ID likhkar chunein…" value="${esc(val)}" onfocus="this.select()" onkeydown="if(event.key==='Enter'){event.preventDefault();findRelation()}"></div>`;
   return `<div class="page-head"><h2>Relationship Finder</h2><p class="muted">Select any two people — the label and the full relationship path are derived live from the family graph.</p></div>
-  <div class="card form"><div class="field"><label>Person A</label><select id="ra">${opts}</select></div>
-  <div class="field"><label>Person B</label><select id="rb" onchange="">${opts}</select></div>
+  <div class="card form"><datalist id="relPeople">${opts}</datalist>
+  ${field("ra", "Person A", mine ? relPickLabel(mine) : "")}
+  ${field("rb", "Person B", "")}
   <button class="primary" style="justify-self:start" onclick="findRelation()">Find Relationship</button><div id="relout"></div></div>`;
 }
 /* Relationship path drawn as a small family tree: parents sit above children, spouses side by side,
@@ -3829,11 +3841,22 @@ function relationTreeHTML(fromId, path) {
     const pp = personById(id) || { name: "?" }, q = pos[i], end = i === 0 ? "start" : i === ids.length - 1 ? "end" : "";
     return `<div class="rt-card ${end}" style="left:${X(q)}px;top:${Y(q)}px;width:${W}px;height:${H}px">${avatarHTML(pp, "rt-av")}<span class="rt-name">${esc(pp.name)}</span>${end ? `<span class="rt-tag">${end === "start" ? "A" : "B"}</span>` : ""}</div>`;
   }).join("");
-  return `<div class="rt-wrap"><div class="rt-canvas" style="width:${totalW}px;height:${totalH}px"><svg width="${totalW}" height="${totalH}" class="rt-svg">${lines}</svg>${pills}${cards}</div></div>`;
+  return `<div class="rt-wrap" data-w="${totalW}" data-h="${totalH}"><div class="rt-sizer" style="width:${totalW}px;height:${totalH}px"><div class="rt-canvas" style="width:${totalW}px;height:${totalH}px"><svg width="${totalW}" height="${totalH}" class="rt-svg">${lines}</svg>${pills}${cards}</div></div></div>`;
 }
+/* Shrink every relation chart to fit its box (width AND ~70% of screen height) so no scrolling is needed.
+   Very big charts stop at 50% and then scroll as a fallback. */
+function fitRelTrees() {
+  document.querySelectorAll(".rt-wrap").forEach(w => {
+    const W = +w.dataset.w, H = +w.dataset.h, sz = w.querySelector(".rt-sizer"), cv = w.querySelector(".rt-canvas"); if (!W || !sz || !cv) return;
+    const availW = w.clientWidth - 2, availH = Math.max(260, window.innerHeight * 0.7);
+    const sc = Math.max(0.5, Math.min(1, availW / W, availH / H));
+    cv.style.transform = `scale(${sc})`; sz.style.width = W * sc + "px"; sz.style.height = H * sc + "px";
+  });
+}
+window.addEventListener("resize", () => fitRelTrees());
 function findRelation() {
-  const a = state.people.find(p => p.id === document.getElementById("ra").value);
-  const b = state.people.find(p => p.id === document.getElementById("rb").value);
+  const a = relPickValue("ra"), b = relPickValue("rb");
+  if (!a || !b) { toast(!a ? "Person A list se chunein" : "Person B list se chunein"); return; }
   const result = deriveRelationship(a.id, b.id);
   const box = document.getElementById("relout");
   if (result.path === null) {
@@ -3844,6 +3867,7 @@ function findRelation() {
     <strong>${esc(b.name)} is ${a.id === b.id ? "" : `${result.label} of`} ${esc(a.name)}${a.id === b.id ? " (same person)" : ""}.</strong>
     ${result.path.length ? relationTreeHTML(a.id, result.path) : ""}
   </div>`;
+  fitRelTrees();
 }
 
 /* ---------------- Events: birthdays, marriage & death anniversaries (computed from the tree) + DB events ---------------- */
