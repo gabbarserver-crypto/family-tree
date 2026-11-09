@@ -240,6 +240,34 @@ function kinLine(p) {
   if (sps.length) bits.push(spLabel + ": " + sps.join(", ")); else if (p.details?.marriage?.spouse) bits.push(spLabel + ": " + p.details.marriage.spouse);
   return bits.join(" · ");
 }
+/* Marriage date belongs to the COUPLE: use my own date, otherwise my spouse's. */
+function marriageDateOf(p) {
+  if (!p) return "";
+  if (p.details?.marriage?.date) return p.details.marriage.date;
+  for (const sid of spousesOf(p.id)) { const d = personById(sid)?.details?.marriage?.date; if (d) return d; }
+  return "";
+}
+/* Short "who is the husband / wife" text for tree cards. Empty when the person is not married. */
+function spouseCardLine(p) {
+  if (!p) return "";
+  const names = spousesOf(p.id).map(personById).filter(Boolean).map(x => x.name);
+  if (!names.length && p.details?.married === "yes" && p.details?.marriage?.spouse) names.push(p.details.marriage.spouse);
+  return names.length ? names[0] + (names.length > 1 ? " +" + (names.length - 1) : "") : "";
+}
+/* Setting the marriage date on the wife also sets it on the husband (and the other way round). */
+function syncMarriageDate(id) {
+  const p = personById(id); if (!p) return;
+  const date = marriageDateOf(p); if (!date) return;
+  [p, ...spousesOf(id).map(personById)].filter(Boolean).forEach(x => {
+    if (x.details?.marriage?.date === date) return;
+    if (x !== p && !canEditPerson(x)) return;   // someone else's own profile: it still shows the shared date (marriageDateOf)
+    x.details = { ...(x.details || {}), married: "yes", marriage: { ...(x.details?.marriage || {}), date } };
+  });
+}
+function clearSpouseMarriageDate(id) {
+  spousesOf(id).map(personById).filter(x => x && x.details?.marriage?.date && canEditPerson(x))
+    .forEach(x => { x.details = { ...x.details, marriage: { ...x.details.marriage, date: "" } }; });
+}
 function parentsOf(id) { return state.relationships.filter(r => r.type === "parent" && r.to === id).map(r => r.from); }
 function childrenOf(id) { return state.relationships.filter(r => r.type === "parent" && r.from === id).map(r => r.to); }
 function spousesOf(id) { return state.relationships.filter(r => r.type === "spouse" && (r.from === id || r.to === id)).map(r => r.from === id ? r.to : r.from); }
@@ -1034,7 +1062,7 @@ function chartCardHTML(c) {
     ? `<span class="ch-badge" role="button" title="Inke parivaar ka tree dekhein" onclick="event.stopPropagation();chartGoFamily('${esc(p.id)}')"><svg viewBox="0 0 24 24" width="15" height="15"><circle cx="12" cy="7" r="4.2" fill="#b3b3b3"/><circle cx="7" cy="14.5" r="4.2" fill="#b3b3b3"/><circle cx="17" cy="14.5" r="4.2" fill="#b3b3b3"/></svg></span>` : "";
   const add = canAddRelativeTo(p.id)
     ? `<span class="ch-add" role="button" title="Relative add karein" onclick="event.stopPropagation();chartAddMenu(event,'${esc(p.id)}')"><svg viewBox="0 0 24 24" width="19" height="19"><circle cx="10" cy="7" r="4" fill="#f07d3c"/><path d="M2 20c0-4 3.5-6.5 8-6.5s8 2.5 8 6.5z" fill="#f07d3c"/><circle cx="19" cy="17" r="4.4" fill="#f07d3c" stroke="#fff" stroke-width="1.2"/><path d="M19 15v4M17 17h4" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg></span>` : "";
-  return `<button type="button" class="ch-card${p.me ? " me" : ""}${p.lifeStatus === "deceased" ? " gone" : ""}" data-id="${esc(p.id)}" style="left:${c.x}px;top:${c.y}px" title="${esc(p.name)}" onclick="chartOpen('${esc(p.id)}')">${add}${badge}${av}<b>${esc(p.name)}</b><span class="ch-yrs">${esc(yrs)}</span></button>`;
+  return `<button type="button" class="ch-card${p.me ? " me" : ""}${p.lifeStatus === "deceased" ? " gone" : ""}" data-id="${esc(p.id)}" style="left:${c.x}px;top:${c.y}px" title="${esc(p.name)}" onclick="chartOpen('${esc(p.id)}')">${add}${badge}${av}<b>${esc(p.name)}</b>${spouseCardLine(p) ? `<span class="ch-sp" title="${esc(spouseCardLine(p))}">💍 ${esc(spouseCardLine(p))}</span>` : ""}<span class="ch-yrs">${esc(yrs)}</span></button>`;
 }
 function treeChart() {
   const roots = chartRoots();
@@ -1306,6 +1334,7 @@ function branchNode(p, isCenter) {
     <strong>${esc(p.name)}</strong>
     <div class="mini">${years}${p.status === "unclaimed" ? " · Unclaimed" : ""}</div>
     <div class="mini rel">${deriveRelationship(me().id, p.id).label}</div>
+    ${spouseCardLine(p) ? `<div class="mini sp">💍 ${esc(spouseCardLine(p))}</div>` : ""}
     ${kidsCaption(p.id)}
   </div>`;
 }
@@ -2152,6 +2181,7 @@ function linkRelative(targetId, personId, t) {
   if (t.edgeType === "spouse") {
     const e = addEdge(targetId, personId, "spouse");
     [targetId, personId].forEach(id => { const p = personById(id); if (p && p.details?.married !== "yes" && (id === personId || canEditPerson(p))) p.details = { ...(p.details || {}), married: "yes" }; });
+    syncMarriageDate(personId);   // one marriage date for both
     // New spouse should also show as parent of the target's existing single-parent children
     childrenOf(targetId).forEach(c => { if (parentsOf(c).length === 1) addEdge(personId, c, "parent"); });
     return e;
@@ -2552,7 +2582,7 @@ function editProfileFormHTML(p) {
     <div class="field"><label>Married</label>
       <select id="mpMarried"><option value="" ${d.married ? "" : "selected"}>— Select —</option><option value="yes" ${d.married === "yes" ? "selected" : ""}>Married</option><option value="no" ${d.married === "no" ? "selected" : ""}>Unmarried</option></select>
     </div>
-    <div class="field"><label>Marriage date (anniversary ke liye)</label><input id="mpMarriageDate" type="date" value="${v(d.marriage?.date)}"></div>`;
+    <div class="field"><label>Marriage date (anniversary ke liye)</label><input id="mpMarriageDate" type="date" value="${v(d.marriage?.date || marriageDateOf(p))}"></div>`;
 }
 let profileModalLocked = false; // true while the edit form is open: outside click / Esc must not discard typed data
 let profileModalOrigin = "edit"; // "view" = opened from the tree (Cancel/Save go back to the view), "edit" = opened straight into the form
@@ -2596,7 +2626,9 @@ function filledDetailsHTML(p) {
   const bar = `<div class="pc-wrap"><div class="pc-head"><b>Profile ${c.pct}% complete</b><span class="muted">${c.done}/${c.total} details</span></div>
     <div class="pc-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${c.pct}"><span style="width:${c.pct}%"></span></div>
     ${c.missing.length ? `<div class="muted pc-miss">Baaki: ${esc(c.missing.join(", "))}</div>` : `<div class="muted pc-miss">Saari details bhari hui hain ✓</div>`}</div>`;
-  return bar + row("Date of death", fmtDate(d.dod)) + profileFieldList(p).map(([label, val]) => label === "Name" || label === "Photo" ? "" : row(label, val)).join("");
+  const spLabel = p.gender === "Female" ? "Husband" : p.gender === "Male" ? "Wife" : "Spouse";
+  return bar + row("Date of death", fmtDate(d.dod)) + profileFieldList(p).map(([label, val]) => label === "Name" || label === "Photo" ? "" : row(label, val)).join("")
+    + row(spLabel, spouseCardLine(p)) + row("Marriage date", fmtDate(marriageDateOf(p)));
 }
 /* ---------------- person wall: posts, likes, comments, tags. Used in the person's Wall popup (ctx "m") and in the Wall tab feed (ctx "f") ---------------- */
 let wallPersonId = null, wallTags = [], wallOpenComments = new Set(), wallComposerOnly = false;
@@ -2615,7 +2647,7 @@ function wallComposerHTML(placeholder) {
 }
 function openPersonWall(id) {
   const p = personById(id); if (!p) return;
-  wallPersonId = id; wallFiles = []; wallTags = []; wallOpenComments = new Set(); wallComposerOnly = false;
+  wallPersonId = id; wallFiles = []; wallTags = []; wallOpenComments = new Set(); wallComposerOnly = false; wishKey = null;
   profileModalOrigin = "view"; profileModalLocked = false;
   profileModalShell(`<div class="modal-head"><h3>📝 ${esc(p.name)}'s Wall</h3><button type="button" class="ghost" aria-label="Close" onclick="closeEditProfile()">✕</button></div>
     <div class="modal-body">
@@ -2629,7 +2661,7 @@ function openPersonWall(id) {
 function openNewWallPost() {
   const mp = myself();
   if (!mp) { toast("Pehle apna profile claim karo"); return; }
-  wallPersonId = mp.id; wallFiles = []; wallTags = []; wallOpenComments = new Set(); wallComposerOnly = true;
+  wallPersonId = mp.id; wallFiles = []; wallTags = []; wallOpenComments = new Set(); wallComposerOnly = true; wishKey = null;
   profileModalOrigin = "view"; profileModalLocked = false;
   profileModalShell(`<div class="modal-head"><h3>✍️ New post</h3><button type="button" class="ghost" aria-label="Close" onclick="closeEditProfile()">✕</button></div>
     <div class="modal-body">
@@ -2905,7 +2937,8 @@ async function wallPost() {
     if (btn) { btn.disabled = false; btn.textContent = "Post"; }
     return;
   }
-  toast("Posted");
+  toast(wishKey ? "Wish bhej di 🎉" : "Posted");
+  evMarkWished();
   wallFiles.forEach(f => f._url && URL.revokeObjectURL(f._url)); wallFiles = [];
   if (wallComposerOnly) closeEditProfile();
   else { t.value = ""; wallTags = []; wallRenderTags(); wallRenderFiles(); wallLocClear(); if (btn) { btn.disabled = false; btn.textContent = "Post"; } const pk = document.getElementById("wallTagPicker"); if (pk) pk.hidden = true; loadPersonWall(); }
@@ -3130,6 +3163,7 @@ async function saveProfileEdits(id) {
   p.email = emailPending ? oldCardEmail : (email || undefined);
   p.lifeStatus = dod ? "deceased" : "living";
   p.details = { ...(p.details || {}), firstName: first, middleName: middle, surname: last, dod: dod || "", birth_time: g("mpBirthTime"), state: g("mpState"), city: g("mpCity"), married: document.getElementById("mpMarried").value, marriage: { ...((p.details || {}).marriage || {}), date: g("mpMarriageDate") } };
+  if (p.details.marriage?.date) syncMarriageDate(id); else clearSpouseMarriageDate(id);   // husband / wife get the same anniversary
   if (p.me) { state.account.name = p.name; if (email && !emailPending) state.account.email = email; }
   await save();
   if (p.me && supabase && currentUser) { try { await supabase.from("profiles").update({ display_name: p.name, ...(email && !emailPending ? { email } : {}) }).eq("id", currentUser.id); } catch (e) { console.warn("display_name update failed", e); } }
@@ -3548,22 +3582,31 @@ function evNext(m, d, t0) {   // next date >= today on which month/day falls (Fe
   }
   return null;
 }
+function evPrev(m, d, t0) {   // most recent date BEFORE today on which month/day fell
+  for (let y = t0.getFullYear(); y >= t0.getFullYear() - 1; y--) {
+    let dt = new Date(y, m - 1, d); if (dt.getMonth() !== m - 1) dt = new Date(y, m - 1, d - 1);
+    if (dt < t0) return dt;
+  }
+  return null;
+}
+const EV_WISH_DAYS = 5;   // you can wish on the day itself and for 5 days after it
 function buildFamilyEvents(days = 365) {
   const now = new Date(), t0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()), out = [], seen = new Set();
-  const push = e => { const n = Math.round((e.date - t0) / 864e5); if (n >= 0 && n <= days) out.push({ ...e, daysAway: n }); };
+  const push = e => { const n = Math.round((e.date - t0) / 864e5); if (n < -EV_WISH_DAYS || n > days || (n < 0 && e.type === "custom")) return; out.push({ ...e, daysAway: n }); };
+  const occ = (m, d) => [evPrev(m, d, t0), evNext(m, d, t0)].filter(Boolean);   // last few days + the next time
   const gone = p => p.lifeStatus === "deceased" || !!p.details?.dod;
   state.people.forEach(p => {
-    const b = evParse(p.dob), dd = evParse(p.details?.dod), mar = evParse(p.details?.marriage?.date);
-    if (b && !gone(p)) { const dt = evNext(b.m, b.d, t0); if (dt) push({ type: "birth", emoji: "🎂", date: dt, ids: [p.id], kin: kinLine(p), title: `${p.name} ka Birthday`, detail: p.gender === "Female"
+    const b = evParse(p.dob), dd = evParse(p.details?.dod), marDate = marriageDateOf(p), mar = evParse(marDate);
+    if (b && !gone(p)) occ(b.m, b.d).forEach(dt => push({ type: "birth", emoji: "🎂", date: dt, ids: [p.id], kin: kinLine(p), title: `${p.name} ka Birthday`, detail: p.gender === "Female"
       ? `Janm: ${new Date(2000, b.m - 1, b.d).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}`   // female: birth year and age are hidden
-      : `Janm: ${fmtDate(p.dob)}` + (b.y ? ` · ${dt.getFullYear() - b.y} saal ka` : "") }); }
-    if (dd) { const dt = evNext(dd.m, dd.d, t0); if (dt) push({ type: "death", emoji: "🕯", date: dt, ids: [p.id], kin: kinLine(p), title: `${p.name} ki Death Anniversary`, detail: `Dehant: ${fmtDate(p.details.dod)}` + (dd.y ? ` · ${dt.getFullYear() - dd.y} saal pehle` : "") }); }
+      : `Janm: ${fmtDate(p.dob)}` + (b.y ? ` · ${dt.getFullYear() - b.y} saal ka` : "") }));
+    if (dd) occ(dd.m, dd.d).forEach(dt => push({ type: "death", emoji: "🕯", date: dt, ids: [p.id], kin: kinLine(p), title: `${p.name} ki Death Anniversary`, detail: `Dehant: ${fmtDate(p.details.dod)}` + (dd.y ? ` · ${dt.getFullYear() - dd.y} saal pehle` : "") }));
     if (mar) {
-      const sp = spousesOf(p.id).map(personById).filter(Boolean)[0], key = [p.id, sp?.id || ""].sort().join("|") + "|" + p.details.marriage.date;
-      if (!seen.has(key)) {
+      const sp = spousesOf(p.id).map(personById).filter(Boolean)[0], key = sp ? [p.id, sp.id].sort().join("|") : p.id + "|" + marDate;
+      if (!seen.has(key)) {   // husband and wife share ONE anniversary event
         seen.add(key);
-        const spName = sp?.name || p.details.marriage.spouse, dt = evNext(mar.m, mar.d, t0);
-        if (dt) push({ type: "marriage", emoji: "💍", date: dt, ids: [p.id, sp?.id].filter(Boolean), kin: kinLine(p.gender !== "Female" && sp?.gender === "Female" ? sp : p), title: `${p.name}${spName ? " & " + spName : ""} ki Marriage Anniversary`, detail: `Shaadi: ${fmtDate(p.details.marriage.date)}` + (mar.y ? ` · ${dt.getFullYear() - mar.y} saal ki shaadi` : "") });
+        const spName = sp?.name || p.details?.marriage?.spouse;
+        occ(mar.m, mar.d).forEach(dt => push({ type: "marriage", emoji: "💍", date: dt, ids: [p.id, sp?.id].filter(Boolean), kin: kinLine(p.gender !== "Female" && sp?.gender === "Female" ? sp : p), title: `${p.name}${spName ? " & " + spName : ""} ki Marriage Anniversary`, detail: `Shaadi: ${fmtDate(marDate)}` + (mar.y ? ` · ${dt.getFullYear() - mar.y} saal ki shaadi` : "") }));
       }
     }
   });
@@ -3573,14 +3616,54 @@ function buildFamilyEvents(days = 365) {
   });
   return out.sort((a, b) => a.date - b.date || a.title.localeCompare(b.title));
 }
-const evWhen = n => n === 0 ? "Aaj 🎉" : n === 1 ? "Kal" : `${n} din baad`;
+const evWhen = n => n === 0 ? "Aaj 🎉" : n === 1 ? "Kal" : n === -1 ? "Kal tha" : n < 0 ? `${-n} din pehle` : `${n} din baad`;
+const evDateKey = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const evWishKey = e => `ft_wished:${e.type}:${e.ids.join("+")}:${evDateKey(e.date)}`;
+function evWishedAlready(key) { try { return localStorage.getItem(key) === "1"; } catch (x) { return false; } }
+/* Wish is open on the day itself and for EV_WISH_DAYS days after it. Not for my own birthday / anniversary or for DB "other" events. */
+function evCanWish(e) { return e.type !== "custom" && e.daysAway <= 0 && e.daysAway >= -EV_WISH_DAYS && e.ids.length > 0 && !e.ids.some(id => personById(id)?.me); }
+function evWishHTML(e) {
+  if (!evCanWish(e)) return "";
+  const key = evWishKey(e);
+  return evWishedAlready(key)
+    ? `<span class="ev-wished" data-wk="${esc(key)}">✓ Wish bheji</span>`
+    : `<button type="button" class="ev-wish" data-wk="${esc(key)}" onclick="event.stopPropagation();openEventWish('${e.type}','${esc(e.ids.join(","))}','${evDateKey(e.date)}')">🎁 Wish</button>`;
+}
 function evRowHTML(e) {
   const dt = e.date, mon = dt.toLocaleString("en-IN", { month: "short" }), wd = dt.toLocaleString("en-IN", { weekday: "short" });
-  const attr = e.ids.length ? `onclick="openProfilePopup('${esc(e.ids[0])}')"` : "";
-  return `<button type="button" class="ev-row ev-${e.type}${e.daysAway === 0 ? " today" : ""}" ${attr}>
+  const attr = e.ids.length ? `role="button" tabindex="0" onclick="openProfilePopup('${esc(e.ids[0])}')" onkeydown="if(event.key==='Enter')openProfilePopup('${esc(e.ids[0])}')"` : "";
+  return `<div class="ev-row ev-${e.type}${e.daysAway === 0 ? " today" : ""}${e.daysAway < 0 ? " past" : ""}" ${attr}>
     <span class="ev-date"><b>${dt.getDate()}</b><small>${mon}</small></span>
     <span class="ev-main"><strong>${e.emoji} ${esc(e.title)}</strong><span class="muted">${esc(e.detail)} · ${wd}</span>${e.kin ? `<span class="person-kin">${esc(e.kin)}</span>` : ""}</span>
-    <span class="ev-when">${evWhen(e.daysAway)}</span></button>`;
+    <span class="ev-side"><span class="ev-when">${evWhen(e.daysAway)}</span>${evWishHTML(e)}</span></div>`;
+}
+/* Wish = a post on the person's wall (anniversary: on the wife's wall, the husband is tagged). Opens the normal wall composer with a ready message. */
+let wishKey = null;
+function openEventWish(type, idsCsv, dateKey) {
+  const people = idsCsv.split(",").map(personById).filter(Boolean); if (!people.length) return;
+  let target = people[0], tags = [];
+  if (type === "marriage" && people.length > 1) { target = people.find(x => x.gender === "Female") || people[0]; tags = people.filter(x => x !== target).map(x => x.id); }
+  const names = people.map(x => x.name).join(" & ");
+  const text = { birth: `🎂 Janmdin ki hardik shubhkamnayein, ${target.name}! Aapka naya saal khushiyon aur achhi sehat se bhara ho. 🎉`,
+    marriage: `💍 ${names} ko shaadi ki saalgirah ki bahut bahut badhai! Aap dono hamesha saath aur khush rahein. 💐`,
+    death: `🕯 ${target.name} ji ki punyatithi par shraddhanjali. Hum aapko hamesha yaad karte hain. 🙏` }[type] || "";
+  const title = { birth: "🎂 Birthday wish", marriage: "💍 Anniversary wish", death: "🕯 Shraddhanjali" }[type] || "Wish";
+  wallPersonId = target.id; wallFiles = []; wallTags = tags; wallOpenComments = new Set(); wallComposerOnly = true;
+  wishKey = `ft_wished:${type}:${people.map(x => x.id).join("+")}:${dateKey}`;
+  profileModalOrigin = "view"; profileModalLocked = false;
+  profileModalShell(`<div class="modal-head"><h3>${title}</h3><button type="button" class="ghost" aria-label="Close" onclick="closeEditProfile()">✕</button></div>
+    <div class="modal-body">
+      ${wallComposerHTML("Wish likho…")}
+      <p class="muted" style="font-size:12.5px;margin:0">Ye wish ${esc(target.name)} ki wall par jayegi${tags.length ? " aur " + esc(tags.map(t => personById(t)?.name).join(", ")) + " tag honge" : ""}, aur poori family ke feed me dikhegi. Message badal sakte ho.</p>
+    </div>`);
+  const t = document.getElementById("wallText"); if (t) t.value = text;
+  wallRenderTags();
+}
+function evMarkWished() {
+  if (!wishKey) return;
+  const key = wishKey; wishKey = null;
+  try { localStorage.setItem(key, "1"); } catch (x) {}
+  document.querySelectorAll(".ev-wish").forEach(b => { if (b.dataset.wk === key) { const s = document.createElement("span"); s.className = "ev-wished"; s.textContent = "✓ Wish bheji"; b.replaceWith(s); } });
 }
 function evPreviewHTML() {
   const list = buildFamilyEvents(60).slice(0, 3);
@@ -4231,7 +4314,7 @@ Object.assign(window, {
   assignTicket, refreshSupport, arRelTypeChanged, cityPicked, cityStateChanged,
   importGedcomPicked, setPeopleSearch, clearPeopleSearch, setPeopleSort, openMoreMenu, closeMoreMenu,
   /* these were used by inline onclick/onchange but never exported, so the Branch/Chart switch, the whole Chart toolbar and the profile Privacy dropdown did nothing */
-  setEvFilter, setEvRange, openPersonWall, openNewWallPost, wallToggleTagPicker, wallToggleLoc, wallLocRender, wallLocClear, wallLocGPS, wallLocSearch, wallLocPick, wallLocPaste, wallLocToggleMap, wallAddTag, wallRemoveTag, wallPost, wallReactToggle, wallReact, wallToggleComments, wallAddComment, wallDeleteComment, wallDeletePost, setTreeStyle, chartAddMenu, chartBack, chartFit, chartGoFamily, chartOpen, chartSetRoot, chartZoom, chartPanStart, chartWheel, setPrivacy
+  setEvFilter, setEvRange, openEventWish, openPersonWall, openNewWallPost, wallToggleTagPicker, wallToggleLoc, wallLocRender, wallLocClear, wallLocGPS, wallLocSearch, wallLocPick, wallLocPaste, wallLocToggleMap, wallAddTag, wallRemoveTag, wallPost, wallReactToggle, wallReact, wallToggleComments, wallAddComment, wallDeleteComment, wallDeletePost, setTreeStyle, chartAddMenu, chartBack, chartFit, chartGoFamily, chartOpen, chartSetRoot, chartZoom, chartPanStart, chartWheel, setPrivacy
 });
 
 window.addEventListener("hashchange", render);

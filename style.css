@@ -686,3 +686,14 @@ input[type=search]{-webkit-appearance:none;appearance:none}
 .chat-sheet-body .chat-room{flex:1;height:auto;min-height:0}
 @media(min-width:761px){#chatSheet{align-items:center}.chat-sheet-card{border-radius:18px}}
 @media(max-width:760px){.chat-sheet-card{height:100dvh;max-width:none;border-radius:0}}
+
+/* Events: wish button (day itself + 5 days after), spouse name on tree cards */
+.ev-row{box-sizing:border-box}
+.ev-row.past{border-style:dashed}
+.ev-side{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.ev-wish{border:0;border-radius:999px;padding:5px 12px;font:inherit;font-size:12.5px;font-weight:700;cursor:pointer;background:var(--plum-deep,#4a2c6e);color:#fff}
+.ev-wish:hover{filter:brightness(1.12)}
+.ev-wished{font-size:12px;font-weight:700;color:var(--sage-deep,#3d7a52)}
+.ch-sp{margin-top:3px;max-width:100%;font-size:9.5px;line-height:1.2;font-weight:600;color:#7a4b8c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ch-card.me .ch-sp{color:#e6c97a}
+.branch-node .mini.sp{color:var(--plum-deep,#4a2c6e);font-weight:600}
