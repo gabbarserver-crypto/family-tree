@@ -440,7 +440,7 @@ function computeGenerations(rootId) {
 const NAV = [
   { group: "Family", items: [
     ["home", "Home", "🏠"], ["tree", "My Tree", "🌳"], ["people", "People", "👨‍👩‍👧"],
-    ["add", "Add Person", "➕"], ["merge", "Merge", "🔀"], ["relationship", "Relationship", "🔗"],
+    ["add", "Add Person", "➕"], ["merge", "Merge", "🔀"], ["importGed", "Import GEDCOM", "📥"], ["relationship", "Relationship", "🔗"], ["horoscope", "Horoscope", "🔮"],
     ["treeAdmins", "Tree Admins", "👑"]
   ]},
   { group: "Social", items: [
@@ -534,6 +534,7 @@ function render() {
   </div>`;
   if (page === "tree") requestAnimationFrame(treeStyle === "chart" ? chartAfterRender : drawTreeConnectors);
   if (page === "wall") requestAnimationFrame(loadWallFeed);
+  if (page === "horoscope") requestAnimationFrame(loadHoroscope);
   if (page === "merge") mergeInitSelects();
   if (page === "chat") requestAnimationFrame(initChat);
   if (page === "profile") requestAnimationFrame(() => loadMemories(activeProfileId || me()?.id));
@@ -543,7 +544,7 @@ function switchRole() {}
 function pageView(p) {
   const map = {
     home, tree, add, addRelative, people, merge, relationship, profile: () => profile(activeProfileId || me().id),
-    wall, chat, sharing, support, admin, production, treeAdmins
+    wall, chat, sharing, support, admin, production, treeAdmins, importGed, horoscope: horoscopePage
   };
   if ((p === "admin" || p === "production") && !isStaff()) return accessDenied();
   if (p === "add" && !canEditTree()) return accessDenied("Tree admin access required", "Only this tree's owner or admins can add relatives. Ask the owner to promote you from the Tree Admins page.");
@@ -552,6 +553,221 @@ function pageView(p) {
 }
 function accessDenied(title, msg) {
   return `<div class="empty card"><span class="big">🔒</span><h3>${esc(title || "Staff access required")}</h3><p class="muted">${esc(msg || "Switch the demo role selector above to Admin or Support to view this area.")}</p></div>`;
+}
+
+/* ---------------- Horoscope (FreeHoroscopeAPI — https://freehoroscopeapi.com) ---------------- */
+const HORO_API = "https://freehoroscopeapi.com/api/v1/get-horoscope";
+const HORO_SIGNS = [
+  ["capricorn", "♑", 1, 19], ["aquarius", "♒", 2, 18], ["pisces", "♓", 3, 20], ["aries", "♈", 4, 19],
+  ["taurus", "♉", 5, 20], ["gemini", "♊", 6, 20], ["cancer", "♋", 7, 22], ["leo", "♌", 8, 22],
+  ["virgo", "♍", 9, 22], ["libra", "♎", 10, 22], ["scorpio", "♏", 11, 21], ["sagittarius", "♐", 12, 21], ["capricorn", "♑", 12, 31]
+]; // [sign, symbol, month, last day (inclusive) of that sign in that month]
+const horoCache = new Map();   // "sign|period|YYYY-MM-DD" -> data
+let horoState = { personId: null, sign: null, period: "daily" };
+function signFromDob(dob) {
+  if (!dob) return null;
+  let m, d;
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(dob));
+  if (iso) { m = +iso[2]; d = +iso[3]; }
+  else { const x = new Date(dob); if (Number.isNaN(x.getTime())) return null; m = x.getMonth() + 1; d = x.getDate(); }
+  const hit = HORO_SIGNS.find(([, , mm, last]) => m < mm || (m === mm && d <= last));
+  return hit ? hit[0] : null;
+}
+function horoSymbol(sign) { return (HORO_SIGNS.find(x => x[0] === sign) || [])[1] || "✨"; }
+/* Vedic rashi (sidereal Moon sign) computed locally from DOB + birth time.
+   Moon longitude: Meeus ch.47 (main terms, ~0.05-0.1 deg), minus Lahiri ayanamsa. Birth time is taken as IST (UTC+5:30). */
+const MOON_TERMS = [[0,0,1,0,6288774],[2,0,-1,0,1274027],[2,0,0,0,658314],[0,0,2,0,213618],[0,1,0,0,-185116],[0,0,0,2,-114332],[2,0,-2,0,58793],[2,-1,-1,0,57066],[2,0,1,0,53322],[2,-1,0,0,45758],[0,1,-1,0,-40923],[1,0,0,0,-34720],[0,1,1,0,-30383],[2,0,0,-2,15327],[0,0,1,2,-12528],[0,0,1,-2,10980],[4,0,-1,0,10675],[0,0,3,0,10034],[4,0,-2,0,8548],[2,1,-1,0,-7888],[2,1,0,0,-6766],[1,0,-1,0,-5163],[1,1,0,0,4987],[2,-1,1,0,4036],[2,0,2,0,3994],[4,0,0,0,3861],[2,0,-3,0,3665]];
+const RASHI = [["aries","Mesh"],["taurus","Vrishabh"],["gemini","Mithun"],["cancer","Kark"],["leo","Singh"],["virgo","Kanya"],["libra","Tula"],["scorpio","Vrishchik"],["sagittarius","Dhanu"],["capricorn","Makar"],["aquarius","Kumbh"],["pisces","Meen"]];
+const NAKSHATRAS = ["Ashwini","Bharani","Krittika","Rohini","Mrigashira","Ardra","Punarvasu","Pushya","Ashlesha","Magha","Purva Phalguni","Uttara Phalguni","Hasta","Chitra","Swati","Vishakha","Anuradha","Jyeshtha","Mula","Purva Ashadha","Uttara Ashadha","Shravana","Dhanishta","Shatabhisha","Purva Bhadrapada","Uttara Bhadrapada","Revati"];
+function moonSiderealLongitude(jd) {
+  const T = (jd - 2451545.0) / 36525, rad = Math.PI / 180, mod = x => ((x % 360) + 360) % 360;
+  const L = mod(218.3164477 + 481267.88123421 * T), D = mod(297.8501921 + 445267.1114034 * T),
+    M = mod(357.5291092 + 35999.0502909 * T), Mp = mod(134.9633964 + 477198.8675055 * T), F = mod(93.272095 + 483202.0175233 * T);
+  const E = 1 - 0.002516 * T;
+  let sum = 0;
+  for (const [d, m, mp, f, c] of MOON_TERMS) sum += c * Math.pow(E, Math.abs(m)) * Math.sin((d * D + m * M + mp * Mp + f * F) * rad);
+  const A1 = mod(119.75 + 131.849 * T), A2 = mod(53.09 + 479264.29 * T);
+  sum += 3958 * Math.sin(A1 * rad) + 1962 * Math.sin((L - F) * rad) + 318 * Math.sin(A2 * rad);
+  const tropical = mod(L + sum / 1e6);
+  const ayanamsa = 23.85306 + 0.01396 * ((jd - 2451545.0) / 365.25); // Lahiri
+  return mod(tropical - ayanamsa);
+}
+function rashiFromBirth(dob, time) {
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(dob || "")), tm = /^(\d{1,2}):(\d{2})/.exec(String(time || ""));
+  if (!iso || !tm) return null;
+  const utc = Date.UTC(+iso[1], +iso[2] - 1, +iso[3], +tm[1], +tm[2]) - 5.5 * 3600e3; // IST -> UTC
+  const lon = moonSiderealLongitude(utc / 86400000 + 2440587.5);
+  const r = RASHI[Math.floor(lon / 30)];
+  return { sign: r[0], hindi: r[1], nakshatra: NAKSHATRAS[Math.floor(lon / (360 / 27))], pada: Math.floor((lon % (360 / 27)) / (360 / 108)) + 1 };
+}
+function horoCardHTML() {
+  // Based ONLY on the logged-in user's own profile: DOB + birth time -> Vedic rashi (Moon sign).
+  const m = myself();
+  const r = m ? rashiFromBirth(normalizeDate(m.dob) || m.dob, m.details?.birth_time) : null;
+  horoState.sign = r ? r.sign : null; horoState.rashi = r;
+  if (!r) {
+    const missing = !m?.dob ? "Date of Birth aur Birth time" : "Birth time";
+    return `<div class="card" id="horoCard"><h3>🔮 Aapka Horoscope</h3>
+      <p class="muted">Apni <b>rashi</b> ka horoscope dekhne ke liye profile complete karein — ${missing} bharna zaroori hai (rashi Moon se nikalti hai, jo time par depend karta hai).</p>
+      ${m ? `<button type="button" class="primary" onclick="openEditProfile('${esc(m.id)}', false)">✏️ Profile complete karein</button>` : ""}
+    </div>`;
+  }
+  const tabs = ["daily", "weekly", "monthly"].map(pr => `<button type="button" class="${pr === horoState.period ? "primary" : "secondary"}" onclick="setHoroscope({period:'${pr}'})">${pr[0].toUpperCase() + pr.slice(1)}</button>`).join("");
+  return `<div class="card" id="horoCard"><h3>🔮 Aapka Horoscope</h3>
+    <div class="muted" style="margin-bottom:8px;font-size:13px">${horoSymbol(r.sign)} Rashi: <b>${r.hindi} (${r.sign[0].toUpperCase() + r.sign.slice(1)})</b> · Nakshatra: ${r.nakshatra} (pada ${r.pada})</div>
+    <div class="actions" style="margin-bottom:10px">${tabs}</div>
+    <div id="horoBody" class="muted">Loading…</div>
+    <div class="muted" style="font-size:11.5px;margin-top:10px">Powered by <a href="https://freehoroscopeapi.com" target="_blank" rel="noopener">FreeHoroscopeAPI</a> · Vedic rashi (Moon sign, Lahiri), birth time IST maana gaya. Entertainment only.</div>
+  </div>`;
+}
+function setHoroscope(patch) {
+  if (patch.period) horoState.period = patch.period;
+  const card = document.getElementById("horoCard");
+  if (card) { card.outerHTML = horoCardHTML(); loadHoroscope(); }
+}
+async function loadHoroscope() {
+  const body = document.getElementById("horoBody");
+  if (!body || !horoState.sign) return;
+  const { sign, period } = horoState;
+  const key = `${sign}|${period}|${new Date().toISOString().slice(0, 10)}`;
+  const show = d => {
+    const el = document.getElementById("horoBody");
+    if (!el || horoState.sign !== sign || horoState.period !== period) return; // user moved on
+    el.className = "";
+    el.innerHTML = `<div style="font-weight:600;margin-bottom:2px">${horoSymbol(sign)} ${esc(d.sign || sign)} · ${esc(d.period || period)} · <span class="muted" style="font-weight:400">${esc(d.date || "")}</span></div><p style="margin:0;line-height:1.55">${esc(d.horoscope)}</p>`;
+  };
+  if (horoCache.has(key)) return show(horoCache.get(key));
+  body.className = "muted"; body.textContent = "Loading…";
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 12000);
+    const r = await fetch(`${HORO_API}/${period}?sign=${encodeURIComponent(sign)}`, { signal: ctrl.signal });
+    clearTimeout(t);
+    const j = await r.json();
+    if (!r.ok || !j?.data?.horoscope) throw new Error(j?.error || `HTTP ${r.status}`);
+    horoCache.set(key, j.data);
+    show(j.data);
+  } catch (e) {
+    const el = document.getElementById("horoBody");
+    if (el && horoState.sign === sign && horoState.period === period) {
+      el.className = "muted";
+      el.innerHTML = `Horoscope abhi load nahi ho paya. <button type="button" class="ghost" onclick="loadHoroscope()">Retry</button>`;
+    }
+  }
+}
+
+/* ---------------- import (moved from dashboard; lives under More) ---------------- */
+function importGed() {
+  return `<div class="page-head"><h2>Import GEDCOM</h2><p class="muted">Dusre apps se family tree laayein.</p></div>
+  <div class="card"><h3>Import from GEDCOM</h3>
+    <p class="muted">Upload a .ged file (from iMeUsWe, Ancestry, MyHeritage, etc.) to add all its people and relationships to your tree.</p>
+    <div class="actions">
+      <button class="primary" onclick="document.getElementById('gedFile').click()">📥 Import .ged file</button>
+      <input type="file" id="gedFile" accept=".ged,.gedcom" hidden onchange="importGedcomPicked(this)">
+    </div>
+  </div>`;
+}
+
+/* ---------------- Horoscope tab: Panchang, Rahu Kaal, Tarot, Family Rashi (all computed locally, IST) ---------------- */
+const TITHIS = ["Pratipada","Dwitiya","Tritiya","Chaturthi","Panchami","Shashthi","Saptami","Ashtami","Navami","Dashami","Ekadashi","Dwadashi","Trayodashi","Chaturdashi"];
+const YOGAS = ["Vishkambha","Priti","Ayushman","Saubhagya","Shobhana","Atiganda","Sukarma","Dhriti","Shula","Ganda","Vriddhi","Dhruva","Vyaghata","Harshana","Vajra","Siddhi","Vyatipata","Variyana","Parigha","Shiva","Siddha","Sadhya","Shubha","Shukla","Brahma","Indra","Vaidhriti"];
+const KARANAS_MOVABLE = ["Bava","Balava","Kaulava","Taitila","Gara","Vanija","Vishti (Bhadra)"];
+const WEEKDAYS = ["Ravivar (Sunday)","Somvar (Monday)","Mangalvar (Tuesday)","Budhvar (Wednesday)","Guruvar (Thursday)","Shukravar (Friday)","Shanivar (Saturday)"];
+const RAHU_SEGMENT = [8, 2, 7, 5, 6, 4, 3]; // Sun..Sat -> which 1/8th of the day (from sunrise) is Rahu Kaal
+const HORO_CITIES = [["Delhi",28.6139,77.209],["Gurugram",28.4595,77.0266],["Mumbai",19.076,72.8777],["Pune",18.5204,73.8567],["Kolkata",22.5726,88.3639],["Chennai",13.0827,80.2707],["Bengaluru",12.9716,77.5946],["Hyderabad",17.385,78.4867],["Ahmedabad",23.0225,72.5714],["Jaipur",26.9124,75.7873],["Lucknow",26.8467,80.9462],["Varanasi",25.3176,82.9739],["Patna",25.5941,85.1376],["Bhopal",23.2599,77.4126],["Indore",22.7196,75.8577],["Chandigarh",30.7333,76.7794]];
+function mod360(x) { return ((x % 360) + 360) % 360; }
+function ayanamsaAt(jd) { return 23.85306 + 0.01396 * ((jd - 2451545.0) / 365.25); } // Lahiri
+function sunSiderealLongitude(jd) {
+  const T = (jd - 2451545.0) / 36525, rad = Math.PI / 180;
+  const L0 = mod360(280.46646 + 36000.76983 * T), M = mod360(357.52911 + 35999.05029 * T - 0.0001537 * T * T);
+  const C = (1.914602 - 0.004817 * T) * Math.sin(M * rad) + 0.019993 * Math.sin(2 * M * rad) + 0.000289 * Math.sin(3 * M * rad);
+  const om = 125.04 - 1934.136 * T;
+  return mod360(L0 + C - 0.00569 - 0.00478 * Math.sin(om * rad) - ayanamsaAt(jd));
+}
+function panchangAt(jd) {
+  const ms = moonSiderealLongitude(jd), ss = sunSiderealLongitude(jd), el = mod360(ms - ss);
+  const tn = Math.floor(el / 12) + 1;                         // 1..30
+  const tithi = tn === 15 ? "Purnima" : tn === 30 ? "Amavasya" : TITHIS[(tn - 1) % 15];
+  const k = Math.floor(el / 6);                               // 0..59 half-tithis
+  const karana = k === 0 ? "Kimstughna" : k === 57 ? "Shakuni" : k === 58 ? "Chatushpada" : k === 59 ? "Naga" : KARANAS_MOVABLE[(k - 1) % 7];
+  return { tithi, tn, paksha: tn <= 15 ? "Shukla" : "Krishna", yoga: YOGAS[Math.floor(mod360(ms + ss) / (360 / 27))], karana,
+    nakshatra: NAKSHATRAS[Math.floor(ms / (360 / 27))], moonRashi: RASHI[Math.floor(ms / 30)][1], sunRashi: RASHI[Math.floor(ss / 30)][1] };
+}
+function sunTimesIST(y, m, d, lat, lng) { // minutes after local (IST) midnight; NOAA algorithm, ~1-2 min accuracy
+  const rad = Math.PI / 180, jd = Date.UTC(y, m - 1, d, 6, 30) / 86400000 + 2440587.5, T = (jd - 2451545.0) / 36525;
+  const L0 = mod360(280.46646 + T * (36000.76983 + T * 0.0003032)), M = 357.52911 + T * (35999.05029 - 0.0001537 * T);
+  const e = 0.016708634 - T * (0.000042037 + 0.0000001267 * T);
+  const C = Math.sin(M * rad) * (1.914602 - T * (0.004817 + 0.000014 * T)) + Math.sin(2 * M * rad) * (0.019993 - 0.000101 * T) + Math.sin(3 * M * rad) * 0.000289;
+  const om = 125.04 - 1934.136 * T, app = L0 + C - 0.00569 - 0.00478 * Math.sin(om * rad);
+  const ob = 23 + (26 + (21.448 - T * (46.815 + T * (0.00059 - T * 0.001813))) / 60) / 60 + 0.00256 * Math.cos(om * rad);
+  const decl = Math.asin(Math.sin(ob * rad) * Math.sin(app * rad)), vy = Math.tan(ob * rad / 2) ** 2;
+  const eqT = 4 * (vy * Math.sin(2 * L0 * rad) - 2 * e * Math.sin(M * rad) + 4 * e * vy * Math.sin(M * rad) * Math.cos(2 * L0 * rad) - 0.5 * vy * vy * Math.sin(4 * L0 * rad) - 1.25 * e * e * Math.sin(2 * M * rad)) / rad;
+  const ha = Math.acos(Math.cos(90.833 * rad) / (Math.cos(lat * rad) * Math.cos(decl)) - Math.tan(lat * rad) * Math.tan(decl)) / rad;
+  const noon = 720 - 4 * lng - eqT;
+  return { rise: noon - 4 * ha + 330, set: noon + 4 * ha + 330 };
+}
+function istNowParts() { const t = new Date(Date.now() + 5.5 * 3600e3); return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate(), wd: t.getUTCDay() }; }
+function fmtMin(x) { let t = Math.round(x), h = Math.floor(t / 60) % 24, mm = t % 60; return `${h % 12 || 12}:${String(mm).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`; }
+function horoCity() {
+  if (!horoState.city) {
+    const c = String(myself()?.details?.city || "").trim().toLowerCase();
+    horoState.city = (HORO_CITIES.find(x => c && x[0].toLowerCase() === c) || HORO_CITIES[0])[0];
+  }
+  return HORO_CITIES.find(x => x[0] === horoState.city) || HORO_CITIES[0];
+}
+function setHoroCity(name) { horoState.city = name; const el = document.getElementById("horoPlaceCards"); if (el) el.innerHTML = horoPlaceCardsHTML(); }
+function horoPlaceCardsHTML() {
+  const [name, lat, lng] = horoCity(), t = istNowParts(), st = sunTimesIST(t.y, t.m, t.d, lat, lng);
+  const pj = panchangAt(Date.UTC(t.y, t.m - 1, t.d) / 86400000 + 2440587.5 + (st.rise - 330) / 1440);
+  const seg = (st.set - st.rise) / 8, rs = st.rise + (RAHU_SEGMENT[t.wd] - 1) * seg;
+  const row = (a, b) => `<div class="row"><span class="muted">${a}</span><span>${esc(b)}</span></div>`;
+  return `<div class="card"><h3>🪔 Aaj ka Panchang</h3>
+      ${row("Din", WEEKDAYS[t.wd])}${row("Tithi", `${pj.paksha} ${pj.tithi}`)}${row("Nakshatra", pj.nakshatra)}${row("Yoga", pj.yoga)}${row("Karana", pj.karana)}${row("Chandra rashi", pj.moonRashi)}${row("Surya rashi (nirayana)", pj.sunRashi)}
+      <div class="muted" style="font-size:11.5px;margin-top:8px">Sooryoday ke samay ka panchang · ${esc(name)} · tithi/nakshatra din mein badalte hain.</div></div>
+    <div class="card"><h3>🌅 Rahu Kaal aur Sun timing</h3>
+      ${row("Sunrise", fmtMin(st.rise))}${row("Sunset", fmtMin(st.set))}${row("Rahu Kaal", `${fmtMin(rs)} – ${fmtMin(rs + seg)}`)}
+      <div class="muted" style="font-size:11.5px;margin-top:8px">Rahu Kaal mein naya shubh kaam shuru karne se parhez kiya jata hai (parampara). Approx. ±2 min.</div></div>`;
+}
+/* ---- Tarot ---- */
+const TAROT_MAJOR = [["The Fool","naya shuruaat, bharosa, risk lena"],["The Magician","ichchashakti aur kaushal"],["The High Priestess","intuition, gehri samajh"],["The Empress","samriddhi, palan-poshan"],["The Emperor","anushasan, neturitv"],["The Hierophant","parampara, guru ki seekh"],["The Lovers","rishte aur sahi chunav"],["The Chariot","jeet, drudh sankalp"],["Strength","dhairya, aatmavishwas"],["The Hermit","ekant aur aatm-chintan"],["Wheel of Fortune","badalta samay, kismat"],["Justice","nyay, sachchai"],["The Hanged Man","nazariya badalna, ruk kar sochna"],["Death","ek daur ka ant, parivartan"],["Temperance","santulan, sabr"],["The Devil","bandhan, lalach"],["The Tower","achanak badlav"],["The Star","asha, shanti"],["The Moon","bhram, andeshe"],["The Sun","khushi, safalta"],["Judgement","jaagruti, naya nirnay"],["The World","poorti, safal samapti"]];
+const TAROT_RANKS = [["Ace","naya mauka"],["Two","faisla aur santulan"],["Three","vistar aur sahyog"],["Four","sthirta, thehrav"],["Five","takraav, chunauti"],["Six","sudhar, aage badhna"],["Seven","parakh aur dhairya"],["Eight","mehnat aur gati"],["Nine","manzil ke kareeb"],["Ten","poornata ya bojh"],["Page","seekhna, sandesh"],["Knight","josh aur gati"],["Queen","samajh aur dekhbhal"],["King","niyantran, paripakvata"]];
+const TAROT_SUITS = [["Wands","🔥","kaam aur jazbe"],["Cups","💧","bhavnaon aur rishton"],["Swords","🌬️","vichar aur nirnay"],["Pentacles","🪙","paise aur kaam"]];
+function tarotCard(i) { // 0..77
+  if (i < 22) return { name: TAROT_MAJOR[i][0], icon: "🃏", text: TAROT_MAJOR[i][1][0].toUpperCase() + TAROT_MAJOR[i][1].slice(1) };
+  const j = i - 22, suit = TAROT_SUITS[Math.floor(j / 14)], rank = TAROT_RANKS[j % 14];
+  return { name: `${rank[0]} of ${suit[0]}`, icon: suit[1], text: `${rank[1][0].toUpperCase() + rank[1].slice(1)} — ${suit[2]} ke kshetra mein` };
+}
+function tarotDailyIndex() { const t = istNowParts(); let h = 0; for (const ch of `${t.y}-${t.m}-${t.d}|${myself()?.id || ""}`) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h % 78; }
+function tarotCardHTML() {
+  const i = horoState.tarot ?? tarotDailyIndex(), c = tarotCard(i);
+  return `<div class="card" id="tarotCard"><h3>🃏 Tarot — ${horoState.tarot == null ? "aaj ka card" : "aapka naya card"}</h3>
+    <div style="font-size:42px;line-height:1">${c.icon}</div><div style="font-weight:700;margin:6px 0 2px">${esc(c.name)}</div><p style="margin:0 0 10px">${esc(c.text)}.</p>
+    <button type="button" class="secondary" onclick="tarotDraw()">🔄 Ek aur card</button>
+    <div class="muted" style="font-size:11.5px;margin-top:8px">Sirf manoranjan ke liye.</div></div>`;
+}
+function tarotDraw() { horoState.tarot = Math.floor(Math.random() * 78); const el = document.getElementById("tarotCard"); if (el) el.outerHTML = tarotCardHTML(); }
+/* ---- Family rashi ---- */
+function familyRashiHTML() {
+  const rows = [], missing = [];
+  state.people.forEach(p => { const r = rashiFromBirth(normalizeDate(p.dob) || p.dob, p.details?.birth_time); (r ? rows : missing).push({ p, r }); });
+  const list = rows.map(({ p, r }) => `<div class="row"><span>${esc(p.name)}${p.me ? " (aap)" : ""}</span><span>${horoSymbol(r.sign)} ${r.hindi} · ${r.nakshatra}</span></div>`).join("");
+  return `<div class="card"><h3>👨‍👩‍👧 Family ki Rashi</h3>${list || `<p class="muted">Abhi kisi ki DOB aur Birth time nahi bhari.</p>`}
+    ${missing.length ? `<div class="muted" style="font-size:12.5px;margin-top:8px">${missing.length} logon ki DOB ya Birth time baaki hai.</div>` : ""}</div>`;
+}
+function horoscopePage() {
+  const cityOpts = HORO_CITIES.map(c => `<option ${c[0] === horoCity()[0] ? "selected" : ""}>${c[0]}</option>`).join("");
+  return `<div class="page-head"><h2>🔮 Horoscope</h2><p class="muted">Rashi, panchang, rahu kaal aur tarot.</p></div>
+    ${horoCardHTML()}
+    <div class="card"><div class="field" style="margin:0"><label>Shehar (panchang aur sunrise ke liye)</label><select onchange="setHoroCity(this.value)">${cityOpts}</select></div></div>
+    <div id="horoPlaceCards">${horoPlaceCardsHTML()}</div>
+    ${tarotCardHTML()}
+    ${familyRashiHTML()}`;
+}
+function horoMiniHTML() {
+  const m = myself(), r = m ? rashiFromBirth(normalizeDate(m.dob) || m.dob, m.details?.birth_time) : null;
+  return `<div class="card"><h3>🔮 Horoscope</h3>
+    <p class="muted" style="margin-top:0">${r ? `${horoSymbol(r.sign)} Aapki rashi: <b>${r.hindi} (${r.sign[0].toUpperCase() + r.sign.slice(1)})</b> · ${r.nakshatra}` : "Rashi dekhne ke liye profile mein DOB aur Birth time bharein."}</p>
+    <button type="button" class="primary" onclick="go('horoscope')">Poora horoscope dekhein →</button></div>`;
 }
 
 /* ---------------- home ---------------- */
@@ -570,13 +786,7 @@ function home() {
     <button class="secondary" onclick="go('relationship')">🔗 Find Relationship</button>
     <button class="secondary" onclick="go('wall')">📝 Family Wall</button>
   </div></div>
-  <div class="card"><h3>Import from GEDCOM</h3>
-    <p class="muted">Upload a .ged file (from iMeUsWe, Ancestry, MyHeritage, etc.) to add all its people and relationships to your tree.</p>
-    <div class="actions">
-      <button class="primary" onclick="document.getElementById('gedFile').click()">📥 Import .ged file</button>
-      <input type="file" id="gedFile" accept=".ged,.gedcom" hidden onchange="importGedcomPicked(this)">
-    </div>
-  </div>
+  ${horoMiniHTML()}
   <div class="card"><h3>Upcoming</h3>${upcoming.map(e => `<div class="event-chip"><span class="em">${e.emoji}</span><div><strong>${esc(e.title)}</strong><div class="muted" style="font-size:12.5px">${e.sub}</div></div></div>`).join("")}
   <button class="ghost" style="margin-top:8px" onclick="go('wall')">See all events →</button></div>`;
 }
@@ -2201,7 +2411,7 @@ function detailRowsHTML(p) {
   const married = d.married === "yes" ? "Married" : d.married === "no" ? "Unmarried" : "";
   return `${row("First name", n.first)}${row("Middle name", n.middle)}${row("Surname", n.last)}
     ${row("Gender", p.gender)}
-    ${row("Date of birth", fmtDate(p.dob))}${row("Date of death", fmtDate(d.dod))}
+    ${row("Date of birth", fmtDate(p.dob))}${row("Birth time", d.birth_time)}${row("Date of death", fmtDate(d.dod))}
     ${row("Mobile", p.mobile)}${row("Email", p.email)}
     ${row("State", d.state)}${row("City", d.city)}${row("Married", married)}`;
 }
@@ -2224,6 +2434,7 @@ function editProfileFormHTML(p) {
       <select id="mpGender"><option value="" ${p.gender ? "" : "selected"}>— Select —</option><option value="Male" ${p.gender === "Male" ? "selected" : ""}>Male</option><option value="Female" ${p.gender === "Female" ? "selected" : ""}>Female</option><option value="Other" ${p.gender === "Other" ? "selected" : ""}>Other</option></select>
     </div>
     <div class="field"><label>Date of Birth</label><input id="mpDob" type="date" value="${v(normalizeDate(p.dob))}"></div>
+    <div class="field"><label>Birth time (rashi / horoscope ke liye)</label><input id="mpBirthTime" type="time" value="${v(d.birth_time)}"></div>
     <div class="field"><label>Date of Death</label><input id="mpDod" type="date" value="${v(d.dod)}"></div>
     <div class="field"><label>Mobile</label><input id="mpMobile" type="tel" value="${v(p.mobile)}" placeholder="+91 98XXXXXXXX"></div>
     <div class="field"><label>Email (Gmail)</label><input id="mpEmail" type="email" value="${v(p.email)}" placeholder="name@gmail.com"></div>
@@ -2537,7 +2748,7 @@ async function saveProfileEdits(id) {
   p.mobile = mobile || undefined;
   p.email = emailPending ? oldCardEmail : (email || undefined);
   p.lifeStatus = dod ? "deceased" : "living";
-  p.details = { ...(p.details || {}), firstName: first, middleName: middle, surname: last, dod: dod || "", state: g("mpState"), city: g("mpCity"), married: document.getElementById("mpMarried").value };
+  p.details = { ...(p.details || {}), firstName: first, middleName: middle, surname: last, dod: dod || "", birth_time: g("mpBirthTime"), state: g("mpState"), city: g("mpCity"), married: document.getElementById("mpMarried").value };
   if (p.me) { state.account.name = p.name; if (email && !emailPending) state.account.email = email; }
   await save();
   if (p.me && supabase && currentUser) { try { await supabase.from("profiles").update({ display_name: p.name, ...(email && !emailPending ? { email } : {}) }).eq("id", currentUser.id); } catch (e) { console.warn("display_name update failed", e); } }
@@ -3298,6 +3509,7 @@ async function importGedcomPicked(inputEl) {
    scoped to the module — they are NOT attached to window automatically
    the way classic <script> globals are. */
 Object.assign(window, {
+  setHoroscope, loadHoroscope, setHoroCity, tarotDraw,
   avatarFallback, sendChat, chatKey,
   openPersonTree, exitTreeView, openBranch, exitBranch,
   openChangeEmail, saveNewEmail,
