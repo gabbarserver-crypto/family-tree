@@ -507,15 +507,17 @@ function initCityPickers() {
 let cityObserverQueued = false;
 new MutationObserver(() => { if (cityObserverQueued) return; cityObserverQueued = true; requestAnimationFrame(() => { cityObserverQueued = false; initCityPickers(); }); })
   .observe(document.body, { childList: true, subtree: true });
+/* Dashboard "Poora horoscope dekhein": paste a full https:// address here to open that site in a new tab; leave "" to open the in-app Horoscope page. */
+const HOROSCOPE_URL = "";
 const GAMES_URL = "https://games.1infinity.online/games/auth.html?redirect=index.html";
 const NAV = [
   { group: "Family", items: [
     ["home", "Home", "🏠"], ["tree", "My Tree", "🌳"], ["people", "People", "👨‍👩‍👧"],
-    ["add", "Add Person", "➕"], ["merge", "Merge", "🔀"], ["importGed", "Import GEDCOM", "📥"], ["relationship", "Relationship", "🔗"], ["horoscope", "Horoscope", "🔮"],
+    ["add", "Add Person", "➕"], ["merge", "Merge", "🔀"], ["importGed", "Import GEDCOM", "📥"], ["relationship", "Relationship", "🔗"], ["horoscope", "Horoscope", "img:/assets/horoscope-icon.png"],
     ["treeAdmins", "Tree Admins", "👑"]
   ]},
   { group: "Social", items: [
-    ["wall", "Family Wall", "📝"], ["events", "Events", "📅"], ["chat", "Family Chat", "💬"], ["sharing", "Connections", "🔗🤝"], ["games", "Games", "🎮"]
+    ["wall", "Family Wall", "📝"], ["events", "Events", "📅"], ["chat", "Chat", "💬"], ["sharing", "Connections", "🔗🤝"], ["games", "Games", "🎮"]
   ]},
   { group: "Account", items: [
     ["profile", "My Profile", "👤"], ["support", "Support", "🎧"]
@@ -524,18 +526,19 @@ const NAV = [
 const ADMIN_NAV = { group: "Admin", items: [ ["admin", "Admin & Safety", "🛡️"], ["production", "Production", "🚀"] ] };
 
 function navHTML(page, withLogout = true) {
-  const groups = NAV.map(g => ({ group: g.group, items: g.items.filter(([id]) => id !== "add" || canEditTree()) }));
+  const groups = NAV.map(g => ({ group: g.group, items: g.items.filter(([id]) => (id !== "add" || canEditTree()) && (withLogout || id !== "chat")) }));
   if (isStaff()) groups.push(ADMIN_NAV);
   return groups.map(g => `<div class="navgroup"><div class="navgroup-label">${g.group}</div>${
     g.items.map(([id, label, icon]) => navItem(id, label, icon, page)).join("")
   }</div>`).join("") + (withLogout ? `<button class="nav logout" onclick="logout()"><span class="ic">🚪</span><span>Logout</span></button>` : "");
 }
 function navItem(id, label, icon, page) {
-  return `<button class="nav ${page === id ? "active" : ""}" onclick="go('${id}')"><span class="ic">${icon}</span><span>${label}</span></button>`;
+  const ic = String(icon).startsWith("img:") ? `<img class="nav-img" src="${esc(String(icon).slice(4))}" alt="" width="22" height="22">` : icon;   // "img:/path.png" = picture icon
+  return `<button class="nav ${page === id ? "active" : ""}" onclick="go('${id}')"><span class="ic">${ic}</span><span>${label}</span></button>`;
 }
 /* Phones: the sidebar is hidden, so every page that is not a bottom tab lives in this "More" sheet. */
-const BOTTOM_TABS = ["home", "tree", "people", "wall", "chat"];
-const BOTTOM_LABELS = { tree: "Tree", wall: "Wall", chat: "Chat" };
+const BOTTOM_TABS = ["home", "tree", "people", "wall"];   // Chat lives in the Wall header now (Family Wall | Events | Chat)
+const BOTTOM_LABELS = { tree: "Tree", wall: "Wall" };
 function openMoreMenu() {
   closeMoreMenu();
   const page = (location.hash || "#home").slice(1);
@@ -584,7 +587,7 @@ async function logout() { skipClaimSearch = false; if (supabase) await supabase.
 function topCenterHTML(page) {
   if (page !== "tree" && page !== "wall" && page !== "chat" && page !== "events") return "";
   const search = page === "tree" ? `<div class="top-search-wrap"><input id="treeSearch" class="top-search" placeholder="Search name, nickname or Person ID…" autocomplete="off" oninput="treeSearchInput(this.value)" onfocus="treeSearchInput(this.value)" onkeydown="treeSearchKey(event)"><div id="treeSearchResults" class="search-results" hidden></div></div>` : "";
-  return `<div class="topbar-center"><span class="top-title">${treeViewing ? esc(treeViewing.ownerName) + "'s Family Tree" : "My Family Tree"}</span>${search}${page === "tree" ? treeStyleSwitchHTML() : page === "chat" ? "" : `<div class="view-switch"><button class="${page === "wall" ? "active" : ""}" onclick="go('wall')">Family Wall</button><button class="${page === "events" ? "active" : ""}" onclick="go('events')">📅 Events</button></div>`}</div>`;
+  return `<div class="topbar-center"><span class="top-title">${treeViewing ? esc(treeViewing.ownerName) + "'s Family Tree" : "My Family Tree"}</span>${search}${page === "tree" ? treeStyleSwitchHTML() : `<div class="view-switch"><button class="${page === "wall" ? "active" : ""}" onclick="go('wall')">Family Wall</button><button class="${page === "events" ? "active" : ""}" onclick="go('events')">📅 Events</button><button class="${page === "chat" ? "active" : ""}" onclick="go('chat')">💬 Chat<span class="dm-badge" hidden></span></button></div>`}</div>`;
 }
 function render() {
   if (!loggedIn) { renderLogin(); return; }
@@ -592,6 +595,7 @@ function render() {
   if (treeViewing && page !== "tree" && page !== "profile") exitTreeView(false);
   if (page !== "chat") teardownChat();
   const app = document.getElementById("app");
+  const navPage = (page === "events" || page === "chat") ? "wall" : page;   // Events and Chat are inside the Wall tab
   const flatNav = NAV.flatMap(g => g.items).filter(([id]) => id !== "add" || canEditTree()).concat(isStaff() ? ADMIN_NAV.items : []);
   app.innerHTML = `<div class="shell">
     <header class="topbar">
@@ -608,7 +612,7 @@ function render() {
       <aside class="sidebar">${navHTML(page)}</aside>
       <main class="content${page === "tree" ? " content-wide" : ""}">${joinBannerHTML()}${pageView(page)}</main>
     </div>
-    <nav class="bottomnav">${BOTTOM_TABS.map(id => flatNav.find(x => x[0] === id)).filter(Boolean).map(([id, label, icon]) => navItem(id, BOTTOM_LABELS[id] || label, icon, page)).join("")}<button class="nav ${BOTTOM_TABS.includes(page) ? "" : "active"}" onclick="openMoreMenu()" aria-label="More pages"><span class="ic">☰</span><span>More</span></button></nav>
+    <nav class="bottomnav">${BOTTOM_TABS.map(id => flatNav.find(x => x[0] === id)).filter(Boolean).map(([id, label, icon]) => navItem(id, BOTTOM_LABELS[id] || label, icon, navPage).replace("</button>", id === "wall" ? '<i class="dm-badge dm-dot" hidden></i></button>' : "</button>")).join("")}<button class="nav ${BOTTOM_TABS.includes(navPage) ? "" : "active"}" onclick="openMoreMenu()" aria-label="More pages"><span class="ic">☰</span><span>More</span></button></nav>
   </div>`;
   if (page === "tree") requestAnimationFrame(treeStyle === "chart" ? chartAfterRender : drawTreeConnectors);
   if (page === "wall") requestAnimationFrame(loadWallFeed);
@@ -616,6 +620,7 @@ function render() {
   if (page === "merge") mergeInitSelects();
   if (page === "chat") requestAnimationFrame(initChat);
   if (page === "profile") requestAnimationFrame(() => loadMemories(activeProfileId || me()?.id));
+  refreshDmBadge();
 }
 function switchRole() {}
 
@@ -841,11 +846,15 @@ function horoscopePage() {
     ${tarotCardHTML()}
     ${familyRashiHTML()}`;
 }
+function openHoroscope() {
+  if (/^https:\/\//i.test(HOROSCOPE_URL)) window.open(HOROSCOPE_URL, "_blank", "noopener");
+  else go("horoscope");
+}
 function horoMiniHTML() {
   const m = myself(), r = m ? rashiFromBirth(normalizeDate(m.dob) || m.dob, m.details?.birth_time) : null;
-  return `<div class="card"><h3>🔮 Horoscope</h3>
+  return `<div class="card"><h3 style="display:flex;align-items:center;gap:8px"><img src="/assets/horoscope-icon.png" alt="" width="26" height="26" style="border-radius:6px;object-fit:contain"> Horoscope</h3>
     <p class="muted" style="margin-top:0">${r ? `${horoSymbol(r.sign)} Aapki rashi: <b>${r.hindi} (${r.sign[0].toUpperCase() + r.sign.slice(1)})</b> · ${r.nakshatra}` : "Rashi dekhne ke liye profile mein DOB aur Birth time bharein."}</p>
-    <button type="button" class="primary" onclick="go('horoscope')">Poora horoscope dekhein →</button></div>`;
+    <button type="button" class="primary" onclick="openHoroscope()">Poora horoscope dekhein →</button></div>`;
 }
 
 /* ---------------- home ---------------- */
@@ -3609,124 +3618,199 @@ async function publishPost() {
 }
 function likePost(id) { const p = state.posts.find(x => x.id === id); if (p) { p.likes++; save(); go("wall"); } }
 
-/* ---------------- Family Chat (one group chat per family tree) ---------------- */
-let chatMessages = [];
-let chatChannel = null;
-let chatReady = false;
-let chatLocalOnly = false; // true when the chat_messages table isn't installed yet / no Supabase
-function chatMine(m) { return m.sender_profile_id ? (currentUser && m.sender_profile_id === currentUser.id) : m.local === true; }
+/* ---------------- Chat: 1-to-1 messages (the old common group chat is gone) ----------------
+   Admins/owner are listed with a direct "Chat" button; every other member is found with the search box.
+   A message is visible only to the two people in it (RLS in supabase-direct-chat.sql). Group talk happens on the Family Wall (post + comments). */
+let dmMessages = [];        // all messages I sent/received in this tree, oldest first
+let dmChannel = null;       // Realtime: presence + incoming messages
+let dmLocalOnly = false;    // true when direct_messages isn't installed yet / no Supabase (demo)
+let chatOnline = new Set(); // profile ids currently on the chat page (presence)
+let dmOpenWith = null;      // profile id of the open conversation (null = list)
+let dmSearchQ = "";
+let dmUnread = 0, dmBadgeAt = 0;
+
 function chatTime(iso) {
   const d = new Date(iso); if (Number.isNaN(d.getTime())) return "";
   const today = new Date().toDateString() === d.toDateString();
   const t = d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
   return today ? t : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) + ", " + t;
 }
-function chatBubbleHTML(m, prev) {
-  const mine = chatMine(m);
-  const showName = !mine && (!prev || prev.sender_profile_id !== m.sender_profile_id);
-  const name = m.sender_name || "Family Member";
-  return `<div class="chat-msg ${mine ? "mine" : "theirs"}">
-    ${mine ? "" : `<div class="avatar chat-av" style="${showName ? "" : "visibility:hidden"}">${esc(initials(name))}</div>`}
-    <div class="chat-bubble">${showName ? `<div class="chat-name">${esc(name)}</div>` : ""}<div class="chat-text">${esc(m.body)}</div><div class="chat-time">${esc(chatTime(m.created_at))}</div></div>
-  </div>`;
+const dmKey = p => p.claimed_by || p.id;                       // the account id of a person (demo mode: person id)
+const dmMine = m => m.sender_id ? (!!currentUser && m.sender_id === currentUser.id) : m.local === true;
+const dmIsAdmin = p => p.treeRole === "owner" || p.treeRole === "admin";
+const dmPersonByKey = k => state.people.find(p => dmKey(p) === k);
+function dmPeople() {   // real people (claimed) of THIS tree that I can message
+  return state.people.filter(p => p.status === "claimed" && !p.me && !p.external && !(p.details && p.details.deleted) && (!currentUser || p.claimed_by !== currentUser.id));
 }
-function renderChatMessages(stick = true) {
-  const box = document.getElementById("chatBox"); if (!box) return;
-  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-  box.innerHTML = chatMessages.length
-    ? chatMessages.map((m, i) => chatBubbleHTML(m, chatMessages[i - 1])).join("")
-    : `<div class="empty"><span class="big">💬</span><p class="muted">Abhi koi message nahi. Pehla message bhejiye!</p></div>`;
-  if (stick || nearBottom) box.scrollTop = box.scrollHeight;
+function dmWith(k) { return dmMessages.filter(m => m.local ? m.recipient_id === k : (m.sender_id === k || m.recipient_id === k)); }
+function dmThreads() {  // conversations, newest first
+  const by = new Map();
+  dmMessages.forEach(m => {
+    const other = m.local ? m.recipient_id : (dmMine(m) ? m.recipient_id : m.sender_id);
+    const t = by.get(other) || { key: other, last: m, unread: 0, name: "" };
+    t.last = m;
+    if (!dmMine(m) && !m.read_at) t.unread++;
+    if (!dmMine(m) && m.sender_name) t.name = m.sender_name;
+    by.set(other, t);
+  });
+  return [...by.values()].sort((a, b) => String(b.last.created_at).localeCompare(String(a.last.created_at)));
 }
-function chat() {
-  const members = state.people.filter(p => p.status === "claimed").length;
-  return `<div class="page-head"><h2>💬 Family Chat</h2><p class="muted">Poore parivaar ka ek group chat${members ? ` · ${members} active member${members === 1 ? "" : "s"}` : ""}.</p></div>
-  <div class="chat-layout">
-  <div class="card chat-card">
+function dmRowHTML(p) {
+  const k = dmKey(p), on = chatOnline.has(k);
+  const role = p.treeRole === "owner" ? "Owner" : p.treeRole === "admin" ? "Admin" : "";
+  return `<div class="chat-member dm-row" data-dmkey="${esc(k)}" onclick="dmOpen('${esc(k)}')">
+    <span class="chat-member-av">${avatarHTML(p)}<i class="presence ${on ? "on" : ""}"></i></span>
+    <span class="chat-member-name">${esc(p.name)}<small class="muted">${role ? role + " · " : ""}<span class="dm-status ${on ? "online-txt" : "muted"}">${on ? "Online" : "Offline"}</span></small></span>
+    <button type="button" class="secondary dm-btn" onclick="event.stopPropagation();dmOpen('${esc(k)}')">💬 Chat</button></div>`;
+}
+function dmRecentHTML(t) {
+  const p = dmPersonByKey(t.key), name = p ? p.name : (t.name || "Family Member"), on = chatOnline.has(t.key);
+  const prev = (dmMine(t.last) ? "Aap: " : "") + String(t.last.body).replace(/\s+/g, " ").slice(0, 42);
+  return `<div class="chat-member dm-row" data-dmkey="${esc(t.key)}" onclick="dmOpen('${esc(t.key)}')">
+    <span class="chat-member-av">${p ? avatarHTML(p) : `<div class="avatar">${esc(initials(name))}</div>`}<i class="presence ${on ? "on" : ""}"></i></span>
+    <span class="chat-member-name">${esc(name)}<small class="muted">${esc(prev)}</small></span>
+    <span class="muted" style="font-size:11px;white-space:nowrap">${esc(chatTime(t.last.created_at))}</span>${t.unread ? `<span class="dm-unread">${t.unread}</span>` : ""}</div>`;
+}
+function dmSearchResultsHTML() {
+  const q = dmSearchQ.trim().toLowerCase();
+  if (!q) return `<p class="muted" style="font-size:13px;margin:6px 0 0">Member ka naam likhkar search karo, phir 💬 Chat dabao.</p>`;
+  const hits = dmPeople().filter(p => [p.name, p.nickname, p.personCode].some(v => (v || "").toString().toLowerCase().includes(q))).slice(0, 20);
+  return hits.length ? hits.map(dmRowHTML).join("") : `<p class="muted" style="font-size:13px;margin:6px 0 0">Koi member nahi mila. Sirf wahi log milenge jinhone apna profile claim kiya hai.</p>`;
+}
+function dmListHTML() {
+  const admins = dmPeople().filter(dmIsAdmin).sort((a, b) => (b.treeRole === "owner") - (a.treeRole === "owner") || (a.name || "").localeCompare(b.name || ""));
+  const recent = dmThreads();
+  return `<div class="page-head"><h2>💬 Chat</h2><p class="muted">Kisi ek member se seedha baat karo. Poore parivaar ko kuch batana ho to Family Wall par post karo; sabko feed me dikhega aur baat comments me ho jayegi.</p></div>
+  ${recent.length ? `<div class="card"><h3>Recent chats</h3>${recent.map(dmRecentHTML).join("")}</div>` : ""}
+  ${admins.length ? `<div class="card"><h3>Admins</h3>${admins.map(dmRowHTML).join("")}</div>` : ""}
+  <div class="card"><h3>Members</h3>
+    <div style="display:flex;gap:8px"><input id="dmSearch" type="search" value="${esc(dmSearchQ)}" placeholder="🔍 Member ka naam search karo" autocomplete="off" style="flex:1" oninput="dmSearchInput(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();dmSearchInput(this.value)}"><button type="button" class="secondary" aria-label="Search" onclick="dmSearchInput(document.getElementById('dmSearch').value)">🔍</button></div>
+    <div id="dmSearchResults" style="margin-top:6px">${dmSearchResultsHTML()}</div></div>`;
+}
+function dmThreadHTML() {
+  const p = dmPersonByKey(dmOpenWith), on = chatOnline.has(dmOpenWith);
+  const name = p ? p.name : (dmThreads().find(t => t.key === dmOpenWith)?.name || "Family Member");
+  return `<div class="card chat-card dm-thread">
+    <div class="dm-head" data-dmkey="${esc(dmOpenWith)}"><button type="button" class="ghost" onclick="dmBack()" aria-label="Back to chats">←</button>
+      <span class="chat-member-av">${p ? avatarHTML(p) : `<div class="avatar">${esc(initials(name))}</div>`}<i class="presence ${on ? "on" : ""}"></i></span>
+      <span class="chat-member-name" style="flex:1;${p ? "cursor:pointer" : ""}" ${p ? `onclick="openProfilePopup('${esc(p.id)}')"` : ""}>${esc(name)}<small class="muted"><span class="dm-status ${on ? "online-txt" : "muted"}">${on ? "Online" : "Offline"}</span></small></span></div>
     <div class="chat-room" id="chatBox"><p class="muted" style="text-align:center">Loading…</p></div>
     <div class="chat-compose">
-      <textarea id="chatInput" rows="1" placeholder="Parivaar ko message likhiye…" maxlength="2000" onkeydown="chatKey(event)" oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px'"></textarea>
+      <textarea id="chatInput" rows="1" placeholder="${esc(name)} ko message likhiye…" maxlength="2000" onkeydown="chatKey(event)" oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px'"></textarea>
       <button class="primary" onclick="sendChat()">Send ➤</button>
     </div>
     <div id="chatNote" class="muted" style="font-size:12px;margin-top:6px"></div>
-  </div>
-  <aside class="card chat-members"><h3>Members <span class="chat-online-count" id="chatOnlineCount"></span></h3><div id="chatMembers">${chatMembersHTML()}</div></aside>
   </div>`;
 }
-/* Members panel: ONLY claimed profiles (real people with an account), online ones first. */
-let chatOnline = new Set(); // profile ids currently in the chat (Supabase Realtime presence)
-function chatMembersHTML() {
-  const claimed = state.people.filter(p => p.status === "claimed" && !(p.details && p.details.deleted));
-  const isOn = p => p.me || (p.claimed_by && chatOnline.has(p.claimed_by));
-  const list = claimed.map(p => ({ p, on: !!isOn(p) })).sort((a, b) => (b.on - a.on) || a.p.name.localeCompare(b.p.name));
-  if (!list.length) return `<p class="muted" style="font-size:13px">Abhi koi claimed member nahi hai.</p>`;
-  const row = ({ p, on }) => `<div class="chat-member" onclick="openProfilePopup('${esc(p.id)}')" title="View profile">
-    <span class="chat-member-av">${avatarHTML(p)}<i class="presence ${on ? "on" : ""}"></i></span>
-    <span class="chat-member-name">${esc(p.name)}${p.me ? " <small class='muted'>(you)</small>" : ""}<small class="${on ? "online-txt" : "muted"}">${on ? "Online" : "Offline"}</small></span></div>`;
-  const on = list.filter(x => x.on), off = list.filter(x => !x.on);
-  return (on.length ? `<div class="chat-group-label">Online · ${on.length}</div>${on.map(row).join("")}` : "")
-    + (off.length ? `<div class="chat-group-label">Offline · ${off.length}</div>${off.map(row).join("")}` : "");
+function dmRootHTML() {
+  if (isPendingJoiner()) return `<div class="page-head"><h2>💬 Chat</h2></div><div class="card"><p class="muted">Join request approve hone ke baad aap chat kar paoge.</p></div>`;
+  return dmOpenWith ? dmThreadHTML() : dmListHTML();
 }
-function renderChatMembers() {
-  const box = document.getElementById("chatMembers"); if (!box) return;
-  box.innerHTML = chatMembersHTML();
-  const n = state.people.filter(p => p.status === "claimed" && (p.me || (p.claimed_by && chatOnline.has(p.claimed_by)))).length;
-  const c = document.getElementById("chatOnlineCount"); if (c) c.innerHTML = `<i class="presence on"></i> ${n} online`;
+function chat() { return `<div id="dmRoot">${dmRootHTML()}</div>`; }
+function refreshDmRoot() {
+  const root = document.getElementById("dmRoot"); if (!root) return;
+  root.innerHTML = dmRootHTML();
+  if (dmOpenWith) renderChatMessages(true);
+}
+function dmSetNote(t) { const n = document.getElementById("chatNote"); if (n) n.textContent = t || ""; }
+function dmBubbleHTML(m) {
+  return `<div class="chat-msg ${dmMine(m) ? "mine" : "theirs"}"><div class="chat-bubble"><div class="chat-text">${esc(m.body)}</div><div class="chat-time">${esc(chatTime(m.created_at))}</div></div></div>`;
+}
+function renderChatMessages(stick = true) {
+  const box = document.getElementById("chatBox"); if (!box || !dmOpenWith) return;
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  const list = dmWith(dmOpenWith);
+  box.innerHTML = list.length ? list.map(dmBubbleHTML).join("") : `<div class="empty"><span class="big">💬</span><p class="muted">Abhi koi message nahi. Pehla message bhejiye!</p></div>`;
+  if (stick || nearBottom) box.scrollTop = box.scrollHeight;
+}
+function dmSearchInput(v) {
+  dmSearchQ = v || "";
+  const r = document.getElementById("dmSearchResults"); if (r) r.innerHTML = dmSearchResultsHTML();
+}
+async function dmOpen(k) {
+  if (isPendingJoiner()) { toast("Join request approve hone ke baad aap chat kar paoge"); return; }
+  dmOpenWith = k;
+  refreshDmRoot();
+  requestAnimationFrame(() => document.getElementById("chatInput")?.focus());
+  await dmMarkRead(k);
+}
+function dmBack() { dmOpenWith = null; dmSearchQ = ""; refreshDmRoot(); }
+async function dmMarkRead(k) {
+  let any = false;
+  dmMessages.forEach(m => { if (!m.local && m.sender_id === k && !m.read_at) { m.read_at = new Date().toISOString(); any = true; } });
+  if (!any || !supabase || dmLocalOnly) return;
+  try { await supabase.rpc("mark_dm_read", { p_tree: state.treeId, p_other: k }); } catch (e) {}
+  refreshDmBadge(true);
+}
+function dmPresenceRefresh() {   // update the dots in place so a search box being typed in is never re-rendered
+  document.querySelectorAll("[data-dmkey]").forEach(el => {
+    const on = chatOnline.has(el.dataset.dmkey);
+    el.querySelector(".presence")?.classList.toggle("on", on);
+    const st = el.querySelector(".dm-status"); if (st) { st.textContent = on ? "Online" : "Offline"; st.className = "dm-status " + (on ? "online-txt" : "muted"); }
+  });
+}
+function dmIncoming(m) {
+  if (!m || m.tree_id !== state.treeId || dmMessages.some(x => x.id === m.id)) return;
+  dmMessages.push(m);
+  if (dmOpenWith === m.sender_id) { renderChatMessages(false); dmMarkRead(m.sender_id); return; }
+  const p = dmPersonByKey(m.sender_id);
+  toast(`💬 ${(p && p.name) || m.sender_name || "Family Member"}: ${String(m.body).slice(0, 40)}`);
+  if (!dmOpenWith) { const q = document.getElementById("dmSearch"); if (!q || document.activeElement !== q) refreshDmRoot(); }
 }
 async function initChat() {
-  const note = document.getElementById("chatNote");
-  chatReady = false;
+  chatOnline = new Set();
   if (!supabase || !currentUser || !state.treeId) {
-    chatLocalOnly = true; chatOnline = new Set(); renderChatMessages(); renderChatMembers();
-    if (note) note.textContent = "Demo mode: messages sirf is session mein dikhenge.";
-    return;
+    dmLocalOnly = true; refreshDmRoot(); dmSetNote("Demo mode: messages sirf is session mein dikhenge."); return;
   }
-  const { data, error } = await supabase.from("chat_messages").select("*").eq("tree_id", state.treeId).order("created_at", { ascending: false }).limit(200);
+  if (isPendingJoiner()) return;
+  const { data, error } = await supabase.from("direct_messages").select("*").eq("tree_id", state.treeId).order("created_at", { ascending: false }).limit(500);
   if (error) {
-    chatLocalOnly = true; chatMessages = chatMessages.filter(m => m.local); renderChatMessages(); renderChatMembers();
-    if (note) note.textContent = /chat_messages|relation|schema cache/i.test(error.message) ? "Chat shuru karne ke liye Supabase mein supabase-chat.sql run kijiye." : error.message;
+    dmLocalOnly = true; dmMessages = dmMessages.filter(m => m.local); refreshDmRoot();
+    dmSetNote(/direct_messages|relation|schema cache/i.test(error.message) ? "Chat shuru karne ke liye Supabase mein supabase-direct-chat.sql run kijiye." : error.message);
     return;
   }
-  chatLocalOnly = false;
-  chatMessages = (data || []).reverse();
-  renderChatMessages(true);
-  chatReady = true;
+  dmLocalOnly = false;
+  dmMessages = (data || []).reverse();
+  refreshDmRoot();
+  if (dmOpenWith) dmMarkRead(dmOpenWith);
   teardownChat(true);
-  chatOnline = new Set([currentUser.id]); renderChatMembers();
-  chatChannel = supabase.channel("chat-" + state.treeId, { config: { presence: { key: currentUser.id } } })
-    .on("presence", { event: "sync" }, () => {
-      chatOnline = new Set(Object.keys(chatChannel.presenceState())); renderChatMembers();
-    })
-    .on("postgres_changes", { event: "INSERT", schema: "public", table: "chat_messages", filter: "tree_id=eq." + state.treeId }, payload => {
-      if (chatMessages.some(m => m.id === payload.new.id)) return;
-      chatMessages.push(payload.new); renderChatMessages(chatMine(payload.new));
-    })
-    .on("postgres_changes", { event: "DELETE", schema: "public", table: "chat_messages" }, payload => {
-      chatMessages = chatMessages.filter(m => m.id !== payload.old.id); renderChatMessages(false);
-    })
-    .subscribe(status => { if (status === "SUBSCRIBED") chatChannel.track({ name: state.account.name || "", at: new Date().toISOString() }); });
+  chatOnline = new Set([currentUser.id]); dmPresenceRefresh();
+  dmChannel = supabase.channel("dm-" + state.treeId, { config: { presence: { key: currentUser.id } } })
+    .on("presence", { event: "sync" }, () => { chatOnline = new Set(Object.keys(dmChannel.presenceState())); dmPresenceRefresh(); })
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "direct_messages", filter: "recipient_id=eq." + currentUser.id }, payload => dmIncoming(payload.new))
+    .subscribe(status => { if (status === "SUBSCRIBED") dmChannel.track({ name: state.account.name || "", at: new Date().toISOString() }); });
 }
 function teardownChat(keepMessages) {
-  if (chatChannel && supabase) { try { chatChannel.untrack(); } catch (e) {} supabase.removeChannel(chatChannel); chatChannel = null; }
-  if (!keepMessages) chatOnline = new Set();
-  if (!keepMessages) chatReady = false;
+  if (dmChannel && supabase) { try { dmChannel.untrack(); } catch (e) {} supabase.removeChannel(dmChannel); dmChannel = null; }
+  if (!keepMessages) { chatOnline = new Set(); dmOpenWith = null; dmSearchQ = ""; }
 }
 function chatKey(e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } }
 async function sendChat() {
-  const box = document.getElementById("chatInput"); if (!box) return;
+  const box = document.getElementById("chatInput"); if (!box || !dmOpenWith) return;
   const body = box.value.trim(); if (!body) return;
   if (body.length > 2000) return toast("Message bahut lamba hai (max 2000)");
   const name = state.account.name || "Family Member";
-  if (!chatLocalOnly && supabase && currentUser && state.treeId) {
+  if (!dmLocalOnly && supabase && currentUser && state.treeId) {
     box.disabled = true;
-    const { data, error } = await supabase.from("chat_messages").insert({ tree_id: state.treeId, sender_profile_id: currentUser.id, sender_name: name, body }).select().single();
+    const { data, error } = await supabase.from("direct_messages").insert({ tree_id: state.treeId, sender_id: currentUser.id, recipient_id: dmOpenWith, sender_name: name, body }).select().single();
     box.disabled = false;
     if (error) { toast(error.message); box.focus(); return; }
-    if (!chatMessages.some(m => m.id === data.id)) chatMessages.push(data);
+    if (!dmMessages.some(m => m.id === data.id)) dmMessages.push(data);
   } else {
-    chatMessages.push({ id: crypto.randomUUID(), local: true, sender_name: name, body, created_at: new Date().toISOString() });
+    dmMessages.push({ id: crypto.randomUUID(), local: true, recipient_id: dmOpenWith, sender_name: name, body, created_at: new Date().toISOString() });
   }
   box.value = ""; box.style.height = "auto"; renderChatMessages(true); box.focus();
+}
+/* Unread badge on the Chat button (Wall header) and a dot on the Wall tab. Fetched at most every 20s; it updates when you move between pages. */
+function dmPaintBadge() {
+  document.querySelectorAll(".dm-badge").forEach(el => { if (!el.classList.contains("dm-dot")) el.textContent = dmUnread > 99 ? "99+" : String(dmUnread); el.hidden = !dmUnread; });
+}
+async function refreshDmBadge(force) {
+  dmPaintBadge();
+  if (!supabase || !currentUser || !state.treeId || isPendingJoiner() || dmLocalOnly) return;
+  if (!force && Date.now() - dmBadgeAt < 20000) return;
+  dmBadgeAt = Date.now();
+  try { const r = await supabase.rpc("dm_unread_count", { p_tree: state.treeId }); if (!r.error) { dmUnread = Number(r.data) || 0; dmPaintBadge(); } } catch (e) {}
 }
 
 
@@ -4118,7 +4202,7 @@ async function importGedcomPicked(inputEl) {
    scoped to the module — they are NOT attached to window automatically
    the way classic <script> globals are. */
 Object.assign(window, {
-  setHoroscope, loadHoroscope, setHoroCity, tarotDraw, wallPickMedia, wallRemoveFile, wallViewImage, wallMediaShare, wallMediaDownload, wallSaveMedia,
+  setHoroscope, loadHoroscope, openHoroscope, setHoroCity, tarotDraw, wallPickMedia, wallRemoveFile, wallViewImage, wallMediaShare, wallMediaDownload, wallSaveMedia,
   avatarFallback, sendChat, chatKey,
   openPersonTree, exitTreeView, openBranch, exitBranch,
   openChangeEmail, saveNewEmail,
@@ -4134,6 +4218,7 @@ Object.assign(window, {
   runClaimSearch, requestClaim, cancelClaim, startFreshProfile, approveClaim, rejectClaim,
   openJoinPreview, closeJoinPreview, sendJoinRequest, approveJoin, rejectJoin, cancelJoin, ackJoinRejected,
   openProfileInvite, closeProfileInvite, generateProfileInvite, copyProfileInvite, revokeProfileInvite, acceptProfileInvite, declineProfileInvite,
+  dmOpen, dmBack, dmSearchInput,
   assignTicket, refreshSupport, arRelTypeChanged, cityPicked, cityStateChanged,
   importGedcomPicked, setPeopleSearch, clearPeopleSearch, setPeopleSort, openMoreMenu, closeMoreMenu,
   /* these were used by inline onclick/onchange but never exported, so the Branch/Chart switch, the whole Chart toolbar and the profile Privacy dropdown did nothing */
