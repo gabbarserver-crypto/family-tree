@@ -228,6 +228,18 @@ function addEdge(from, to, type) {
   state.relationships.push(e);
   return e;
 }
+/* "Father: X · Husband: Y" — a short who-is-this line, so people with the same name can be told apart. */
+function kinLine(p) {
+  if (!p) return "";
+  const pars = parentsOf(p.id).map(personById).filter(Boolean);
+  const father = pars.find(x => x.gender === "Male"), mother = pars.find(x => x.gender === "Female");
+  const sps = spousesOf(p.id).map(personById).filter(Boolean).map(x => x.name);
+  const spLabel = p.gender === "Female" ? "Husband" : p.gender === "Male" ? "Wife" : "Spouse";
+  const bits = [];
+  if (father) bits.push("Father: " + father.name); else if (mother) bits.push("Mother: " + mother.name); else if (pars[0]) bits.push("Parent: " + pars[0].name);
+  if (sps.length) bits.push(spLabel + ": " + sps.join(", ")); else if (p.details?.marriage?.spouse) bits.push(spLabel + ": " + p.details.marriage.spouse);
+  return bits.join(" · ");
+}
 function parentsOf(id) { return state.relationships.filter(r => r.type === "parent" && r.to === id).map(r => r.from); }
 function childrenOf(id) { return state.relationships.filter(r => r.type === "parent" && r.from === id).map(r => r.to); }
 function spousesOf(id) { return state.relationships.filter(r => r.type === "spouse" && (r.from === id || r.to === id)).map(r => r.from === id ? r.to : r.from); }
@@ -1391,7 +1403,7 @@ function treeSearchInput(val) {
   box.innerHTML = list.length ? list.map(p => {
     let rel = ""; try { if (meId) rel = deriveRelationship(meId, p.id).label; } catch (e) {}
     const yr = p.dob ? String(p.dob).slice(0, 4) : "";
-    return `<button type="button" class="sr-item" onmousedown="event.preventDefault();treeSearchPick('${esc(p.id)}')">${avatarHTML(p, "sr-av")}<span class="sr-txt"><b>${esc(p.name)}</b><span class="muted">${esc([rel && rel !== "Not connected" ? rel : "", yr, p.personCode || p.id].filter(Boolean).join(" · "))}${p.status === "unclaimed" ? " · Unclaimed" : ""}</span></span></button>`;
+    return `<button type="button" class="sr-item" onmousedown="event.preventDefault();treeSearchPick('${esc(p.id)}')">${avatarHTML(p, "sr-av")}<span class="sr-txt"><b>${esc(p.name)}</b><span class="muted">${esc([rel && rel !== "Not connected" ? rel : "", yr, p.personCode || p.id].filter(Boolean).join(" · "))}${p.status === "unclaimed" ? " · Unclaimed" : ""}${kinLine(p) ? `<br>${esc(kinLine(p))}` : ""}</span></span></button>`;
   }).join("") : `<div class="sr-empty muted">Koi match nahi mila</div>`;
   box.hidden = false;
 }
@@ -2248,8 +2260,8 @@ const PEOPLE_SORTS = {
 };
 function peopleListHTML() {
   const q = peopleQuery.trim().toLowerCase();
-  let rows = state.people.map(p => ({ p, label: p.me ? "Self" : deriveRelationship(me().id, p.id).label }));
-  if (q) rows = rows.filter(({ p, label }) => [p.name, p.id, p.personCode, p.birthPlace, p.currentPlace, label].some(v => (v || "").toString().toLowerCase().includes(q)));
+  let rows = state.people.map(p => ({ p, label: p.me ? "Self" : deriveRelationship(me().id, p.id).label, kin: kinLine(p) }));
+  if (q) rows = rows.filter(({ p, label, kin }) => [p.name, p.id, p.personCode, p.birthPlace, p.currentPlace, label, kin].some(v => (v || "").toString().toLowerCase().includes(q)));
   const byName = (a, b) => (a.p.name || "").localeCompare(b.p.name || "", undefined, { sensitivity: "base" });
   const dob = r => r.p.dob || "";   // ISO strings sort correctly; empty DOB always goes last
   const byDob = dir => (a, b) => (!dob(a) ? 1 : !dob(b) ? -1 : dir * dob(a).localeCompare(dob(b))) || byName(a, b);
@@ -2264,8 +2276,8 @@ function peopleListHTML() {
   rows.sort(sorters[peopleSort] || byName);
   const count = `<p class="muted" style="font-size:12.5px;margin:0 0 8px">${rows.length === state.people.length ? rows.length + " people" : rows.length + " of " + state.people.length + " people"}</p>`;
   if (!rows.length) return count + '<div class="card"><p class="muted">Koi match nahi mila. Kuch aur search karke dekhein.</p></div>';
-  return count + `<div class="list">${rows.map(({ p, label }) => `<div class="row person-row" style="cursor:pointer" onclick="openProfile('${p.id}')">
-    <div class="person-main" style="display:flex;gap:12px;align-items:center">${avatarHTML(p)}<div class="person-txt"><strong>${esc(p.name)}</strong><div class="muted" style="font-size:12.5px">${esc(label)} · ${esc(p.personCode || p.id)}</div></div></div>
+  return count + `<div class="list">${rows.map(({ p, label, kin }) => `<div class="row person-row" style="cursor:pointer" onclick="openProfile('${p.id}')">
+    <div class="person-main" style="display:flex;gap:12px;align-items:center">${avatarHTML(p)}<div class="person-txt"><strong>${esc(p.name)}</strong><div class="muted" style="font-size:12.5px">${esc(label)} · ${esc(p.personCode || p.id)}</div>${kin ? `<div class="person-kin">${esc(kin)}</div>` : ""}</div></div>
     <div class="person-side" style="display:flex;gap:8px;align-items:center">${p.status === "unclaimed" ? '<span class="badge">Unclaimed</span>' : '<span class="badge sage">Claimed</span>'}${canDeletePerson(p) ? `<button type="button" class="danger" style="padding:6px 12px;font-size:12.5px" title="Delete this profile" aria-label="Delete this profile" onclick="event.stopPropagation();deletePerson('${esc(p.id)}')">🗑<span class="person-del-txt"> Delete</span></button>` : ""}</div>
   </div>`).join("")}</div>`;
 }
@@ -2333,6 +2345,7 @@ function profile(id) {
       <button class="ghost full" style="margin-top:10px" onclick="changePhoto('${p.id}')">Change Photo</button></div>
     <div>
       <h1 style="font-family:var(--font-display);font-size:24px;margin-bottom:2px">${esc(p.name)}</h1>
+      ${kinLine(p) ? `<p class="person-kin" style="margin:0 0 4px">${esc(kinLine(p))}</p>` : ""}
       <p class="muted">Person ID: <strong>${esc(p.personCode || p.id)}</strong> · ${p.status === "unclaimed" ? '<span class="badge">Unclaimed</span>' : '<span class="badge sage">Claimed</span>'}</p>
       <hr class="divider">
       <p><strong>About:</strong> ${esc(p.about) || "Family profile information can be shown here."}</p>
@@ -2623,7 +2636,7 @@ function wallRenderTags() {
 function wallRenderTagPicker() {
   const el = document.getElementById("wallTagPicker"); if (!el) return;
   const opts = mergeCandidates().filter(x => x.id !== wallPersonId && !wallTags.includes(x.id)).sort((a, b) => a.name.localeCompare(b.name))
-    .map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("");
+    .map(x => `<option value="${esc(x.id)}">${esc(x.name)}${kinLine(x) ? " — " + esc(kinLine(x)) : ""}</option>`).join("");
   el.innerHTML = `<select onchange="wallAddTag(this.value)"><option value="">Select a person to tag…</option>${opts}</select>`;
 }
 function wallToggleTagPicker() { const el = document.getElementById("wallTagPicker"); if (!el) return; el.hidden = !el.hidden; if (!el.hidden) wallRenderTagPicker(); }
@@ -3004,7 +3017,8 @@ function openProfilePopup(id) {
     <div class="modal-body">
       <div style="display:flex;gap:14px;align-items:center">${avatarHTML(p, "lg " + (p.me ? "gold" : ""))}
         <div><div style="font-family:var(--font-display);font-size:20px;font-weight:700">${esc(p.name)}</div>
-        <div class="muted" style="font-size:12.5px;margin:2px 0 6px">${esc(rel)} · ${esc(p.personCode || p.id)}</div>
+        <div class="muted" style="font-size:12.5px;margin:2px 0 2px">${esc(rel)} · ${esc(p.personCode || p.id)}</div>
+        ${kinLine(p) ? `<div class="person-kin" style="margin:0 0 6px">${esc(kinLine(p))}</div>` : '<div style="margin-bottom:4px"></div>'}
         ${p.status === "unclaimed" ? '<span class="badge">Unclaimed</span>' : '<span class="badge sage">Claimed</span>'}</div></div>
       <div>${filledDetailsHTML(p)}</div>
     </div>
@@ -3532,14 +3546,14 @@ function buildFamilyEvents(days = 365) {
   const gone = p => p.lifeStatus === "deceased" || !!p.details?.dod;
   state.people.forEach(p => {
     const b = evParse(p.dob), dd = evParse(p.details?.dod), mar = evParse(p.details?.marriage?.date);
-    if (b && !gone(p)) { const dt = evNext(b.m, b.d, t0); if (dt) push({ type: "birth", emoji: "🎂", date: dt, ids: [p.id], title: `${p.name} ka Birthday`, detail: `Janm: ${fmtDate(p.dob)}` + (b.y ? ` · ${dt.getFullYear() - b.y} saal ka` : "") }); }
-    if (dd) { const dt = evNext(dd.m, dd.d, t0); if (dt) push({ type: "death", emoji: "🕯", date: dt, ids: [p.id], title: `${p.name} ki Death Anniversary`, detail: `Dehant: ${fmtDate(p.details.dod)}` + (dd.y ? ` · ${dt.getFullYear() - dd.y} saal pehle` : "") }); }
+    if (b && !gone(p)) { const dt = evNext(b.m, b.d, t0); if (dt) push({ type: "birth", emoji: "🎂", date: dt, ids: [p.id], kin: kinLine(p), title: `${p.name} ka Birthday`, detail: `Janm: ${fmtDate(p.dob)}` + (b.y ? ` · ${dt.getFullYear() - b.y} saal ka` : "") }); }
+    if (dd) { const dt = evNext(dd.m, dd.d, t0); if (dt) push({ type: "death", emoji: "🕯", date: dt, ids: [p.id], kin: kinLine(p), title: `${p.name} ki Death Anniversary`, detail: `Dehant: ${fmtDate(p.details.dod)}` + (dd.y ? ` · ${dt.getFullYear() - dd.y} saal pehle` : "") }); }
     if (mar) {
       const sp = spousesOf(p.id).map(personById).filter(Boolean)[0], key = [p.id, sp?.id || ""].sort().join("|") + "|" + p.details.marriage.date;
       if (!seen.has(key)) {
         seen.add(key);
         const spName = sp?.name || p.details.marriage.spouse, dt = evNext(mar.m, mar.d, t0);
-        if (dt) push({ type: "marriage", emoji: "💍", date: dt, ids: [p.id, sp?.id].filter(Boolean), title: `${p.name}${spName ? " & " + spName : ""} ki Marriage Anniversary`, detail: `Shaadi: ${fmtDate(p.details.marriage.date)}` + (mar.y ? ` · ${dt.getFullYear() - mar.y} saal ki shaadi` : "") });
+        if (dt) push({ type: "marriage", emoji: "💍", date: dt, ids: [p.id, sp?.id].filter(Boolean), kin: kinLine(p.gender !== "Female" && sp?.gender === "Female" ? sp : p), title: `${p.name}${spName ? " & " + spName : ""} ki Marriage Anniversary`, detail: `Shaadi: ${fmtDate(p.details.marriage.date)}` + (mar.y ? ` · ${dt.getFullYear() - mar.y} saal ki shaadi` : "") });
       }
     }
   });
@@ -3555,7 +3569,7 @@ function evRowHTML(e) {
   const attr = e.ids.length ? `onclick="openProfilePopup('${esc(e.ids[0])}')"` : "";
   return `<button type="button" class="ev-row ev-${e.type}${e.daysAway === 0 ? " today" : ""}" ${attr}>
     <span class="ev-date"><b>${dt.getDate()}</b><small>${mon}</small></span>
-    <span class="ev-main"><strong>${e.emoji} ${esc(e.title)}</strong><span class="muted">${esc(e.detail)} · ${wd}</span></span>
+    <span class="ev-main"><strong>${e.emoji} ${esc(e.title)}</strong><span class="muted">${esc(e.detail)} · ${wd}</span>${e.kin ? `<span class="person-kin">${esc(e.kin)}</span>` : ""}</span>
     <span class="ev-when">${evWhen(e.daysAway)}</span></button>`;
 }
 function evPreviewHTML() {
