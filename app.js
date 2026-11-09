@@ -2637,7 +2637,7 @@ function profile(id) {
   return `<div class="page-head"><h2>Profile</h2><p class="muted">Person profile &amp; media.</p></div>
   <div class="card profile-head">
     <div>${avatarHTML(p, "lg " + (p.me ? "gold" : ""))}
-      <button class="ghost full" style="margin-top:10px" onclick="changePhoto('${p.id}')">Change Photo</button></div>
+      ${canChangePhoto(p) ? `<button class="ghost full" style="margin-top:10px" onclick="changePhoto('${p.id}')">Change Photo</button>` : ""}</div>
     <div>
       <h1 style="font-family:var(--font-display);font-size:24px;margin-bottom:2px">${esc(p.name)}</h1>
       ${kinLine(p) ? `<p class="person-kin" style="margin:0 0 4px">${esc(kinLine(p))}</p>` : ""}
@@ -2681,6 +2681,8 @@ function canEditPerson(p) {
   // other people's profiles: only while unclaimed, and only by the tree owner/admins or whoever created the profile
   return p.status === "unclaimed" && (canEditTree() || (!!currentUser && p.created_by === currentUser.id));
 }
+/* Profile photo: whoever can edit the profile, plus tree owner/admins for ANY profile (even claimed ones). */
+function canChangePhoto(p) { return !!p && !treeViewing && (canEditPerson(p) || (!state.joined && canEditTree())); }
 /* Profiles you (or the tree owner/admin) created and nobody has claimed yet can be deleted. Never your own profile. */
 function canDeletePerson(p) { return !!p && !p.me && canEditPerson(p); }
 async function deletePerson(id) {
@@ -3450,6 +3452,7 @@ function closePhotoSheet() { document.getElementById("photoSheet")?.remove(); }
 function closePhotoCrop() { document.getElementById("photoCrop")?.remove(); }
 function changePhoto(id) {
   if (!supabase || !currentUser) { toast("Please sign in to upload a photo"); return; }
+  if (!canChangePhoto(personById(id))) { toast("Aap is profile ki photo nahi badal sakte"); return; }
   closePhotoSheet();
   const el = document.createElement("div");
   el.id = "photoSheet"; el.className = "modal-overlay"; el.style.zIndex = 120;
@@ -3537,8 +3540,14 @@ async function uploadAvatarBlob(id, blob) {
     if (upErr) throw upErr;
     const { data: pub } = supabase.storage.from("avatars").getPublicUrl(path);
     const avatar_url = pub.publicUrl;
-    const { error: dbErr } = await supabase.from("persons").update({ avatar_url }).eq("id", id);
-    if (dbErr) throw dbErr;
+    const cur = state.people.find(x => x.id === id);
+    if (cur && canEditPerson(cur)) {
+      const { error: dbErr } = await supabase.from("persons").update({ avatar_url }).eq("id", id);
+      if (dbErr) throw dbErr;
+    } else {   // admin changing someone else's (claimed) photo: goes through the database function
+      const { error: dbErr } = await supabase.rpc("set_person_avatar", { p_person_id: id, p_avatar_url: avatar_url });
+      if (dbErr) throw new Error(/set_person_avatar|function|schema cache/i.test(dbErr.message) ? "Run supabase-person-avatar.sql in Supabase first" : dbErr.message);
+    }
     const p = state.people.find(x => x.id === id);
     if (p) p.avatar_url = avatar_url;
     toast("Photo updated");
