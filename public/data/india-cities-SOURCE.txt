@@ -1,0 +1,4 @@
+india-cities.json  — Indian cities grouped by state/UT (4,242 places).
+Derived from the open "countries-states-cities-database" by dr5hn
+(https://github.com/dr5hn/countries-states-cities-database), obtained through the npm package "country-state-city".
+That database is published under the Open Database License (ODbL 1.0): keep this attribution when you redistribute the file.

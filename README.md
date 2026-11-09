@@ -115,3 +115,22 @@ Run `supabase/supabase-wall-media.sql` once in Supabase (after `supabase-person-
 - Composer has **📎 Photo / Video**: up to 4 files per post; photos are shrunk to 1600px JPEG in the browser, videos (MP4/MOV/WebM) max 40 MB (Supabase free plan allows 50 MB per file, 1 GB storage total).
 - Files are shown through 1-hour signed URLs, so only people who can view that wall can see them.
 - Deleting a post also removes its files when the uploader deletes it; if a wall owner deletes someone else's post the files stay in storage (clean up from the dashboard if needed).
+
+## Support desk (how messages are checked)
+1. Run `supabase/supabase-support.sql` once (RLS policies + auto status trigger).
+2. Make a person staff (SQL editor): `insert into support_staff (profile_id, role, active) select id,'agent',true from profiles where lower(email)=lower('their-login-email');`
+3. That person logs in -> **Support** page becomes the Support Center: queue (tickets waiting for a reply shown first with 🔔), open a ticket to read the whole conversation, Reply / Assign to me / Resolve. The list refreshes every 60s and via the Refresh button.
+4. Users see the staff reply under Support -> My Tickets -> "View reply" and can answer; writing on a resolved ticket re-opens it.
+
+## Games tab + smarter Add Relative
+- Sidebar/“More” has a **🎮 Games** tab and the dashboard has a **Games ↗** button; both open https://games.1infinity.online/games/auth.html?redirect=index.html in a new tab.
+- Add Relative form now shows **Gender** and **Married** fields, pre-filled from the relationship: Wife → Female + Married, Husband → Male + Married, Son → Male, Daughter → Female (changing the relationship dropdown re-applies them). Linking anyone as a spouse also marks the existing card as Married.
+
+## State → City dropdown
+Profile edit and Add Relative now have a State dropdown and a City dropdown that lists the cities of the chosen state
+(`public/data/india-cities.json`, 4,242 places, loaded on demand). Pick **Other (type manually)…** for villages not in the list.
+Existing free-text cities are kept. Data source/licence: `public/data/india-cities-SOURCE.txt` (ODbL — keep the attribution).
+
+## Wall post location (new)
+Run `supabase/supabase-wall-location.sql` once in the Supabase SQL editor (after `supabase-wall-media.sql`), then `npm install` (adds `leaflet`).
+In "New post" tap 📍 Location: type a place name and/or lat/lng, use GPS, search by name, paste a Google Maps link, or tap/drag a pin on the map.

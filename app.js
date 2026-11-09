@@ -437,6 +437,67 @@ function computeGenerations(rootId) {
 }
 
 /* ---------------- nav config ---------------- */
+const INDIAN_STATES = ["Andaman and Nicobar Islands", "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chandigarh", "Chhattisgarh", "Dadra and Nagar Haveli and Daman and Diu", "Delhi", "Goa", "Gujarat", "Haryana", "Himachal Pradesh", "Jammu and Kashmir", "Jharkhand", "Karnataka", "Kerala", "Ladakh", "Lakshadweep", "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Puducherry", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal"];
+/* State dropdown. A saved value that is not in the list (older free-text entry, or another country) stays selectable so nothing is lost. */
+function stateSelectHTML(id, current, cityPrefix) {
+  const cur = String(current || "").trim();
+  const extra = cur && !INDIAN_STATES.some(s => s.toLowerCase() === cur.toLowerCase()) ? [cur] : [];
+  const match = s => cur && s.toLowerCase() === cur.toLowerCase();
+  return `<select id="${id}" ${cityPrefix ? `onchange="cityStateChanged('${cityPrefix}')"` : ""}><option value="">— Select state —</option>${[...INDIAN_STATES, ...extra].map(s => `<option value="${esc(s)}" ${match(s) || (extra.length && s === cur) ? "selected" : ""}>${esc(s)}</option>`).join("")}</select>`;
+}
+/* ---------------- City dropdown that follows the State ----------------
+   Cities come from /data/india-cities.json (loaded once, ~19 KB gzipped). The real value always lives in the text input
+   #<prefix>City (so every existing save/read keeps working); the <select> is just a picker on top of it. Villages / places that are
+   not in the list: choose "Other" and type them. If the file cannot load, the field simply stays a normal text box. */
+let CITY_DATA = null, cityLoading = null;
+function loadCities() {
+  if (CITY_DATA) return Promise.resolve(CITY_DATA);
+  if (!cityLoading) cityLoading = fetch("/data/india-cities.json").then(r => r.ok ? r.json() : null).then(j => (CITY_DATA = j)).catch(() => null);
+  return cityLoading;
+}
+function cityFieldHTML(prefix, current) {
+  return `<select id="${prefix}CitySel" data-city-prefix="${prefix}" onchange="cityPicked('${prefix}')" style="display:none"></select>
+    <input id="${prefix}City" value="${esc(current || "")}" placeholder="Pehle state chunein, ya yahin shehar likhein" style="margin-top:6px">`;
+}
+function syncCityWidget(prefix) {
+  const sel = document.getElementById(prefix + "CitySel"), inp = document.getElementById(prefix + "City"), st = document.getElementById(prefix + "State");
+  if (!sel || !inp) return;
+  const list = CITY_DATA && st && CITY_DATA[st.value];
+  if (!list || !list.length) { sel.style.display = "none"; inp.style.display = ""; inp.placeholder = "Shehar / gaon likhein"; sel.dataset.state = st ? st.value : ""; return; }
+  const cur = inp.value.trim();
+  const inList = list.find(c => c.toLowerCase() === cur.toLowerCase());
+  sel.innerHTML = `<option value="">— Select city —</option>` + list.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("") + `<option value="__other__">Other (type manually)…</option>`;
+  sel.style.display = "";
+  if (inList) { sel.value = inList; inp.value = inList; inp.style.display = "none"; }
+  else if (cur) { sel.value = "__other__"; inp.style.display = ""; inp.placeholder = "Shehar / gaon likhein"; }
+  else { sel.value = ""; inp.style.display = "none"; }
+  sel.dataset.state = st.value;
+}
+function cityPicked(prefix) {
+  const sel = document.getElementById(prefix + "CitySel"), inp = document.getElementById(prefix + "City"); if (!sel || !inp) return;
+  if (sel.value === "__other__") { inp.value = ""; inp.style.display = ""; inp.placeholder = "Shehar / gaon likhein"; inp.focus(); }
+  else { inp.value = sel.value; inp.style.display = "none"; }
+}
+async function cityStateChanged(prefix) {
+  const sel = document.getElementById(prefix + "CitySel"), inp = document.getElementById(prefix + "City"); if (!sel || !inp) return;
+  await loadCities();
+  const prevList = (CITY_DATA && CITY_DATA[sel.dataset.state]) || [];
+  // a city that was PICKED from the old state's list no longer applies; something the user typed is kept
+  if (prevList.some(c => c.toLowerCase() === inp.value.trim().toLowerCase())) inp.value = "";
+  syncCityWidget(prefix);
+}
+/* Fill every city picker that appears on screen (profile edit, add relative…), whichever way it was rendered. */
+function initCityPickers() {
+  document.querySelectorAll("select[data-city-prefix]:not([data-ready])").forEach(sel => {
+    sel.dataset.ready = "1";
+    const p = sel.dataset.cityPrefix;
+    loadCities().then(() => syncCityWidget(p));
+  });
+}
+let cityObserverQueued = false;
+new MutationObserver(() => { if (cityObserverQueued) return; cityObserverQueued = true; requestAnimationFrame(() => { cityObserverQueued = false; initCityPickers(); }); })
+  .observe(document.body, { childList: true, subtree: true });
+const GAMES_URL = "https://games.1infinity.online/games/auth.html?redirect=index.html";
 const NAV = [
   { group: "Family", items: [
     ["home", "Home", "🏠"], ["tree", "My Tree", "🌳"], ["people", "People", "👨‍👩‍👧"],
@@ -444,7 +505,7 @@ const NAV = [
     ["treeAdmins", "Tree Admins", "👑"]
   ]},
   { group: "Social", items: [
-    ["wall", "Family Wall", "📝"], ["chat", "Family Chat", "💬"], ["sharing", "Connections", "🔗🤝"]
+    ["wall", "Family Wall", "📝"], ["chat", "Family Chat", "💬"], ["sharing", "Connections", "🔗🤝"], ["games", "Games", "🎮"]
   ]},
   { group: "Account", items: [
     ["profile", "My Profile", "👤"], ["support", "Support", "🎧"]
@@ -477,7 +538,13 @@ function openMoreMenu() {
 }
 function closeMoreMenu() { const el = document.getElementById("moreSheet"); if (el) el.remove(); }
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeMoreMenu(); });
-function go(id) { location.hash = id; window.scrollTo(0, 0); render(); }
+function go(id) {
+  if (id === "games") { window.open(GAMES_URL, "_blank", "noopener"); return; } // external site: open in a new tab, stay on the dashboard
+  location.hash = id; window.scrollTo(0, 0); render();
+}
+function gamesPage() { // only reached by typing #games in the address bar
+  return `<div class="page-head"><h2>🎮 Games</h2><p class="muted">Games alag site par khulte hain.</p></div><div class="card"><a class="primary" style="display:inline-block;padding:10px 18px;border-radius:12px;text-decoration:none" href="${GAMES_URL}" target="_blank" rel="noopener">🎮 Open Games ↗</a></div>`;
+}
 
 /* ---------------- login ---------------- */
 function renderLogin() {
@@ -544,7 +611,7 @@ function switchRole() {}
 function pageView(p) {
   const map = {
     home, tree, add, addRelative, people, merge, relationship, profile: () => profile(activeProfileId || me().id),
-    wall, chat, sharing, support, admin, production, treeAdmins, importGed, horoscope: horoscopePage
+    wall, chat, sharing, support, admin, production, treeAdmins, importGed, horoscope: horoscopePage, games: gamesPage
   };
   if ((p === "admin" || p === "production") && !isStaff()) return accessDenied();
   if (p === "add" && !canEditTree()) return accessDenied("Tree admin access required", "Only this tree's owner or admins can add relatives. Ask the owner to promote you from the Tree Admins page.");
@@ -785,6 +852,7 @@ function home() {
     <button class="secondary" onclick="go('add')">➕ Add Relative</button>
     <button class="secondary" onclick="go('relationship')">🔗 Find Relationship</button>
     <button class="secondary" onclick="go('wall')">📝 Family Wall</button>
+    <button class="secondary" onclick="go('games')">🎮 Games ↗</button>
   </div></div>
   ${horoMiniHTML()}
   <div class="card"><h3>Upcoming</h3>${upcoming.map(e => `<div class="event-chip"><span class="em">${e.emoji}</span><div><strong>${esc(e.title)}</strong><div class="muted" style="font-size:12.5px">${e.sub}</div></div></div>`).join("")}
@@ -1817,6 +1885,8 @@ function pickAddRelativePhoto() {
 function addRelative() {
   const target = personById(addRelativeTargetId) || me();
   const t = RELATION_TYPES[addRelativeTypeKey] || RELATION_TYPES.son;
+  const isSpouseRel = t.edgeType === "spouse";
+  const gOpt = v => `<option value="${v}" ${t.gender === v ? "selected" : ""}>${v}</option>`;
   return `<div class="page-head"><h2>Add ${esc(t.label)} to ${esc(target.name)}</h2><p class="muted">Fill in what you know — you can always add more later.</p></div>
   <div class="card form">
     <div class="field"><label>Who do you want to add?</label>
@@ -1827,7 +1897,7 @@ function addRelative() {
       </div>
     </div>
     <div class="field"><label>Relationship type</label>
-      <select id="arRelType" onchange="refreshExistingOptions()">${Object.entries(RELATION_TYPES).map(([k, v]) => `<option value="${k}" ${k === addRelativeTypeKey ? "selected" : ""}>${v.label}</option>`).join("")}</select>
+      <select id="arRelType" onchange="arRelTypeChanged()">${Object.entries(RELATION_TYPES).map(([k, v]) => `<option value="${k}" ${k === addRelativeTypeKey ? "selected" : ""}>${v.label}</option>`).join("")}</select>
     </div>
   </div>
   <div id="arNewWrap" style="${addRelativeMode === 'new' ? '' : 'display:none'}">
@@ -1839,6 +1909,8 @@ function addRelative() {
     <div class="field"><label>First Name *</label><input id="arFirst" placeholder="First name"></div>
     <div class="field"><label>Middle Name</label><input id="arMiddle" placeholder="Optional"></div>
     <div class="field"><label>Surname *</label><input id="arSurname" placeholder="Surname" value="${esc((target.name || "").split(" ").slice(-1)[0] || "")}"></div>
+    <div class="field"><label>Gender</label><select id="arGender">${gOpt("Male")}${gOpt("Female")}${gOpt("Other")}</select></div>
+    <div class="field"><label>Married</label><select id="arMarried"><option value="" ${isSpouseRel ? "" : "selected"}>— Select —</option><option value="yes" ${isSpouseRel ? "selected" : ""}>Married</option><option value="no">Unmarried</option></select></div>
     <div class="field"><label>Nickname</label><input id="arNickname" placeholder="Optional"></div>
     <div class="field" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="arShowNick" style="width:auto"><label style="margin:0">Display nickname on tree instead of full name</label></div>
     <div class="field"><label>Email ID</label><input id="arEmail" type="email" placeholder="Optional"></div>
@@ -1852,11 +1924,13 @@ function addRelative() {
     <div class="field"><label>Birth Date</label><input id="arDob" type="date"></div>
     <div class="field"><label>Birth Place</label><input id="arBirthPlace" placeholder="Optional"></div>
     <div class="field"><label>Current Place</label><input id="arCurrentPlace" placeholder="Optional"></div>
+    <div class="field"><label>State</label>${stateSelectHTML("arState", "", "ar")}</div>
+    <div class="field"><label>City</label>${cityFieldHTML("ar", "")}</div>
   </div>
   <div class="card">
-    <details><summary>💍 Marriage Details</summary>
+    <details id="arMarriageBox" ${isSpouseRel ? "open" : ""}><summary>💍 Marriage Details</summary>
       <div class="form" style="margin-top:10px">
-        <div class="field"><label>Spouse name</label><input id="arMarriageSpouse" placeholder="Optional"></div>
+        <div class="field"><label>Spouse name</label><input id="arMarriageSpouse" placeholder="Optional" value="${isSpouseRel ? esc(target.name || "") : ""}"></div>
         <div class="field"><label>Marriage date</label><input id="arMarriageDate" type="date"></div>
       </div>
     </details>
@@ -1931,6 +2005,16 @@ function existingCandidates(targetId, typeKey) {
     if (t.edgeType === "sibling") return !siblingsOf(targetId).includes(p.id) && !desc.has(p.id) && !anc.has(p.id) && !spousesOf(targetId).includes(p.id);
     return !childrenOf(targetId).includes(p.id) && !anc.has(p.id);
   });
+}
+/* Relationship dropdown changed: re-apply the defaults that belong to it (Wife -> Female + Married, Son -> Male, Daughter -> Female ...) */
+function arRelTypeChanged() {
+  refreshExistingOptions();
+  const t = RELATION_TYPES[document.getElementById("arRelType")?.value]; if (!t) return;
+  const target = personById(addRelativeTargetId) || me();
+  const g = document.getElementById("arGender"); if (g) g.value = t.gender;
+  const m = document.getElementById("arMarried"); if (m) m.value = t.edgeType === "spouse" ? "yes" : "";
+  const sp = document.getElementById("arMarriageSpouse"); if (sp) sp.value = t.edgeType === "spouse" ? (target.name || "") : "";
+  const box = document.getElementById("arMarriageBox"); if (box) box.open = t.edgeType === "spouse";
 }
 function refreshExistingOptions() {
   const sel = document.getElementById("arExistingPerson"); if (!sel) return;
@@ -2047,6 +2131,7 @@ function linkRelative(targetId, personId, t) {
   }
   if (t.edgeType === "spouse") {
     const e = addEdge(targetId, personId, "spouse");
+    [targetId, personId].forEach(id => { const p = personById(id); if (p && p.details?.married !== "yes" && (id === personId || canEditPerson(p))) p.details = { ...(p.details || {}), married: "yes" }; });
     // New spouse should also show as parent of the target's existing single-parent children
     childrenOf(targetId).forEach(c => { if (parentsOf(c).length === 1) addEdge(personId, c, "parent"); });
     return e;
@@ -2119,7 +2204,7 @@ async function saveAddRelative() {
   }
 
   state.people.push({
-    id, personCode: "P-" + Math.floor(10000 + Math.random() * 89999), name, gender: t.gender,
+    id, personCode: "P-" + Math.floor(10000 + Math.random() * 89999), name, gender: document.getElementById("arGender")?.value || t.gender,
     status: "unclaimed", created_by: currentUser?.id,
     nickname: document.getElementById("arNickname").value.trim() || undefined,
     showNickname: document.getElementById("arShowNick").checked,
@@ -2130,6 +2215,9 @@ async function saveAddRelative() {
     currentPlace: document.getElementById("arCurrentPlace").value.trim() || undefined,
     lifeStatus, avatar_url,
     details: {
+      married: document.getElementById("arMarried")?.value || "",
+      state: document.getElementById("arState")?.value || "",
+      city: document.getElementById("arCity")?.value.trim() || "",
       marriage: { spouse: document.getElementById("arMarriageSpouse").value.trim(), date: document.getElementById("arMarriageDate").value },
       education: { degree: document.getElementById("arEduDegree").value.trim(), institute: document.getElementById("arEduInstitute").value.trim() },
       work: { company: document.getElementById("arWorkCompany").value.trim(), role: document.getElementById("arWorkRole").value.trim() },
@@ -2438,8 +2526,8 @@ function editProfileFormHTML(p) {
     <div class="field"><label>Date of Death</label><input id="mpDod" type="date" value="${v(d.dod)}"></div>
     <div class="field"><label>Mobile</label><input id="mpMobile" type="tel" value="${v(p.mobile)}" placeholder="+91 98XXXXXXXX"></div>
     <div class="field"><label>Email (Gmail)</label><input id="mpEmail" type="email" value="${v(p.email)}" placeholder="name@gmail.com"></div>
-    <div class="field"><label>State</label><input id="mpState" value="${v(d.state)}" placeholder="State"></div>
-    <div class="field"><label>City</label><input id="mpCity" value="${v(d.city)}" placeholder="City"></div>
+    <div class="field"><label>State</label>${stateSelectHTML("mpState", d.state, "mp")}</div>
+    <div class="field"><label>City</label>${cityFieldHTML("mp", d.city)}</div>
     <div class="field"><label>Married</label>
       <select id="mpMarried"><option value="" ${d.married ? "" : "selected"}>— Select —</option><option value="yes" ${d.married === "yes" ? "selected" : ""}>Married</option><option value="no" ${d.married === "no" ? "selected" : ""}>Unmarried</option></select>
     </div>`;
@@ -2491,14 +2579,16 @@ function filledDetailsHTML(p) {
 /* ---------------- person wall: posts, likes, comments, tags. Used in the person's Wall popup (ctx "m") and in the Wall tab feed (ctx "f") ---------------- */
 let wallPersonId = null, wallTags = [], wallOpenComments = new Set(), wallComposerOnly = false;
 function fmtDateTime(d) { if (!d) return ""; const x = new Date(d); return Number.isNaN(x.getTime()) ? "" : x.toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }); }
-function wallErr(e) { const m = e.message || ""; if (/p_media|wall-media|bucket not found/i.test(m)) return "Run supabase-wall-media.sql in Supabase first"; return /No access/i.test(m) ? m : /list_person_wall|list_wall_feed|toggle_wall_like|add_person_wall_post|list_wall_comments|add_wall_comment|function|schema cache/i.test(m) ? "Run supabase-person-wall.sql in Supabase first" : (m || "Something went wrong"); }
+function wallErr(e) { const m = e.message || ""; if (/p_place_name|place_name|wall-location/i.test(m)) return "Run supabase-wall-location.sql in Supabase first"; if (/p_media|wall-media|bucket not found/i.test(m)) return "Run supabase-wall-media.sql in Supabase first"; return /No access/i.test(m) ? m : /list_person_wall|list_wall_feed|toggle_wall_like|add_person_wall_post|list_wall_comments|add_wall_comment|function|schema cache/i.test(m) ? "Run supabase-person-wall.sql in Supabase first" : (m || "Something went wrong"); }
 function wallComposerHTML(placeholder) {
   return `<div class="wall-compose">
     <textarea id="wallText" rows="3" maxlength="2000" placeholder="${esc(placeholder)}"></textarea>
     <div id="wallTagChips" class="wall-chips"></div>
     <div id="wallTagPicker" hidden></div>
     <div id="wallMediaChips" class="wall-media-chips"></div>
-    <div class="wall-compose-actions"><button type="button" class="ghost" onclick="wallToggleTagPicker()">🏷 Tag</button><button type="button" class="ghost" onclick="wallPickMedia()">📎 Photo / Video</button><button type="button" class="primary" id="wallPostBtn" onclick="wallPost()">Post</button></div>
+    <div id="wallLocChip" class="wall-chips"></div>
+    ${wallLocPanelHTML()}
+    <div class="wall-compose-actions"><button type="button" class="ghost" onclick="wallToggleTagPicker()">🏷 Tag</button><button type="button" class="ghost" onclick="wallPickMedia()">📎 Photo / Video</button><button type="button" class="ghost" onclick="wallToggleLoc()">📍 Location</button><button type="button" class="primary" id="wallPostBtn" onclick="wallPost()">Post</button></div>
   </div>`;
 }
 function openPersonWall(id) {
@@ -2594,10 +2684,146 @@ function wallViewImage(url) {
   el.innerHTML = `<img src="${esc(url)}" alt="" style="max-width:100%;max-height:100%;border-radius:8px">`;
   el.onclick = () => el.remove(); document.body.appendChild(el);
 }
+/* ---- location on posts ----
+   Type a place name / lat+lng by hand, use phone GPS, search a place by name, paste a Google Maps link, or tap on a map.
+   Search + map use OpenStreetMap (free, no API key). Viewers tap the 📍 tag to open it in Google Maps. */
+let wallMap = null, wallMarker = null, wallLocHits = [];
+function wallLocPanelHTML() {
+  wallMap = null; wallMarker = null; wallLocHits = [];
+  return `<div id="wallLocPanel" class="wall-loc" hidden>
+    <input id="wallLocName" maxlength="160" placeholder="Jagah ka naam (e.g. Kuldevi Mandir, Jaipur)" oninput="wallLocRender()">
+    <div class="wall-loc-row"><button type="button" class="ghost" onclick="wallLocGPS()">📡 Meri current location</button><button type="button" class="ghost" onclick="wallLocSearch()">🔍 Naam se dhundho</button></div>
+    <div id="wallLocResults" class="wall-loc-results"></div>
+    <input id="wallLocLink" placeholder="Google Maps link ya coordinates paste karo" onchange="wallLocPaste(this.value)" onpaste="setTimeout(() => wallLocPaste(this.value), 0)">
+    <div class="wall-loc-row"><input id="wallLat" inputmode="decimal" placeholder="Latitude" oninput="wallLocRender()"><input id="wallLng" inputmode="decimal" placeholder="Longitude" oninput="wallLocRender()"></div>
+    <div class="wall-loc-row"><button type="button" class="ghost" onclick="wallLocToggleMap()">🗺 Map pe chunein</button><button type="button" class="ghost" onclick="wallLocClear()">✕ Location hatao</button></div>
+    <div id="wallLocMap" class="wall-loc-map" hidden></div>
+  </div>`;
+}
+const wallMapsUrl = l => (l.lat != null && l.lng != null) ? `https://www.google.com/maps?q=${Number(l.lat)},${Number(l.lng)}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(l.name || "")}`;
+function wallLocTagHTML(m) {
+  if (!m.place_name && m.lat == null) return "";
+  const label = m.place_name || `${Number(m.lat).toFixed(5)}, ${Number(m.lng).toFixed(5)}`;
+  return `<div class="wall-chips"><a class="wall-chip link wall-loc-tag" href="${esc(wallMapsUrl({ name: m.place_name, lat: m.lat, lng: m.lng }))}" target="_blank" rel="noopener">📍 ${esc(label)}</a></div>`;
+}
+function wallToggleLoc() { const el = document.getElementById("wallLocPanel"); if (el) el.hidden = !el.hidden; }
+/* Returns {name, lat, lng} (any may be null), null if nothing entered, or false (after a toast) if the numbers are invalid. */
+function wallLocRead() {
+  const v = id => (document.getElementById(id)?.value || "").trim();
+  const name = v("wallLocName"), la = v("wallLat"), lo = v("wallLng");
+  if (!name && !la && !lo) return null;
+  let lat = null, lng = null;
+  if (la || lo) {
+    lat = Number(la.replace(",", ".")); lng = Number(lo.replace(",", "."));
+    if (!la || !lo || !isFinite(lat) || !isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) { toast("Latitude (-90 se 90) aur Longitude (-180 se 180) dono sahi likho"); return false; }
+  }
+  return { name: name || null, lat, lng };
+}
+function wallLocRender() {
+  const box = document.getElementById("wallLocChip"); if (!box) return;
+  const v = id => (document.getElementById(id)?.value || "").trim();
+  const name = v("wallLocName"), la = v("wallLat"), lo = v("wallLng");
+  const label = name || (la && lo ? `${la}, ${lo}` : "");
+  box.innerHTML = label ? `<span class="wall-chip">📍 ${esc(label)}<button type="button" aria-label="Remove location" onclick="wallLocClear()">✕</button></span>` : "";
+}
+function wallLocClear() {
+  ["wallLocName", "wallLat", "wallLng", "wallLocLink"].forEach(id => { const e = document.getElementById(id); if (e) e.value = ""; });
+  const r = document.getElementById("wallLocResults"); if (r) r.innerHTML = "";
+  if (wallMarker && wallMap) { wallMap.removeLayer(wallMarker); wallMarker = null; }
+  wallLocRender();
+}
+async function wallLocSet(lat, lng, name, opts = {}) {
+  lat = Number(lat); lng = Number(lng);
+  if (!isFinite(lat) || !isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return;
+  document.getElementById("wallLat").value = lat.toFixed(6); document.getElementById("wallLng").value = lng.toFixed(6);
+  const nm = document.getElementById("wallLocName");
+  if (name) nm.value = name;
+  wallLocRender();
+  if (wallMap) wallMapPin(lat, lng, !opts.fromMap);
+  if (!name && !nm.value.trim()) {          // fill the place name automatically (reverse geocode); user can still edit it
+    try {
+      const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=16&lat=${lat}&lon=${lng}`, { headers: { "Accept-Language": "en" } });
+      const j = await r.json();
+      const nmNow = document.getElementById("wallLocName");
+      if (j?.display_name && nmNow && !nmNow.value.trim()) { nmNow.value = j.display_name.split(", ").slice(0, 3).join(", "); wallLocRender(); }
+    } catch (e) { /* offline / blocked: coordinates are enough */ }
+  }
+}
+function wallLocGPS() {
+  if (!navigator.geolocation) { toast("Is browser mein GPS support nahi hai"); return; }
+  toast("Location dhundh rahe hain…");
+  navigator.geolocation.getCurrentPosition(
+    pos => wallLocSet(pos.coords.latitude, pos.coords.longitude),
+    err => toast(err.code === 1 ? "Location permission allow karo (browser/phone settings)" : "Location nahi mili, dobara try karo"),
+    { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
+}
+async function wallLocSearch() {
+  const q = (document.getElementById("wallLocName")?.value || "").trim();
+  const box = document.getElementById("wallLocResults"); if (!box) return;
+  if (q.length < 3) { toast("Pehle jagah ka naam likho (kam se kam 3 akshar)"); return; }
+  box.innerHTML = '<p class="muted">Dhundh rahe hain…</p>';
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&q=${encodeURIComponent(q)}`, { headers: { "Accept-Language": "en" } });
+    wallLocHits = await r.json();
+  } catch (e) { box.innerHTML = '<p class="muted">Search nahi ho paya. Internet check karo ya lat/lng khud daalo.</p>'; return; }
+  box.innerHTML = wallLocHits.length
+    ? wallLocHits.map((h, i) => `<button type="button" class="wall-loc-hit" onclick="wallLocPick(${i})">📍 ${esc(h.display_name)}</button>`).join("")
+    : '<p class="muted">Kuchh nahi mila. Thoda alag likh ke try karo, ya map pe chuno.</p>';
+}
+function wallLocPick(i) {
+  const h = wallLocHits[i]; if (!h) return;
+  wallLocSet(h.lat, h.lon, h.display_name.split(", ").slice(0, 3).join(", "));
+  document.getElementById("wallLocResults").innerHTML = "";
+}
+/* Understands: full Google Maps links (.../@lat,lng,.. | ...!3dLAT!4dLNG | ?q=lat,lng | ?ll=lat,lng) and plain "lat, lng". */
+function wallLocParse(s) {
+  s = decodeURIComponent(String(s || "").trim());
+  const num = "(-?\\d{1,3}(?:\\.\\d+)?)";
+  const pats = [new RegExp("!3d" + num + "!4d" + num), new RegExp("@" + num + ",\\s*" + num), new RegExp("[?&](?:q|ll|query|destination|center)=" + num + ",\\s*" + num), new RegExp("^" + num + "\\s*[,\\s]\\s*" + num + "$")];
+  for (const re of pats) { const m = s.match(re); if (m && Math.abs(m[1]) <= 90 && Math.abs(m[2]) <= 180) return { lat: +m[1], lng: +m[2] }; }
+  return null;
+}
+function wallLocPaste(v) {
+  v = (v || "").trim(); if (!v) return;
+  const c = wallLocParse(v);
+  if (c) { wallLocSet(c.lat, c.lng); toast("Location mil gayi"); return; }
+  if (/maps\.app\.goo\.gl|goo\.gl\/maps/i.test(v)) toast("Ye chhota link hai. Browser mein khol ke poora link copy karo, ya map me pin dabake coordinates copy karo");
+  else toast("Is link se coordinates nahi mile. Poora Google Maps link ya 'lat, lng' paste karo");
+}
+async function wallMapPin(lat, lng, pan) {
+  if (!wallMap) return;
+  const L = wallMap._L;
+  if (wallMarker) wallMarker.setLatLng([lat, lng]);
+  else {
+    wallMarker = L.marker([lat, lng], { draggable: true }).addTo(wallMap);
+    wallMarker.on("dragend", () => { const p = wallMarker.getLatLng(); wallLocSet(p.lat, p.lng, null, { fromMap: true }); });
+  }
+  if (pan) wallMap.setView([lat, lng], Math.max(wallMap.getZoom(), 15));
+}
+async function wallLocToggleMap() {
+  const box = document.getElementById("wallLocMap"); if (!box) return;
+  box.hidden = !box.hidden; if (box.hidden) return;
+  if (wallMap) { setTimeout(() => wallMap.invalidateSize(), 50); return; }
+  box.textContent = "Map load ho raha hai…";
+  try {
+    const [lf, i1, i2, i3] = await Promise.all([import("leaflet"), import("leaflet/dist/images/marker-icon.png"), import("leaflet/dist/images/marker-icon-2x.png"), import("leaflet/dist/images/marker-shadow.png"), import("leaflet/dist/leaflet.css")]);
+    const L = lf.default || lf;
+    L.Icon.Default.mergeOptions({ iconUrl: i1.default, iconRetinaUrl: i2.default, shadowUrl: i3.default });
+    box.textContent = "";
+    const la = parseFloat(document.getElementById("wallLat").value), lo = parseFloat(document.getElementById("wallLng").value), has = isFinite(la) && isFinite(lo);
+    wallMap = L.map(box).setView(has ? [la, lo] : [22.5, 79], has ? 15 : 5);
+    wallMap._L = L;
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(wallMap);
+    wallMap.on("click", e => wallLocSet(e.latlng.lat, e.latlng.lng, null, { fromMap: true }));
+    if (has) wallMapPin(la, lo, false);
+    setTimeout(() => wallMap && wallMap.invalidateSize(), 80);
+  } catch (e) { console.warn("map load failed", e); box.textContent = "Map load nahi hua. Lat/lng khud daal sakte ho."; }
+}
 async function wallPost() {
   const t = document.getElementById("wallText"); const body = (t?.value || "").trim();
   if (!body && !wallFiles.length) { toast("Kuch likho ya photo/video jodo"); return; }
   if (!supabase || !currentUser) { toast("Sign in to post"); return; }
+  const loc = wallLocRead(); if (loc === false) return;
   const btn = document.getElementById("wallPostBtn");
   if (btn) { btn.disabled = true; btn.textContent = wallFiles.length ? "Uploading…" : "Posting…"; }
   const uploaded = [];
@@ -2610,7 +2836,7 @@ async function wallPost() {
       if (upErr) throw upErr;
       uploaded.push({ path, type: isV ? "video" : "image" });
     }
-    const { error } = await supabase.rpc("add_person_wall_post", { p_person_id: wallPersonId, p_body: body, p_tagged: wallTags, p_media: uploaded });
+    const { error } = await supabase.rpc("add_person_wall_post", { p_person_id: wallPersonId, p_body: body, p_tagged: wallTags, p_media: uploaded, p_place_name: loc?.name || null, p_lat: loc?.lat ?? null, p_lng: loc?.lng ?? null });
     if (error) throw error;
   } catch (e) {
     if (uploaded.length) supabase.storage.from("wall-media").remove(uploaded.map(u => u.path)).catch(() => {});   // don't leave orphan files
@@ -2621,7 +2847,7 @@ async function wallPost() {
   toast("Posted");
   wallFiles.forEach(f => f._url && URL.revokeObjectURL(f._url)); wallFiles = [];
   if (wallComposerOnly) closeEditProfile();
-  else { t.value = ""; wallTags = []; wallRenderTags(); wallRenderFiles(); if (btn) { btn.disabled = false; btn.textContent = "Post"; } const pk = document.getElementById("wallTagPicker"); if (pk) pk.hidden = true; loadPersonWall(); }
+  else { t.value = ""; wallTags = []; wallRenderTags(); wallRenderFiles(); wallLocClear(); if (btn) { btn.disabled = false; btn.textContent = "Post"; } const pk = document.getElementById("wallTagPicker"); if (pk) pk.hidden = true; loadPersonWall(); }
   if (document.getElementById("wallFeed")) loadWallFeed(); // Wall tab is open behind the popup: refresh it too
 }
 function wallPostHTML(m, ctx) {
@@ -2635,7 +2861,7 @@ function wallPostHTML(m, ctx) {
   return `<div class="wall-post" id="wp-${k}" data-media="${esc(JSON.stringify(media.map(x => x.path)))}">
     <div class="wall-post-head"><span><b>${esc(m.author_name || "Family member")}</b>${onWall} <span class="muted">· ${esc(fmtDateTime(m.created_at))}</span></span>
       ${m.can_delete ? `<button type="button" class="ghost" title="Delete" onclick="wallDeletePost('${id}','${ctx}')">🗑</button>` : ""}</div>
-    ${m.body ? `<div class="wall-body">${esc(m.body)}</div>` : ""}${mediaHTML}
+    ${m.body ? `<div class="wall-body">${esc(m.body)}</div>` : ""}${mediaHTML}${wallLocTagHTML(m)}
     ${tags ? `<div class="wall-chips">With ${tags}</div>` : ""}
     <div class="wall-actions">
       <button type="button" class="wall-act${m.liked_by_me ? " on" : ""}" id="wl-${k}" onclick="wallLike('${id}','${ctx}')">${m.liked_by_me ? "❤️" : "🤍"} <span>${Number(m.like_count) || 0}</span></button>
@@ -3394,11 +3620,70 @@ async function rejectIncoming(requestId) {
 function acceptConnection(i) { state.connections[i].status = "connected"; save(); go("sharing"); }
 
 /* ---------------- V11 Support: tickets ---------------- */
+/* ---------------- support desk: tickets + their messages ---------------- */
+const TICKET_STATUS = { open: "Open", in_progress: "In Progress", resolved: "Resolved", closed: "Closed" };
+const cap = s => String(s || "").charAt(0).toUpperCase() + String(s || "").slice(1);
+async function loadSupportTickets(user) {
+  state.ticketsError = null;
+  const { data: tickets, error } = await supabase.from("support_tickets").select("*").order("created_at", { ascending: false }).limit(100);
+  if (error) { console.warn("support_tickets", error); state.tickets = []; state.ticketsError = error.message; return; }
+  const ids = (tickets || []).map(t => t.id);
+  let msgs = [];
+  if (ids.length) {
+    const r = await supabase.from("support_messages").select("*").in("ticket_id", ids).order("created_at", { ascending: true });
+    if (r.error) { console.warn("support_messages", r.error); state.ticketsError = r.error.message; } else msgs = r.data || [];
+  }
+  const names = {};
+  try { // staff may not be allowed to read other profiles; then we simply show "User"
+    const reqIds = [...new Set((tickets || []).map(t => t.requester_profile_id))];
+    if (reqIds.length) { const r = await supabase.from("profiles").select("id,display_name,email").in("id", reqIds); (r.data || []).forEach(p => { names[p.id] = p.display_name || p.email; }); }
+  } catch (e) {}
+  state.tickets = (tickets || []).map(t => {
+    const ms = msgs.filter(m => m.ticket_id === t.id).map(m => ({ from: m.sender_profile_id === t.requester_profile_id ? "user" : "staff", text: m.message, at: m.created_at }));
+    if (!ms.length && t.description) ms.push({ from: "user", text: t.description, at: t.created_at });
+    const last = ms[ms.length - 1];
+    return { id: t.ticket_code, uuid: t.id, subject: t.subject, category: t.category, priority: cap(t.priority || "medium"), status: TICKET_STATUS[t.status] || cap(String(t.status).replace("_", " ")),
+      rawStatus: t.status, requester: names[t.requester_profile_id] || "User", assignedToMe: t.assigned_to === user.id, assigned: !!t.assigned_to, created_at: t.created_at,
+      messages: ms, needsReply: !!last && last.from === "user" && !["resolved", "closed"].includes(t.status) };
+  });
+}
+let supportPoll = null;
+function startSupportPoll() { // staff: look for new tickets/messages every 60s while on the Support page
+  if (supportPoll) return;
+  supportPoll = setInterval(async () => {
+    if (!currentUser || !supabase) return;
+    if ((location.hash || "").replace("#", "") !== "support") return;
+    const before = state.tickets.filter(t => t.needsReply).length;
+    await loadSupportTickets(currentUser);
+    const after = state.tickets.filter(t => t.needsReply).length;
+    if (after > before) toast("Naya support message aaya hai");
+    if (!document.activeElement || document.activeElement.id !== "reply") render();
+  }, 60000);
+}
+async function refreshSupport() { await loadSupportTickets(currentUser); toast("Support list refresh ho gayi"); render(); }
+
+function ticketThreadCard(active, staffView) {
+  if (!active) return "";
+  const fmt = d => { try { return new Date(d).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }); } catch (e) { return ""; } };
+  const closed = ["Resolved", "Closed"].includes(active.status);
+  return `<div class="card"><h3 id="ticketTitle">Ticket ${esc(active.id)} — ${esc(active.subject)}</h3>
+  <p class="muted" style="margin:0 0 8px">${staffView ? `<b>${esc(active.requester)}</b> · ` : ""}${esc(active.category)} · ${esc(active.priority)} · <span class="badge plum">${esc(active.status)}</span>${active.assigned ? (active.assignedToMe ? " · assigned to you" : " · assigned") : ""}</p>
+  <div class="chat" id="chat">${active.messages.map(m => `<div class="msg ${m.from}">${esc(m.text)}<br><small class="muted">${m.from === "user" ? (staffView ? esc(active.requester) : "You") : "Support"} · ${esc(fmt(m.at))}</small></div>`).join("")}</div>
+  ${closed && !staffView ? `<p class="muted" style="margin-top:10px">Ye ticket resolved hai. Naya message likhne par wo dobara open ho jayega.</p>` : ""}
+  <textarea id="reply" placeholder="${staffView ? "Write a reply..." : "Apna message likhein..."}" style="margin-top:10px"></textarea>
+  <div class="actions" style="margin-top:8px">
+    <button class="primary" onclick="sendReply()">${staffView ? "Send Reply" : "Send"}</button>
+    ${staffView ? `<button class="secondary" onclick="assignTicket()">Assign to me</button><button class="danger" onclick="resolveTicket()">Resolve</button>` : ""}
+  </div></div>`;
+}
 function support() {
   if (isStaff()) return supportDashboard();
   const mine = state.tickets;
+  const active = mine.find(x => x.id === activeTicketId);
   return `<div class="page-head"><h2>Support</h2><p class="muted">Get help from the FamilyTree support team.</p></div>
-  <div class="card"><h3>My Tickets</h3>${mine.map(t => `<div class="row"><span><b>${t.id}</b> · ${esc(t.category)}<br><small class="muted">${esc(t.subject)}</small></span><span class="badge ${t.priority === "Urgent" ? "terracotta" : t.priority === "High" ? "" : "plum"}">${t.priority}</span></div>`).join("")}</div>
+  ${state.ticketsError ? `<div class="card" style="border-left:4px solid #c0392b"><b>Tickets load nahi hue:</b> ${esc(state.ticketsError)}<br><span class="muted">Admin ko batayein ki supabase-support.sql run karni hai.</span></div>` : ""}
+  <div class="card"><h3>My Tickets</h3>${mine.length ? mine.map(t => `<div class="row"><span><b>${esc(t.id)}</b> · ${esc(t.category)}<br><small class="muted">${esc(t.subject)}</small></span><span class="badge ${t.priority === "Urgent" ? "terracotta" : t.priority === "High" ? "" : "plum"}">${esc(t.status)}</span><button class="secondary" onclick="openTicket('${esc(t.id)}')">${t.messages.some(m => m.from === "staff") ? "💬 View reply" : "View"}</button></div>`).join("") : `<p class="muted">Abhi koi ticket nahi.</p>`}</div>
+  ${ticketThreadCard(active, false)}
   <div class="card"><h3>Create Ticket</h3>
     <div class="field"><label>Subject</label><input id="tSubject" placeholder="Briefly describe the issue"></div>
     <div class="field"><label>Category</label><select id="tCategory"><option>Login / OTP</option><option>Family Tree</option><option>Profile Claim</option><option>Duplicate / Merge</option><option>Reels / Media</option><option>Family Wall</option><option>Account</option><option>Other</option></select></div>
@@ -3418,36 +3703,46 @@ async function createTicket() {
 }
 /* V11 support dashboard (staff view) */
 function supportDashboard() {
-  const t = state.tickets;
-  const counts = { open: t.filter(x => x.status === "Open").length, progress: t.filter(x => x.status === "In Progress").length, urgent: t.filter(x => x.priority === "Urgent").length, resolved: t.filter(x => x.status === "Resolved").length };
+  const t = [...state.tickets].sort((a, b) => Number(b.needsReply) - Number(a.needsReply));
+  const open = x => !["Resolved", "Closed"].includes(x.status);
+  const counts = { reply: t.filter(x => x.needsReply).length, progress: t.filter(x => x.status === "In Progress").length, urgent: t.filter(x => x.priority === "Urgent" && open(x)).length, resolved: t.filter(x => x.status === "Resolved").length };
   const active = t.find(x => x.id === activeTicketId) || t[0];
   activeTicketId = active?.id;
-  return `<div class="page-head"><h2>🎧 Support Center</h2><p class="muted">Support staff are not family members — access is limited to what's needed to resolve each ticket.</p></div>
+  return `<div class="page-head" style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center"><div><h2>🎧 Support Center</h2><p class="muted">Support staff are not family members — access is limited to what's needed to resolve each ticket.</p></div><button class="secondary" onclick="refreshSupport()">🔄 Refresh</button></div>
+  ${state.ticketsError ? `<div class="card" style="border-left:4px solid #c0392b"><b>Tickets load nahi hue:</b> ${esc(state.ticketsError)}<br><span class="muted">Supabase mein supabase-support.sql run karein.</span></div>` : ""}
   <div class="grid g4">
-    <div class="card stat-card"><div class="muted">Open</div><div class="stat">${counts.open}</div></div>
+    <div class="card stat-card"><div class="muted">Waiting for reply</div><div class="stat" style="color:var(--terracotta)">${counts.reply}</div></div>
     <div class="card stat-card"><div class="muted">In Progress</div><div class="stat warn">${counts.progress}</div></div>
-    <div class="card stat-card"><div class="muted">Urgent</div><div class="stat" style="color:var(--terracotta)">${counts.urgent}</div></div>
+    <div class="card stat-card"><div class="muted">Urgent (open)</div><div class="stat" style="color:var(--terracotta)">${counts.urgent}</div></div>
     <div class="card stat-card"><div class="muted">Resolved</div><div class="stat ok">${counts.resolved}</div></div>
   </div>
-  <div class="card"><h3>Support Queue</h3>${t.map(x => `<div class="row"><span><b>${x.id}</b> · ${esc(x.category)}<br><small class="muted">${esc(x.subject)}</small></span><span class="badge ${x.priority === "Urgent" ? "terracotta" : "plum"}">${x.priority}</span><button class="secondary" onclick="openTicket('${x.id}')">Open</button></div>`).join("")}</div>
-  ${active ? `<div class="card"><h3 id="ticketTitle">Ticket ${active.id} — ${esc(active.subject)}</h3>
-  <div class="chat" id="chat">${active.messages.map(m => `<div class="msg ${m.from}">${esc(m.text)}</div>`).join("")}</div>
-  <textarea id="reply" placeholder="Write a reply..." style="margin-top:10px"></textarea>
-  <div class="actions" style="margin-top:8px">
-    <button class="primary" onclick="sendReply()">Send Reply</button>
-    <button class="secondary" onclick="toast('Ticket assigned to Support Staff')">Assign</button>
-    <button class="danger" onclick="resolveTicket()">Resolve</button>
-  </div></div>` : ""}`;
+  <div class="card"><h3>Support Queue</h3>${t.length ? t.map(x => `<div class="row" ${x.id === active?.id ? 'style="background:var(--plum-tint,#f6f0fa)"' : ""}><span>${x.needsReply ? "🔔 " : ""}<b>${esc(x.id)}</b> · ${esc(x.requester)} · ${esc(x.category)}<br><small class="muted">${esc(x.subject)} · ${esc(x.status)}</small></span><span class="badge ${x.priority === "Urgent" ? "terracotta" : "plum"}">${esc(x.priority)}</span><button class="secondary" onclick="openTicket('${esc(x.id)}')">Open</button></div>`).join("") : `<p class="muted">Koi ticket nahi hai.</p>`}</div>
+  ${ticketThreadCard(active, true)}`;
 }
 function openTicket(id) { activeTicketId = id; go("support"); }
+function ticketUuid() { return (state.tickets.find(x => x.id === activeTicketId) || {}).uuid; }
 async function sendReply() {
   const box = document.getElementById("reply"); const val = box.value.trim(); if (!val) return;
-  const t = state.tickets.find(x => x.id === activeTicketId); if(!t) return;
-  if(supabase){ const {data:ticket}=await supabase.from('support_tickets').select('id').eq('ticket_code',activeTicketId).single(); if(ticket){ const {error}=await supabase.from('support_messages').insert({ticket_id:ticket.id,sender_profile_id:currentUser.id,message:val}); if(error) return toast(error.message); await supabase.from('support_tickets').update({status:'in_progress'}).eq('id',ticket.id); await loadProductionState(currentUser); } }
-  else { t.messages.push({ from: "staff", text: val }); t.status = "In Progress"; }
-  go("support");
+  const uuid = ticketUuid(); if (!uuid) return;
+  const { error } = await supabase.from("support_messages").insert({ ticket_id: uuid, sender_profile_id: currentUser.id, message: val });
+  if (error) return toast(error.message);
+  if (isStaff()) await supabase.from("support_ticket_events").insert({ ticket_id: uuid, actor_profile_id: currentUser.id, event_type: "staff_reply", metadata: {} });
+  await loadSupportTickets(currentUser); toast(isStaff() ? "Reply bhej diya" : "Message bhej diya"); go("support");
 }
-async function resolveTicket() { const t = state.tickets.find(x => x.id === activeTicketId); if (!t) return; if(supabase){ const {data:ticket}=await supabase.from('support_tickets').select('id').eq('ticket_code',activeTicketId).single(); if(ticket) await supabase.from('support_tickets').update({status:'resolved',resolved_at:new Date().toISOString()}).eq('id',ticket.id); await loadProductionState(currentUser); } else t.status='Resolved'; toast('Ticket marked resolved'); go('support'); }
+async function assignTicket() {
+  const uuid = ticketUuid(); if (!uuid) return;
+  const { error } = await supabase.from("support_tickets").update({ assigned_to: currentUser.id }).eq("id", uuid);
+  if (error) return toast(error.message);
+  await supabase.from("support_ticket_events").insert({ ticket_id: uuid, actor_profile_id: currentUser.id, event_type: "assigned", metadata: {} });
+  await loadSupportTickets(currentUser); toast("Ticket aapko assign ho gaya"); go("support");
+}
+async function resolveTicket() {
+  const uuid = ticketUuid(); if (!uuid) return;
+  const { error } = await supabase.from("support_tickets").update({ status: "resolved", resolved_at: new Date().toISOString() }).eq("id", uuid);
+  if (error) return toast(error.message);
+  await supabase.from("support_ticket_events").insert({ ticket_id: uuid, actor_profile_id: currentUser.id, event_type: "resolved", metadata: {} });
+  await loadSupportTickets(currentUser); toast("Ticket marked resolved"); go("support");
+}
 
 /* ---------------- V10: admin & safety ---------------- */
 function admin() {
@@ -3475,7 +3770,8 @@ function reviewItem(btn) { btn.textContent = "Reviewed"; btn.disabled = true; }
    separate from state.account.role (system-wide staff/admin). The owner
    (whoever created the tree) is the only one who can promote/demote. */
 function treeAdmins() {
-  const owners = state.people.filter(p => personTreeRole(p) === "owner");
+  const iAmOwner = isTreeOwner();
+  const owners = iAmOwner ? state.people.filter(p => personTreeRole(p) === "owner") : []; // the owner is shown to the owner only, never to admins/members
   const admins = state.people.filter(p => personTreeRole(p) === "admin");
   const members = state.people.filter(p => personTreeRole(p) === "member");
   const rowFor = p => {
@@ -3493,11 +3789,11 @@ function treeAdmins() {
       </span>
     </div>`;
   };
-  return `<div class="page-head"><h2>👑 Tree Admins</h2><p class="muted">People who can add and edit relatives in <b>${esc(me()?.name || "your")}'s</b> family tree. Anyone who claims a profile becomes an admin automatically, and stays admin until another admin removes them. The owner cannot be removed.</p></div>
-  ${!canManageAdmins() ? `<div class="card" style="margin-bottom:14px"><span class="muted">Only tree admins (and the owner, ${esc(owners[0]?.name || "—")}) can add or remove admins. You can view the list below.</span></div>` : ""}
-  <div class="card"><h3>Owner</h3>${owners.length ? owners.map(rowFor).join("") : "<p class='muted'>No owner set.</p>"}</div>
+  return `<div class="page-head"><h2>👑 Tree Admins</h2><p class="muted">People who can add and edit relatives in <b>${esc(me()?.name || "your")}'s</b> family tree. Anyone who claims a profile becomes an admin automatically, and stays admin until another admin removes them.</p></div>
+  ${!canManageAdmins() ? `<div class="card" style="margin-bottom:14px"><span class="muted">Only tree admins can add or remove admins. You can view the list below.</span></div>` : ""}
+  ${iAmOwner ? `<div class="card"><h3>Owner</h3>${owners.length ? owners.map(rowFor).join("") : "<p class='muted'>No owner set.</p>"}</div>` : ""}
   <div class="card"><h3>Admins <span class="muted" style="font-size:12.5px;font-weight:400">— can add &amp; edit relatives in this tree</span></h3>
-    ${admins.length ? admins.map(rowFor).join("") : "<p class='muted'>No admins besides the owner yet. Anyone who claims a profile becomes one, or promote a claimed member below.</p>"}
+    ${admins.length ? admins.map(rowFor).join("") : "<p class='muted'>No admins yet. Anyone who claims a profile becomes one, or promote a claimed member below.</p>"}
   </div>
   <div class="card"><h3>Members</h3>
     ${members.length ? members.map(rowFor).join("") : "<p class='muted'>No other members yet.</p>"}
@@ -3680,9 +3976,10 @@ Object.assign(window, {
   loadMemories, addMemory, deleteMemory,
   runClaimSearch, requestClaim, cancelClaim, startFreshProfile, approveClaim, rejectClaim,
   openJoinPreview, closeJoinPreview, sendJoinRequest, approveJoin, rejectJoin, cancelJoin, ackJoinRejected,
+  assignTicket, refreshSupport, arRelTypeChanged, cityPicked, cityStateChanged,
   importGedcomPicked, setPeopleSearch, clearPeopleSearch, setPeopleSort, openMoreMenu, closeMoreMenu,
   /* these were used by inline onclick/onchange but never exported, so the Branch/Chart switch, the whole Chart toolbar and the profile Privacy dropdown did nothing */
-  openPersonWall, openNewWallPost, wallToggleTagPicker, wallAddTag, wallRemoveTag, wallPost, wallLike, wallToggleComments, wallAddComment, wallDeleteComment, wallDeletePost, setTreeStyle, chartAddMenu, chartBack, chartFit, chartGoFamily, chartOpen, chartSetRoot, chartZoom, chartPanStart, chartWheel, setPrivacy
+  openPersonWall, openNewWallPost, wallToggleTagPicker, wallToggleLoc, wallLocRender, wallLocClear, wallLocGPS, wallLocSearch, wallLocPick, wallLocPaste, wallLocToggleMap, wallAddTag, wallRemoveTag, wallPost, wallLike, wallToggleComments, wallAddComment, wallDeleteComment, wallDeletePost, setTreeStyle, chartAddMenu, chartBack, chartFit, chartGoFamily, chartOpen, chartSetRoot, chartZoom, chartPanStart, chartWheel, setPrivacy
 });
 
 window.addEventListener("hashchange", render);
@@ -3946,7 +4243,8 @@ async function loadJoinedState(user) {
   j.known = new Set(state.people.map(p => p.id));
   j.knownRels = new Set(state.relationships.map(r => r.id));
   state.account.role = "member";
-  state.posts = []; state.events = []; state.tickets = []; state.mergeRequests = []; state.connections = [];
+  state.posts = []; state.events = []; state.mergeRequests = []; state.connections = [];
+  try { await loadSupportTickets(user); } catch (e) { state.tickets = []; }
   state.incomingClaims = []; state.incoming = []; state.incomingJoins = [];
   activeTicketId = null;
   if (!state.people.some(p => p.me) && state.people[0]) state.people[0].me = true; // never leave the UI without a "me" card
@@ -3988,10 +4286,10 @@ async function loadProductionState(user) {
   const { data: events, error: eventErr } = await supabase.from('events').select('*').eq('tree_id', treeId).order('event_date').limit(100); if (eventErr) throw eventErr;
   const { data: merges, error: mergeErr } = await supabase.from('merge_requests').select('*').order('created_at',{ascending:false}).limit(100); if (mergeErr) throw mergeErr;
   const { data: conns, error: connErr } = await supabase.from('connection_requests').select('*').eq('tree_id', treeId).order('created_at',{ascending:false}); if (connErr) throw connErr;
-  const { data: tickets, error: ticketErr } = await supabase.from('support_tickets').select('*').order('created_at',{ascending:false}).limit(100); if (ticketErr) throw ticketErr;
   const staff = await supabase.from('support_staff').select('profile_id').eq('profile_id', user.id).eq('active',true).maybeSingle();
   const admin = await supabase.from('admin_roles').select('role').eq('profile_id', user.id).limit(1).maybeSingle();
   state.account.role = admin.data?.role || (staff.data ? 'support' : 'member');
+  if (state.account.role !== 'member') startSupportPoll();
   const peopleById = Object.fromEntries(people.map(p=>[p.id,p]));
   state.people = people.map(p=>({id:p.id,created_at:p.created_at,personCode:p.person_code,name:p.full_name,gender:p.gender,status:p.status,dob:p.dob,mobile:p.mobile,email:p.email,avatar_url:p.avatar_url,me:p.claimed_by===user.id,claimed_by:p.claimed_by,created_by:p.created_by,privacy:'Family only',nickname:p.nickname,showNickname:p.show_nickname,birthPlace:p.birth_place,currentPlace:p.current_place,lifeStatus:p.life_status,details:p.details||{},treeRole:memberRoleById[p.id]||(p.claimed_by===user.id?'owner':'member'),savedRole:memberRoleById[p.id],external:!!p.__external}));
   state.relationships=relationships;
@@ -4010,7 +4308,8 @@ async function loadProductionState(user) {
   state.events=(events||[]).map(e=>({id:e.id,emoji:'🎉',title:e.title,sub:e.event_date + ' · ' + e.event_type}));
   state.mergeRequests=(merges||[]).map(r=>({id:r.id,a:peopleById[r.source_person_id]?.full_name||r.source_person_id,b:peopleById[r.target_person_id]?.full_name||r.target_person_id,keptId:r.target_person_id,removedId:r.source_person_id,status:r.status==='completed'?'Merged':'Pending'}));
   state.connections=(conns||[]).map(c=>({id:c.id,name:peopleById[c.person_id]?.full_name||'Family member',relation:peopleById[c.person_id]?deriveRelationship(people.find(p=>p.claimed_by===user.id)?.id,c.person_id).label:'Family member',status:c.status==='approved'?'connected':'pending',requestId:c.id}));
-  state.tickets=(tickets||[]).map(t=>({id:t.ticket_code,subject:t.subject,category:t.category,priority:t.priority[0].toUpperCase()+t.priority.slice(1),status:t.status.replace('_',' '),messages:[]}));
+  await loadSupportTickets(user);
+  if (isStaff()) { const w = state.tickets.filter(t => t.needsReply).length; if (w) setTimeout(() => toast(`${w} support ticket(s) reply ka intezaar kar rahe hain`), 1200); }
   activeTicketId=state.tickets[0]?.id||null;
   try { const ic = await supabase.rpc('my_incoming_claims'); state.incomingClaims = ic.error ? [] : (ic.data || []); } catch (e) { state.incomingClaims = []; }
   try { const inc = await supabase.rpc('my_incoming_connections'); state.incoming = inc.error ? [] : (inc.data || []); } catch (e) { state.incoming = []; }
