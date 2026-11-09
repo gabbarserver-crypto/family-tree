@@ -11,7 +11,6 @@ instead of one basic app plus a pile of disconnected standalone HTML demos.
 - **V4** — Duplicate detection & merge request flow with a field-by-field comparison
 - **V5** — Full person profile: photo, about, privacy setting, photo albums
 - **V6** — Family Wall: posts, likes, upcoming family events
-- **V8** — Reels: vertical snap-scroll video feed demo
 - **V9** — Connections & Sharing: share Person ID, invite relatives, accept connections
 - **V10** — Admin & Safety: moderation queue, admin roles, security audit log
 - **V11** — Support Center (staff ticket queue + chat) and user-facing "Create Ticket"
@@ -93,3 +92,13 @@ Run `supabase/supabase-admin-claim.sql` once (after `supabase-join-tree.sql`).
 - **Another email for an already-claimed profile**: can't take it over. They join with a new profile; when an admin approves (with a confirm warning) they become admin.
 - Everything is logged in `tree_admin_log`.
 - Optional backfill (commented in the SQL) makes already-claimed members admins too.
+
+## Changelog (mobile fix pass)
+- Header: `.topbar-center` now uses `flex:1 1 100%` on tablets/phones (it was squeezed to ~75px, clipping search and the Tree/Wall/Chat + Branch/Chart switches).
+- Merge page no longer overflows the screen on phones (long option labels widened the form); bottom nav no longer disappears there.
+- Stat cards in grids align; stacked blocks get consistent spacing.
+- Chat: no extra card padding, chat first and Members below on phones.
+- People list: styled search/sort, stable row layout, icon-only delete on small screens. Native inputs/selects/textareas without a class now get the app look.
+- Bottom nav: Home, Tree, People, Wall, Chat + **More** (opens a sheet with every page, incl. Connections, Support, Merge, Relationship, Tree Admins, Admin).
+- Fixed: `setTreeStyle`, `chart*` and `setPrivacy` handlers were never exported to `window`, so the Branch/Chart switch, the Chart toolbar and the Privacy dropdown did nothing.
+- Packaging: removed unused duplicate `assets/`, root `logo.png`, duplicate root SQL files and the stale `supabase-client-example.js`; added `.gitignore` and `.env.example`.

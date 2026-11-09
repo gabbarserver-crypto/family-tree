@@ -3,7 +3,7 @@ import { importGedcomFile } from "./gedcom.js";
 
 /* ==========================================================================
    FamilyTree — integrated app (V1 core + V3 Tree, V4 Merge, V5 Profiles,
-   V6 Wall/Events, V8 Reels, V9 Sharing, V10 Admin, V11 Support/Production)
+   V6 Wall/Events, V9 Sharing, V10 Admin, V11 Support/Production)
    Vanilla JS SPA, localStorage-backed demo state (swap for Supabase calls
    using supabase-client-example.js + the supabase-*.sql schemas).
    ========================================================================== */
@@ -51,11 +51,6 @@ const seed = {
     { id: 1, author: "Priya Sharma", text: "🎉 Family dinner this Sunday!", likes: 12, comments: 3 },
     { id: 2, author: "Rahul Sharma", text: "📷 Sharing a family memory.", likes: 28, comments: 7 }
   ],
-  reels: [
-    { id: 1, author: "Priya Sharma", initials: "PS", caption: "Family dinner memories ❤️", likes: 12, comments: 3, grad: "linear-gradient(160deg,#3a2f66,#1b1224 60%,#5c3a30)" },
-    { id: 2, author: "Rahul Sharma", initials: "RS", caption: "Wedding celebration 🎉", likes: 28, comments: 7, grad: "linear-gradient(160deg,#5c3660,#1b1224)" },
-    { id: 3, author: "Amit Sharma", initials: "AS", caption: "Family trip memories 🚗", likes: 19, comments: 4, grad: "linear-gradient(160deg,#2c5850,#141a22)" }
-  ],
   tickets: [
     { id: "FT-10280", subject: "OTP not received", category: "Login / OTP", priority: "Urgent", status: "Open",
       messages: [{ from: "user", text: "I'm not getting the OTP on my phone." }] },
@@ -70,12 +65,11 @@ const seed = {
   ],
   audit: [
     { text: "Admin reviewed merge request", time: "2 min ago" },
-    { text: "Moderator hid reported reel", time: "18 min ago" },
     { text: "Admin suspended account", time: "1 hr ago" }
   ]
 };
 
-let state = { account: {}, people: [], relationships: [], connections: [], mergeRequests: [], events: [], posts: [], reels: [], tickets: [], audit: [], treeId: null };
+let state = { account: {}, people: [], relationships: [], connections: [], mergeRequests: [], events: [], posts: [], tickets: [], audit: [], treeId: null };
 let loggedIn = false;
 let currentUser = null;
 let treeScale = 1;
@@ -450,7 +444,7 @@ const NAV = [
     ["treeAdmins", "Tree Admins", "👑"]
   ]},
   { group: "Social", items: [
-    ["wall", "Family Wall", "📝"], ["chat", "Family Chat", "💬"], ["reels", "Reels", "🎬"], ["sharing", "Connections", "🔗🤝"]
+    ["wall", "Family Wall", "📝"], ["chat", "Family Chat", "💬"], ["sharing", "Connections", "🔗🤝"]
   ]},
   { group: "Account", items: [
     ["profile", "My Profile", "👤"], ["support", "Support", "🎧"]
@@ -458,23 +452,38 @@ const NAV = [
 ];
 const ADMIN_NAV = { group: "Admin", items: [ ["admin", "Admin & Safety", "🛡️"], ["production", "Production", "🚀"] ] };
 
-function navHTML(page) {
+function navHTML(page, withLogout = true) {
   const groups = NAV.map(g => ({ group: g.group, items: g.items.filter(([id]) => id !== "add" || canEditTree()) }));
   if (isStaff()) groups.push(ADMIN_NAV);
   return groups.map(g => `<div class="navgroup"><div class="navgroup-label">${g.group}</div>${
     g.items.map(([id, label, icon]) => navItem(id, label, icon, page)).join("")
-  }</div>`).join("") + `<button class="nav logout" onclick="logout()"><span class="ic">🚪</span><span>Logout</span></button>`;
+  }</div>`).join("") + (withLogout ? `<button class="nav logout" onclick="logout()"><span class="ic">🚪</span><span>Logout</span></button>` : "");
 }
 function navItem(id, label, icon, page) {
   return `<button class="nav ${page === id ? "active" : ""}" onclick="go('${id}')"><span class="ic">${icon}</span><span>${label}</span></button>`;
 }
+/* Phones: the sidebar is hidden, so every page that is not a bottom tab lives in this "More" sheet. */
+const BOTTOM_TABS = ["home", "tree", "people", "wall", "chat"];
+const BOTTOM_LABELS = { tree: "Tree", wall: "Wall", chat: "Chat" };
+function openMoreMenu() {
+  closeMoreMenu();
+  const page = (location.hash || "#home").slice(1);
+  const el = document.createElement("div");
+  el.id = "moreSheet"; el.className = "modal-overlay";
+  el.setAttribute("role", "dialog"); el.setAttribute("aria-label", "Menu");
+  el.addEventListener("click", e => { if (e.target === el || (e.target.closest && e.target.closest(".nav, .more-close"))) closeMoreMenu(); });
+  el.innerHTML = `<div class="modal-card more-sheet"><div class="modal-head"><h3>Menu</h3><button type="button" class="iconbtn more-close" aria-label="Close menu">✕</button></div><div class="modal-body more-body">${navHTML(page, false)}</div></div>`;
+  document.body.appendChild(el);
+}
+function closeMoreMenu() { const el = document.getElementById("moreSheet"); if (el) el.remove(); }
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeMoreMenu(); });
 function go(id) { location.hash = id; window.scrollTo(0, 0); render(); }
 
 /* ---------------- login ---------------- */
 function renderLogin() {
   document.getElementById("app").innerHTML = `<main class="login"><section class="login-card">
   <div class="eyebrow">Welcome to</div>
-  <div class="brand"><img src="/assets/logo.png" alt="FamilyTree" style="height:64px;width:64px;object-fit:contain;vertical-align:middle;margin-right:8px"> Family<em>Tree</em></div>
+  <div class="brand"><img src="/assets/logo.png" alt="FamilyTree" style="height:64px;width:64px;object-fit:contain;vertical-align:middle;margin-right:8px"><span>Family<em>Tree</em></span></div>
   <h1>Roots, remembered.</h1>
   <p class="muted">Build your family tree, connect with relatives, and keep memories in one place.</p>
   ${!supabaseConfigured ? `<div class="card" style="margin:14px 0"><strong>Supabase is not configured.</strong><p class="muted">Add VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY in Vercel/local environment variables.</p></div>` : ''}
@@ -491,13 +500,13 @@ async function phoneLogin() {
   const phone = prompt('Enter mobile number with country code, e.g. +9198XXXXXXXX'); if (!phone) return;
   try { await sendPhoneOtp(phone); const otp = prompt('Enter the OTP you received'); if (!otp) return; await verifyPhoneOtp(phone, otp); await bootAuthenticatedApp(); } catch(e) { toast(e.message); }
 }
-async function logout() { skipClaimSearch = false; if (supabase) await supabase.auth.signOut(); loggedIn = false; currentUser = null; state = { account: {}, people: [], relationships: [], connections: [], mergeRequests: [], events: [], posts: [], reels: [], tickets: [], audit: [], treeId: null, joined: null }; location.hash = 'home'; render(); }
+async function logout() { skipClaimSearch = false; if (supabase) await supabase.auth.signOut(); loggedIn = false; currentUser = null; state = { account: {}, people: [], relationships: [], connections: [], mergeRequests: [], events: [], posts: [], tickets: [], audit: [], treeId: null, joined: null }; location.hash = 'home'; render(); }
 
 /* ---------------- shell ---------------- */
 function topCenterHTML(page) {
   if (page !== "tree" && page !== "wall" && page !== "chat") return "";
   const search = page === "tree" ? `<div class="top-search-wrap"><input id="treeSearch" class="top-search" placeholder="Search name, nickname or Person ID…" autocomplete="off" oninput="treeSearchInput(this.value)" onfocus="treeSearchInput(this.value)" onkeydown="treeSearchKey(event)"><div id="treeSearchResults" class="search-results" hidden></div></div>` : "";
-  return `<div class="topbar-center"><span class="top-title">${treeViewing ? esc(treeViewing.ownerName) + "'s Family Tree" : "My Family Tree"}</span>${search}${page === "tree" ? treeStyleSwitchHTML() : ""}<div class="view-switch"><button class="${page === "tree" ? "active" : ""}" onclick="go('tree')">Family Tree</button><button class="${page === "wall" ? "active" : ""}" onclick="go('wall')">Family Wall</button><button class="${page === "chat" ? "active" : ""}" onclick="go('chat')">💬 Chat</button></div></div>`;
+  return `<div class="topbar-center"><span class="top-title">${treeViewing ? esc(treeViewing.ownerName) + "'s Family Tree" : "My Family Tree"}</span>${search}${page === "tree" ? treeStyleSwitchHTML() : `<div class="view-switch"><button class="${page === "tree" ? "active" : ""}" onclick="go('tree')">Family Tree</button><button class="${page === "wall" ? "active" : ""}" onclick="go('wall')">Family Wall</button><button class="${page === "chat" ? "active" : ""}" onclick="go('chat')">💬 Chat</button></div>`}</div>`;
 }
 function render() {
   if (!loggedIn) { renderLogin(); return; }
@@ -508,20 +517,20 @@ function render() {
   const flatNav = NAV.flatMap(g => g.items).filter(([id]) => id !== "add" || canEditTree()).concat(isStaff() ? ADMIN_NAV.items : []);
   app.innerHTML = `<div class="shell">
     <header class="topbar">
-      <div class="brand"><img src="/assets/logo.png" alt="FamilyTree" style="height:32px;width:32px;object-fit:contain;vertical-align:middle;margin-right:6px"> Family<em>Tree</em><small>V11</small></div>
+      <div class="brand"><img src="/assets/logo.png" alt="FamilyTree" style="height:32px;width:32px;object-fit:contain;vertical-align:middle;margin-right:6px"><span>Family<em>Tree</em></span><small>V11</small></div>
       ${topCenterHTML(page)}
       <div class="top-actions">
         
         <span class="muted top-name" style="font-size:13px;cursor:pointer" title="My Profile" onclick="openMyProfile()">${esc(state.account.name)}</span>
         <div style="cursor:pointer" title="My Profile" onclick="openMyProfile()">${myself() ? avatarHTML(myself()) : `<div class="avatar">${esc(initials(state.account.name))}</div>`}</div>
-        <button type="button" class="top-logout" title="Logout" onclick="logout()">🚪 Logout</button>
+        ${page === "home" ? `<button type="button" class="top-logout" title="Logout" onclick="logout()">🚪 Logout</button>` : ""}
       </div>
     </header>
     <div class="layout">
       <aside class="sidebar">${navHTML(page)}</aside>
       <main class="content${page === "tree" ? " content-wide" : ""}">${joinBannerHTML()}${pageView(page)}</main>
     </div>
-    <nav class="bottomnav">${["home", "tree", "people", "wall", "chat", "profile"].map(id => flatNav.find(x => x[0] === id)).filter(Boolean).map(([id, label, icon]) => navItem(id, label, icon, page)).join("")}</nav>
+    <nav class="bottomnav">${BOTTOM_TABS.map(id => flatNav.find(x => x[0] === id)).filter(Boolean).map(([id, label, icon]) => navItem(id, BOTTOM_LABELS[id] || label, icon, page)).join("")}<button class="nav ${BOTTOM_TABS.includes(page) ? "" : "active"}" onclick="openMoreMenu()" aria-label="More pages"><span class="ic">☰</span><span>More</span></button></nav>
   </div>`;
   if (page === "tree") requestAnimationFrame(treeStyle === "chart" ? chartAfterRender : drawTreeConnectors);
   if (page === "merge") mergeInitSelects();
@@ -533,7 +542,7 @@ function switchRole() {}
 function pageView(p) {
   const map = {
     home, tree, add, addRelative, people, merge, relationship, profile: () => profile(activeProfileId || me().id),
-    wall, chat, reels, sharing, support, admin, production, treeAdmins
+    wall, chat, sharing, support, admin, production, treeAdmins
   };
   if ((p === "admin" || p === "production") && !isStaff()) return accessDenied();
   if (p === "add" && !canEditTree()) return accessDenied("Tree admin access required", "Only this tree's owner or admins can add relatives. Ask the owner to promote you from the Tree Admins page.");
@@ -1511,7 +1520,7 @@ window.addEventListener("orientationchange", () => setTimeout(() => { if ((locat
 
 /* ---------------- add person — creates real graph edges ---------------- */
 function add() {
-  const opts = state.people.map(p => `<option value="${p.id}" ${p.id === me().id ? "selected" : ""}>${esc(p.name)} — ${p.id}</option>`).join("");
+  const opts = state.people.map(p => `<option value="${p.id}" ${p.id === me().id ? "selected" : ""}>${esc(p.name)} — ${esc(p.personCode || p.id)}</option>`).join("");
   return `<div class="page-head"><h2>Add Family Member</h2><p class="muted">Connect an existing person by Unique ID, or create a new profile and link it into the family graph with a real relationship edge.</p></div>
   <div class="card form">
     <div class="field"><label>Unique Person ID</label><input id="pid" placeholder="e.g. P-10004"></div>
@@ -1948,9 +1957,9 @@ function peopleListHTML() {
   rows.sort(sorters[peopleSort] || byName);
   const count = `<p class="muted" style="font-size:12.5px;margin:0 0 8px">${rows.length === state.people.length ? rows.length + " people" : rows.length + " of " + state.people.length + " people"}</p>`;
   if (!rows.length) return count + '<div class="card"><p class="muted">Koi match nahi mila. Kuch aur search karke dekhein.</p></div>';
-  return count + `<div class="list">${rows.map(({ p, label }) => `<div class="row" style="cursor:pointer" onclick="openProfile('${p.id}')">
-    <div style="display:flex;gap:12px;align-items:center">${avatarHTML(p)}<div><strong>${esc(p.name)}</strong><div class="muted" style="font-size:12.5px">${esc(label)} · ${p.id}</div></div></div>
-    <div style="display:flex;gap:8px;align-items:center">${p.status === "unclaimed" ? '<span class="badge">Unclaimed</span>' : '<span class="badge sage">Claimed</span>'}${canDeletePerson(p) ? `<button type="button" class="danger" style="padding:6px 12px;font-size:12.5px" title="Delete this profile" onclick="event.stopPropagation();deletePerson('${esc(p.id)}')">🗑 Delete</button>` : ""}</div>
+  return count + `<div class="list">${rows.map(({ p, label }) => `<div class="row person-row" style="cursor:pointer" onclick="openProfile('${p.id}')">
+    <div class="person-main" style="display:flex;gap:12px;align-items:center">${avatarHTML(p)}<div class="person-txt"><strong>${esc(p.name)}</strong><div class="muted" style="font-size:12.5px">${esc(label)} · ${esc(p.personCode || p.id)}</div></div></div>
+    <div class="person-side" style="display:flex;gap:8px;align-items:center">${p.status === "unclaimed" ? '<span class="badge">Unclaimed</span>' : '<span class="badge sage">Claimed</span>'}${canDeletePerson(p) ? `<button type="button" class="danger" style="padding:6px 12px;font-size:12.5px" title="Delete this profile" aria-label="Delete this profile" onclick="event.stopPropagation();deletePerson('${esc(p.id)}')">🗑<span class="person-del-txt"> Delete</span></button>` : ""}</div>
   </div>`).join("")}</div>`;
 }
 function refreshPeopleList() { const el = document.getElementById("peopleList"); if (el) el.innerHTML = peopleListHTML(); }
@@ -2017,7 +2026,7 @@ function profile(id) {
       <button class="ghost full" style="margin-top:10px" onclick="changePhoto('${p.id}')">Change Photo</button></div>
     <div>
       <h1 style="font-family:var(--font-display);font-size:24px;margin-bottom:2px">${esc(p.name)}</h1>
-      <p class="muted">Person ID: <strong>${p.id}</strong> · ${p.status === "unclaimed" ? '<span class="badge">Unclaimed</span>' : '<span class="badge sage">Claimed</span>'}</p>
+      <p class="muted">Person ID: <strong>${esc(p.personCode || p.id)}</strong> · ${p.status === "unclaimed" ? '<span class="badge">Unclaimed</span>' : '<span class="badge sage">Claimed</span>'}</p>
       <hr class="divider">
       <p><strong>About:</strong> ${esc(p.about) || "Family profile information can be shown here."}</p>
       <p><strong>Relation:</strong> ${p.me ? "Self" : deriveRelationship(me().id, p.id).label}${p.gender ? ` · <strong>Gender:</strong> ${esc(p.gender)}` : ""}${p.dob ? ` · <strong>DOB:</strong> ${p.dob}` : ""}${p.mobile ? ` · <strong>Mobile:</strong> ${esc(p.mobile)}` : ""}</p>
@@ -2392,6 +2401,18 @@ function sameNameLoose(a, b) {
   if ([...x].sort().join(" ") === [...y].sort().join(" ")) return true;
   return x.length > 1 && y.length > 1 && x[0] === y[0] && x[x.length - 1] === y[y.length - 1];
 }
+/* Father's name(s) of a person, taken from the relationship graph (parent link where the parent is Male). */
+function fatherNamesOf(id) {
+  return parentsOf(id).map(personById).filter(x => x && x.gender === "Male" && x.name).map(x => x.name);
+}
+/* Duplicate rule: name must match AND father name must match. If either profile has no father recorded yet, the
+   father can't be compared: it stays a suggestion (set STRICT_FATHER_MATCH = true to skip such pairs instead). */
+const STRICT_FATHER_MATCH = false;
+function sameFatherLoose(a, b) {
+  const fa = fatherNamesOf(a.id), fb = fatherNamesOf(b.id);
+  if (!fa.length || !fb.length) return !STRICT_FATHER_MATCH;
+  return fa.some(x => fb.some(y => sameNameLoose(x, y)));
+}
 function mergeCandidates() { return state.people.filter(p => p.status !== "merged" && !(p.details && p.details.deleted)); }
 function personHint(p) {
   const bits = [];
@@ -2413,7 +2434,7 @@ function mergeScore(p) {
   s += state.relationships.filter(r => r.from === p.id || r.to === p.id).length;
   return s;
 }
-/* Group likely duplicates (same / near-same name) using union-find. */
+/* Group likely duplicates (same / near-same name + same father name) using union-find. */
 function findDuplicateGroups() {
   const list = mergeCandidates();
   const parent = {}; list.forEach(p => parent[p.id] = p.id);
@@ -2421,7 +2442,7 @@ function findDuplicateGroups() {
   for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
     const a = list[i], b = list[j];
     if (a.gender && b.gender && a.gender !== b.gender) continue;
-    if (sameNameLoose(a.name, b.name)) parent[find(a.id)] = find(b.id);
+    if (sameNameLoose(a.name, b.name) && sameFatherLoose(a, b)) parent[find(a.id)] = find(b.id);
   }
   const groups = {};
   list.forEach(p => { (groups[find(p.id)] = groups[find(p.id)] || []).push(p); });
@@ -2440,7 +2461,7 @@ function merge() {
   const direct = canMergeDirect();
   const dupCard = groups.length ? `<div class="card">
     <h3>Suggested duplicates (${groups.length})</h3>
-    <p class="muted">Same naam wale profiles mile. Jo merge karne hain unhe tick karo — pehla naam (✓ Keep) rakha jayega, baaki uske andar merge honge.</p>
+    <p class="muted">Same naam aur same father ke naam wale profiles mile. Jo merge karne hain unhe tick karo — pehla naam (✓ Keep) rakha jayega, baaki uske andar merge honge.</p>
     ${groups.map((g, i) => `<div class="row" style="align-items:flex-start">
       <label style="display:flex;gap:10px;align-items:flex-start;flex:1;cursor:pointer">
         <input type="checkbox" class="dupchk" value="${i}" checked style="margin-top:4px">
@@ -2658,8 +2679,6 @@ async function publishPost() {
 }
 function likePost(id) { const p = state.posts.find(x => x.id === id); if (p) { p.likes++; save(); go("wall"); } }
 
-/* ---------------- V8: reels ---------------- */
-
 /* ---------------- Family Chat (one group chat per family tree) ---------------- */
 let chatMessages = [];
 let chatChannel = null;
@@ -2780,20 +2799,6 @@ async function sendChat() {
   box.value = ""; box.style.height = "auto"; renderChatMessages(true); box.focus();
 }
 
-function reels() {
-  return `<div class="page-head"><h2>Reels</h2><p class="muted">Short family videos — family only.</p></div>
-  <button class="primary" style="margin-bottom:12px" onclick="toast('Demo: upload reel → Supabase Storage')">＋ Upload Reel</button>
-  <div class="reels-wrap"><div class="reels-feed">${state.reels.map(r => `
-    <section class="reel" style="background:${r.grad}"><div class="grad"></div>
-      <div class="info"><div class="avatar" style="background:#fff;color:var(--plum)">${r.initials}</div><h2 style="color:#fff;margin-top:8px">${esc(r.author)}</h2><p>${esc(r.caption)}</p><small>${r.likes} likes · ${r.comments} comments</small></div>
-      <div class="actions-side">
-        <button class="action" onclick="likeReel(${r.id},this)">♡</button>
-        <button class="action" onclick="toast('Comments')">💬</button>
-        <button class="action" onclick="toast('Reported')">⋮</button>
-      </div>
-    </section>`).join("")}</div></div>`;
-}
-function likeReel(id, btn) { btn.textContent = btn.textContent.trim() === "♡" ? "♥" : "♡"; const r = state.reels.find(x => x.id === id); if (r) { r.likes += btn.textContent === "♥" ? 1 : -1; save(); } }
 
 /* ---------------- V9: connections & sharing ---------------- */
 function sharing() {
@@ -2906,7 +2911,6 @@ function admin() {
     <div class="card stat-card"><div class="muted">Connections</div><div class="stat">${state.connections.length}</div></div>
   </div>
   <div class="card"><h3>Moderation Queue</h3>
-    <div class="row"><span><b>Reported Reel</b><br><span class="muted" style="font-size:12.5px">Reason: inappropriate content</span></span><button class="secondary" onclick="reviewItem(this)">Review</button></div>
     <div class="row"><span><b>Reported Profile</b><br><span class="muted" style="font-size:12.5px">Reason: duplicate/spam</span></span><button class="secondary" onclick="reviewItem(this)">Review</button></div>
     <div class="row"><span><b>Family Post</b><br><span class="muted" style="font-size:12.5px">Reason: reported by 2 users</span></span><button class="secondary" onclick="reviewItem(this)">Review</button></div>
   </div>
@@ -3016,10 +3020,9 @@ async function redeemTransferCode() {
 /* ---------------- V11: production dashboard ---------------- */
 function production() {
   return `<div class="page-head"><h2>🚀 Production Dashboard</h2><p class="muted">System health and release pipeline.</p></div>
-  <div class="grid g4">
+  <div class="grid g3">
     <div class="card stat-card"><span class="muted">Users</span><div class="stat">1,284</div></div>
     <div class="card stat-card"><span class="muted">Family Trees</span><div class="stat">347</div></div>
-    <div class="card stat-card"><span class="muted">Reels</span><div class="stat">5,821</div></div>
     <div class="card stat-card"><span class="muted">System</span><div class="stat ok">Healthy</div></div>
   </div>
   <div class="card"><h3>Production checks</h3>
@@ -3120,7 +3123,7 @@ Object.assign(window, {
   openChangeEmail, saveNewEmail,
   acceptConnection, addRelative, approveMerge, centerTree, changePhoto, compareMerge, mergeSelectedGroups,
   createPerson, createTicket, findPerson, findRelation, go, googleLogin,
-  invite, likePost, likeReel, logout, openAddRelative, openProfile, openTicket,
+  invite, likePost, logout, openAddRelative, openProfile, openTicket,
   phoneLogin, pickAddRelativePhoto, publishPost, requestMerge, resolveTicket,
   reviewItem, saveAddRelative, sendReply, shareId, toast, treeFocusMe,
   treeReset, treeZoom, treeFit, toggleTreeExpand, treeSearch, treeSearchInput, treeSearchKey, treeSearchPick, setTreeRole,
@@ -3129,7 +3132,9 @@ Object.assign(window, {
   loadMemories, addMemory, deleteMemory,
   runClaimSearch, requestClaim, cancelClaim, startFreshProfile, approveClaim, rejectClaim,
   openJoinPreview, closeJoinPreview, sendJoinRequest, approveJoin, rejectJoin, cancelJoin, ackJoinRejected,
-  importGedcomPicked, setPeopleSearch, clearPeopleSearch, setPeopleSort
+  importGedcomPicked, setPeopleSearch, clearPeopleSearch, setPeopleSort, openMoreMenu, closeMoreMenu,
+  /* these were used by inline onclick/onchange but never exported, so the Branch/Chart switch, the whole Chart toolbar and the profile Privacy dropdown did nothing */
+  setTreeStyle, chartAddMenu, chartBack, chartFit, chartGoFamily, chartOpen, chartSetRoot, chartZoom, chartPanStart, chartWheel, setPrivacy
 });
 
 window.addEventListener("hashchange", render);
@@ -3393,7 +3398,7 @@ async function loadJoinedState(user) {
   j.known = new Set(state.people.map(p => p.id));
   j.knownRels = new Set(state.relationships.map(r => r.id));
   state.account.role = "member";
-  state.posts = []; state.events = []; state.reels = []; state.tickets = []; state.mergeRequests = []; state.connections = [];
+  state.posts = []; state.events = []; state.tickets = []; state.mergeRequests = []; state.connections = [];
   state.incomingClaims = []; state.incoming = []; state.incomingJoins = [];
   activeTicketId = null;
   if (!state.people.some(p => p.me) && state.people[0]) state.people[0].me = true; // never leave the UI without a "me" card
@@ -3435,7 +3440,6 @@ async function loadProductionState(user) {
   const { data: events, error: eventErr } = await supabase.from('events').select('*').eq('tree_id', treeId).order('event_date').limit(100); if (eventErr) throw eventErr;
   const { data: merges, error: mergeErr } = await supabase.from('merge_requests').select('*').order('created_at',{ascending:false}).limit(100); if (mergeErr) throw mergeErr;
   const { data: conns, error: connErr } = await supabase.from('connection_requests').select('*').eq('tree_id', treeId).order('created_at',{ascending:false}); if (connErr) throw connErr;
-  const { data: reels, error: reelErr } = await supabase.from('reels').select('*').eq('tree_id', treeId).eq('status','active').order('created_at',{ascending:false}).limit(50); if (reelErr) throw reelErr;
   const { data: tickets, error: ticketErr } = await supabase.from('support_tickets').select('*').order('created_at',{ascending:false}).limit(100); if (ticketErr) throw ticketErr;
   const staff = await supabase.from('support_staff').select('profile_id').eq('profile_id', user.id).eq('active',true).maybeSingle();
   const admin = await supabase.from('admin_roles').select('role').eq('profile_id', user.id).limit(1).maybeSingle();
@@ -3458,7 +3462,6 @@ async function loadProductionState(user) {
   state.events=(events||[]).map(e=>({id:e.id,emoji:'🎉',title:e.title,sub:e.event_date + ' · ' + e.event_type}));
   state.mergeRequests=(merges||[]).map(r=>({id:r.id,a:peopleById[r.source_person_id]?.full_name||r.source_person_id,b:peopleById[r.target_person_id]?.full_name||r.target_person_id,keptId:r.target_person_id,removedId:r.source_person_id,status:r.status==='completed'?'Merged':'Pending'}));
   state.connections=(conns||[]).map(c=>({id:c.id,name:peopleById[c.person_id]?.full_name||'Family member',relation:peopleById[c.person_id]?deriveRelationship(people.find(p=>p.claimed_by===user.id)?.id,c.person_id).label:'Family member',status:c.status==='approved'?'connected':'pending',requestId:c.id}));
-  state.reels=(reels||[]).map(r=>({id:r.id,author:'Family Member',initials:'FM',caption:r.caption||'',likes:0,comments:0,grad:'linear-gradient(160deg,#3a2f66,#1b1224 60%,#5c3a30)'}));
   state.tickets=(tickets||[]).map(t=>({id:t.ticket_code,subject:t.subject,category:t.category,priority:t.priority[0].toUpperCase()+t.priority.slice(1),status:t.status.replace('_',' '),messages:[]}));
   activeTicketId=state.tickets[0]?.id||null;
   try { const ic = await supabase.rpc('my_incoming_claims'); state.incomingClaims = ic.error ? [] : (ic.data || []); } catch (e) { state.incomingClaims = []; }

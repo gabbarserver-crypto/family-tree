@@ -99,6 +99,7 @@ a{color:var(--plum)}
 /* ---------- grid / cards ---------- */
 .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
 .grid.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.grid.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
 .grid.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
 .card{
   background:var(--paper-raised);border:1px solid var(--line);border-radius:var(--radius-m);
@@ -239,17 +240,6 @@ button:disabled{opacity:.55;cursor:default}
 .post:last-child{border-bottom:0}
 .post-head{display:flex;gap:10px;align-items:center;margin-bottom:8px}
 
-/* ---------- reels ---------- */
-.reels-wrap{background:#1b1224;border-radius:var(--radius-l);overflow:hidden}
-.reels-feed{height:min(72vh,640px);height:min(72dvh,640px);overflow-y:auto;scroll-snap-type:y mandatory}
-.reel{
-  height:100%;scroll-snap-align:start;display:flex;align-items:flex-end;padding:26px;position:relative;color:#fff;
-}
-.reel .grad{position:absolute;inset:0;background:linear-gradient(0deg,rgba(0,0,0,.55),transparent 55%)}
-.reel .info{position:relative;max-width:72%}
-.reel .actions-side{position:absolute;right:18px;bottom:26px;display:grid;gap:12px}
-.reel .action{width:46px;height:46px;border-radius:50%;border:0;background:rgba(255,255,255,.16);color:#fff;font-size:19px;backdrop-filter:blur(4px)}
-.reel small{opacity:.8}
 
 /* ---------- support chat ---------- */
 .chat{height:230px;overflow:auto;background:var(--paper);padding:12px;border-radius:var(--radius-m);border:1px solid var(--line)}
@@ -320,6 +310,33 @@ html,body{touch-action:pan-x pan-y}
 /* Logout in the header on phones (the sidebar that holds it is hidden below 760px) */
 .top-logout{display:none;align-items:center;gap:4px;border:1px solid var(--line);background:var(--paper);border-radius:999px;padding:6px 12px;font-size:12px;font-weight:700;color:var(--plum);white-space:nowrap}
 
+/* ---------- layout fixes ---------- */
+/* stacked-card spacing: cards inside a grid never get the offset (it made 2-up stat cards uneven),
+   and a card/grid that follows another block always gets a gap */
+.grid>.card{margin-top:0}
+.content>:not(.page-head)+.card,.content>:not(.page-head)+.grid{margin-top:14px}
+/* native controls that have no class of their own (people search, wall composer...) get the app look;
+   :where() keeps this at zero specificity so every specific rule above still wins */
+:where(input:not([type=checkbox],[type=radio],[type=range],[type=file],[type=color],[type=hidden]),select,textarea){
+  border:1px solid var(--line);border-radius:var(--radius-s);background:var(--paper);padding:10px 12px;max-width:100%}
+input[type=search]{-webkit-appearance:none;appearance:none}
+.card>textarea{display:block;width:100%;min-height:90px;resize:vertical}
+/* a long <option> label must never widen the form / page (Merge page was 1000px+ wide on phones) */
+.form,.field{min-width:0;grid-template-columns:minmax(0,1fr)}
+.field select,.field input,.field textarea{width:100%;min-width:0;max-width:100%;text-overflow:ellipsis}
+.card:not(.form)>.field{margin-bottom:12px}
+.card.chat-card{padding:0}
+/* people list rows */
+.person-row{flex-wrap:nowrap}
+.person-main{flex:1;min-width:0}
+.person-txt{min-width:0}
+.person-txt strong{overflow-wrap:anywhere}
+.person-side{flex:none}
+.person-row .avatar{width:44px;height:44px;font-size:14px}
+/* "More" menu sheet (phones) */
+.more-body .navgroup{margin-bottom:6px}
+.more-body .nav .ic{width:auto;min-width:28px}
+
 /* ==========================================================================
    RESPONSIVE — one consolidated block (desktop → tablet → phone)
    Must stay LAST so it wins over the base rules above.
@@ -330,13 +347,14 @@ html,body{touch-action:pan-x pan-y}
   .content{padding:22px 20px 100px}
 }
 @media(max-width:900px){
-  .grid,.grid.g4{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .grid,.grid.g4,.grid.g3{grid-template-columns:repeat(2,minmax(0,1fr))}
   .topbar{height:auto;flex-wrap:wrap;padding:8px 12px;gap:8px}
-  .topbar-center{order:3;width:100%;margin:0;flex-wrap:wrap;gap:10px}
+  .topbar-center{order:3;flex:1 1 100%;width:100%;margin:0;flex-wrap:wrap;gap:10px}  /* flex-basis, not just width: base .topbar-center{flex:1} had squeezed it to ~75px beside the logo */
   .top-title{display:none}
   .top-search{min-width:0;max-width:none}
+  .style-switch{margin-left:0}
   .chat-layout{grid-template-columns:1fr}
-  .chat-members{max-height:240px;order:-1}
+  .chat-members{max-height:220px;order:1}
 }
 
 /* ---- phone ---- */
@@ -385,7 +403,7 @@ html,body{touch-action:pan-x pan-y}
 
   /* cards, grids, forms */
   .card{padding:14px;border-radius:14px}
-  .grid,.grid.g4{grid-template-columns:1fr 1fr;gap:10px}
+  .grid,.grid.g4,.grid.g3{grid-template-columns:1fr 1fr;gap:10px}
   .grid.g2{grid-template-columns:1fr}
   .stat{font-size:26px}
   .row{flex-wrap:wrap}
@@ -426,12 +444,12 @@ html,body{touch-action:pan-x pan-y}
   /* toast sits above the bottom bar */
   .toast{bottom:calc(var(--bottom-nav-h) + 20px + env(safe-area-inset-bottom))}
 
-  /* chat + reels use the real visible height (dvh) */
+  /* chat uses the real visible height (dvh) */
   .chat-room{height:calc(100vh - 330px);height:calc(100dvh - 330px);min-height:260px}
   .chat-bubble{max-width:86%}
   .chat-compose{padding:10px}
-  .reels-feed{height:calc(100vh - 230px);height:calc(100dvh - 230px);min-height:420px}
-  .reel{padding:18px}
+  /* people list: sort goes on its own row */
+  #peopleSort{flex:1 1 100%}
 }
 @keyframes sheetin{from{transform:translateY(24px);opacity:.6}to{transform:none;opacity:1}}
 
@@ -441,6 +459,9 @@ html,body{touch-action:pan-x pan-y}
   .grid:not(.g4){grid-template-columns:1fr}
   .login-card h1{font-size:24px}
   .view-switch button{padding:8px 11px;font-size:12.5px}
+  /* people list: icon-only delete so name + badge keep their room */
+  .person-del-txt{display:none}
+  .person-side .danger{padding:0 !important;width:44px;min-width:44px}
 }
 
 /* ---- touch devices: comfortable tap targets ---- */
