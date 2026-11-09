@@ -702,3 +702,12 @@ input[type=search]{-webkit-appearance:none;appearance:none}
 .dq-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px}
 .dq-head h3{margin:0}
 .dq-img{display:block;width:100%;max-width:420px;aspect-ratio:1/1;border-radius:14px;margin:0 auto;box-shadow:0 6px 18px rgba(0,0,0,.18);background:var(--paper-raised)}
+
+/* Notifications */
+.notif-btn{position:relative;font-size:19px;line-height:1;padding:6px 8px;background:transparent;border:0;cursor:pointer}
+.notif-badge{position:absolute;top:-2px;right:-3px;min-width:17px;height:17px;padding:0 4px;box-sizing:border-box;border-radius:999px;background:#d93025;color:#fff;font-size:10.5px;font-weight:800;line-height:17px;text-align:center}
+.notif-badge[hidden]{display:none}
+.notif-sheet{max-width:460px;width:100%}
+.notif-item{padding:12px;border:1px solid var(--line);border-radius:12px;margin-bottom:10px;background:var(--paper)}
+.notif-item.new{border-color:var(--gold);background:var(--gold-tint,#fbf0d8)}
+.notif-t{font-size:14.5px;margin-bottom:3px}

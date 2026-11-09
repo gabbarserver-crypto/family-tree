@@ -611,6 +611,92 @@ async function phoneLogin() {
 }
 async function logout() { skipClaimSearch = false; if (supabase) await supabase.auth.signOut(); loggedIn = false; currentUser = null; state = { account: {}, people: [], relationships: [], connections: [], mergeRequests: [], events: [], posts: [], tickets: [], audit: [], treeId: null, joined: null }; location.hash = 'home'; render(); }
 
+/* ---------------- Notifications (🔔 in the header) ----------------
+   Counts everything that waits for me: people asking to join the tree, profile-claim requests, "add you to my tree" requests,
+   and "you are now a tree admin". Admin notices stay "new" until the bell is opened. */
+let notifTimer = null, notifLastCount = null;
+const notifSeenKey = () => "ft_notif_seen:" + (currentUser?.id || "x");
+function notifSeenAt() { try { return Number(localStorage.getItem(notifSeenKey())) || 0; } catch (e) { return 0; } }
+function notifAdminItems() { return (state.adminNotes || []).filter(n => !(n.detail && n.detail.self)); }
+function notifNewAdminCount() { const t = notifSeenAt(); return notifAdminItems().filter(n => new Date(n.created_at).getTime() > t).length; }
+function notifCount() { return (state.incomingJoins || []).length + (state.incomingClaims || []).length + (state.incoming || []).length + notifNewAdminCount(); }
+function notifBellHTML() {
+  const n = notifCount();
+  return `<button type="button" class="iconbtn notif-btn" title="Notifications" aria-label="Notifications${n ? ", " + n + " new" : ""}" onclick="openNotifications()">🔔<span class="notif-badge" ${n ? "" : "hidden"}>${n > 99 ? "99+" : n}</span></button>`;
+}
+function notifUpdateBadge() {
+  const n = notifCount();
+  document.querySelectorAll(".notif-badge").forEach(b => { b.textContent = n > 99 ? "99+" : String(n); b.hidden = !n; });
+}
+async function loadAdminNotes(user) {
+  state.adminNotes = [];
+  try {
+    const tid = state.joined ? state.joined.treeId : state.treeId;
+    if (!supabase || !user || !tid) return;
+    const { data, error } = await supabase.from("tree_admin_log").select("id,action,detail,created_at").eq("tree_id", tid).in("action", ["admin_added", "admin_by_claim"]).order("created_at", { ascending: false }).limit(30);
+    if (error) return;   // table missing (supabase-admin-claim.sql not run) or no access: just no admin notices
+    state.adminNotes = (data || []).filter(r => (r.detail?.target_user || r.detail?.user) === user.id).slice(0, 5);
+  } catch (e) { state.adminNotes = []; }
+}
+async function pollNotifications() {
+  if (!supabase || !loggedIn || !currentUser || document.hidden) return;
+  try {
+    const [ic, inc, ij] = await Promise.all([supabase.rpc("my_incoming_claims"), supabase.rpc("my_incoming_connections"), supabase.rpc("my_incoming_join_requests")]);
+    if (!ic.error) state.incomingClaims = ic.data || [];
+    if (!inc.error) state.incoming = inc.data || [];
+    if (!ij.error) state.incomingJoins = ij.data || [];
+    await loadAdminNotes(currentUser);
+    const n = notifCount();
+    if (notifLastCount !== null && n > notifLastCount) toast("🔔 Naya notification aaya hai");
+    notifLastCount = n; notifUpdateBadge();
+    if (document.getElementById("notifSheet")) openNotifications(true);   // keep an open list fresh
+  } catch (e) { /* offline: try again next time */ }
+}
+function startNotifPoll() {
+  notifLastCount = notifCount(); notifUpdateBadge();
+  if (!notifTimer) notifTimer = setInterval(pollNotifications, 60000);
+}
+function closeNotifications() { document.getElementById("notifSheet")?.remove(); }
+function openNotifications(keepScroll) {
+  const old = document.getElementById("notifSheet"), prevScroll = old?.querySelector(".modal-body")?.scrollTop || 0;
+  const seen = notifSeenAt(), items = [];
+  notifAdminItems().forEach(n => {
+    const isNew = new Date(n.created_at).getTime() > seen;
+    items.push(`<div class="notif-item${isNew ? " new" : ""}"><div class="notif-t">👑 Aap ab is tree ke <b>Admin</b> hain${isNew ? ' <span class="badge plum">NEW</span>' : ""}</div>
+      <div class="muted" style="font-size:12.5px">${esc(n.action === "admin_by_claim" ? "Aapka profile claim hone par" : "Tree admin ne aapko admin banaya")} · ${esc(fmtDateTime(n.created_at))}. Ab aap relatives add/edit kar sakte ho aur join requests approve kar sakte ho.</div>
+      <div class="actions" style="margin-top:8px"><button type="button" class="secondary" onclick="closeNotifications();go('treeAdmins')">Tree Admins dekho</button></div></div>`);
+  });
+  (state.incomingJoins || []).forEach(r => items.push(`<div class="notif-item new"><div class="notif-t">🙋 <b>${esc(r.requester_name)}</b> tree join karna chahta hai${r.person_name ? ` (profile: <b>${esc(r.person_name)}</b>)` : ""}</div>
+      <div class="muted" style="font-size:12.5px">${esc(r.tree_name || "")} · ${esc(fmtDateTime(r.created_at))}. Approve karne par ye person tree ka admin ban jayega.</div>
+      <div class="actions" style="margin-top:8px"><button type="button" class="primary" onclick="notifAct('joinApprove','${esc(r.request_id)}')">Approve</button><button type="button" class="danger" onclick="notifAct('joinReject','${esc(r.request_id)}',${Number(r.added_profiles) || 0})">Reject</button></div></div>`));
+  (state.incomingClaims || []).forEach(r => items.push(`<div class="notif-item new"><div class="notif-t">🪪 <b>${esc(r.requester_name || "Someone")}</b> kehta hai profile <b>${esc(r.person_name)}</b> wo khud hai</div>
+      <div class="muted" style="font-size:12.5px">Sirf tab approve karo jab aap is insaan ko jaante ho.</div>
+      <div class="actions" style="margin-top:8px"><button type="button" class="primary" onclick="notifAct('claimApprove','${esc(r.request_id)}')">Approve</button><button type="button" class="ghost" onclick="notifAct('claimReject','${esc(r.request_id)}')">Decline</button></div></div>`));
+  (state.incoming || []).forEach(r => {
+    const rl = RELATION_TYPES[r.relation_type]?.label;
+    items.push(`<div class="notif-item new"><div class="notif-t">🔗 <b>${esc(r.requester_name || "A family member")}</b> aapko apni tree me add karna chahta hai${rl && r.target_name ? ` (<b>${esc(rl)}</b> of <b>${esc(r.target_name)}</b>)` : ""}</div>
+      <div class="muted" style="font-size:12.5px">${esc(r.tree_name || "")}</div>
+      <div class="actions" style="margin-top:8px"><button type="button" class="primary" onclick="notifAct('connApprove','${esc(r.request_id)}')">Accept</button><button type="button" class="ghost" onclick="notifAct('connReject','${esc(r.request_id)}')">Decline</button></div></div>`);
+  });
+  const el = old || document.createElement("div");
+  el.id = "notifSheet"; el.className = "modal-overlay"; el.setAttribute("role", "dialog"); el.setAttribute("aria-label", "Notifications");
+  el.onclick = e => { if (e.target === el) closeNotifications(); };
+  el.innerHTML = `<div class="modal-card notif-sheet"><div class="modal-head"><h3>🔔 Notifications</h3><button type="button" class="iconbtn" aria-label="Close" onclick="closeNotifications()">✕</button></div>
+    <div class="modal-body">${items.join("") || '<p class="muted" style="text-align:center;padding:18px 0">Abhi koi naya notification nahi hai. 🎉</p>'}</div>
+    ${items.length ? `<div class="actions modal-foot"><button type="button" class="ghost" onclick="closeNotifications();go('sharing')">Connections & Sharing kholo</button></div>` : ""}</div>`;
+  if (!old) document.body.appendChild(el);
+  if (keepScroll) { const b = el.querySelector(".modal-body"); if (b) b.scrollTop = prevScroll; }
+  if (!keepScroll) { try { localStorage.setItem(notifSeenKey(), String(Date.now())); } catch (e) {} notifUpdateBadge(); }   // admin notices are "seen" once the bell is opened
+}
+async function notifAct(kind, id, extra) {
+  const fn = { joinApprove: () => approveJoin(id), joinReject: () => rejectJoin(id, extra), claimApprove: () => approveClaim(id), claimReject: () => rejectClaim(id), connApprove: () => approveIncoming(id), connReject: () => rejectIncoming(id) }[kind];
+  if (!fn) return;
+  try { await fn(); } catch (e) { console.error(e); }
+  notifUpdateBadge();
+  if (document.getElementById("notifSheet")) openNotifications(true);
+}
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeNotifications(); });
+
 /* ---------------- shell ---------------- */
 function topCenterHTML(page) {
   if (page !== "tree" && page !== "wall" && page !== "events") return "";
@@ -631,7 +717,7 @@ function render() {
       <div class="brand"><img src="/assets/logo.png" alt="FamilyTree" style="height:32px;width:32px;object-fit:contain;vertical-align:middle;margin-right:6px"><span>Family<em>Tree</em></span><small>V11</small></div>
       ${topCenterHTML(page)}
       <div class="top-actions">
-        
+        ${notifBellHTML()}
         <span class="muted top-name" style="font-size:13px;cursor:pointer" title="My Profile" onclick="openMyProfile()">${esc(state.account.name)}</span>
         <div style="cursor:pointer" title="My Profile" onclick="openMyProfile()">${myself() ? avatarHTML(myself()) : `<div class="avatar">${esc(initials(state.account.name))}</div>`}</div>
         ${page === "home" ? `<button type="button" class="top-logout" title="Logout" onclick="logout()">🚪 Logout</button>` : ""}
@@ -3167,11 +3253,25 @@ function openProfilePopup(id) {
     </div>
     <div class="actions modal-foot">
       <button type="button" class="secondary" onclick="openPersonWall('${esc(p.id)}')">📝 Wall</button>
+      ${me() && p.id === me().id ? "" : `<button type="button" class="secondary rel-btn" onclick="openRelationChart('${esc(p.id)}')" title="Aapse kya rishta hai, chart me dekhein">${REL_ICON_SVG} Relation</button>`}
       <button type="button" class="ghost" onclick="openFullProfile('${esc(p.id)}')">Open full profile</button>
       ${canEditPerson(p) ? `<button type="button" class="primary" onclick="openEditProfile('${esc(p.id)}', true)">✏️ Edit</button>` : ""}
     </div>`);
 }
 function openFullProfile(id) { closeEditProfile(); openProfile(id); }
+/* "Relation" button in the profile popup: shows how this person is related to ME, drawn as a small family chart. */
+const REL_ICON_SVG = '<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" style="vertical-align:-3px;margin-right:4px"><circle cx="12" cy="5" r="3" fill="currentColor"/><circle cx="5" cy="19" r="3" fill="currentColor"/><circle cx="19" cy="19" r="3" fill="currentColor"/><path d="M12 8v4M12 12H5v4M12 12h7v4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+function openRelationChart(id) {
+  const p = personById(id), m = me(); if (!p || !m) return;   // me() = same starting person the profile popup uses (the tree owner when viewing someone else's tree)
+  const r = deriveRelationship(m.id, p.id), whose = treeViewing ? esc(m.name) + " ke" : "aapke";
+  const body = r.path === null
+    ? `<p><b>${esc(p.name)}</b> abhi ${treeViewing ? esc(m.name) + " se" : "aapse"} tree me juda hua nahi hai.</p><p class="muted" style="font-size:13px">Parent, spouse ya child ka link jodo to rishta aur chart yahan dikhne lagega.</p>`
+    : `<p style="margin:0 0 4px"><b>${esc(p.name)}</b> ${whose} <b>${esc(r.label)}</b> hain.</p>${r.path.length ? relationTreeHTML(m.id, r.path) : ""}`;
+  profileModalOrigin = "view"; profileModalLocked = false;
+  profileModalShell(`<div class="modal-head"><h3>${REL_ICON_SVG} Relation chart</h3><button type="button" class="ghost" aria-label="Close" onclick="closeEditProfile()">✕</button></div>
+    <div class="modal-body">${body}</div>
+    <div class="actions modal-foot"><button type="button" class="ghost" onclick="openProfilePopup('${esc(id)}')">← Profile</button></div>`);
+}
 /* Full edit form. fromView = true when it was reached from the profile popup. */
 function openEditProfile(id, fromView) {
   const p = personById(id);
@@ -4416,7 +4516,7 @@ Object.assign(window, {
   assignTicket, refreshSupport, arRelTypeChanged, cityPicked, cityStateChanged,
   importGedcomPicked, setPeopleSearch, clearPeopleSearch, setPeopleSort, openMoreMenu, closeMoreMenu,
   /* these were used by inline onclick/onchange but never exported, so the Branch/Chart switch, the whole Chart toolbar and the profile Privacy dropdown did nothing */
-  setEvFilter, setEvRange, openEventWish, dqAnother, dqShare, dqDownload, openPersonWall, openNewWallPost, wallToggleTagPicker, wallToggleLoc, wallLocRender, wallLocClear, wallLocGPS, wallLocSearch, wallLocPick, wallLocPaste, wallLocToggleMap, wallAddTag, wallRemoveTag, wallPost, wallReactToggle, wallReact, wallToggleComments, wallAddComment, wallDeleteComment, wallDeletePost, setTreeStyle, chartAddMenu, chartBack, chartFit, chartGoFamily, chartOpen, chartSetRoot, chartZoom, chartPanStart, chartWheel, setPrivacy
+  openRelationChart, openNotifications, closeNotifications, notifAct, setEvFilter, setEvRange, openEventWish, dqAnother, dqShare, dqDownload, openPersonWall, openNewWallPost, wallToggleTagPicker, wallToggleLoc, wallLocRender, wallLocClear, wallLocGPS, wallLocSearch, wallLocPick, wallLocPaste, wallLocToggleMap, wallAddTag, wallRemoveTag, wallPost, wallReactToggle, wallReact, wallToggleComments, wallAddComment, wallDeleteComment, wallDeletePost, setTreeStyle, chartAddMenu, chartBack, chartFit, chartGoFamily, chartOpen, chartSetRoot, chartZoom, chartPanStart, chartWheel, setPrivacy
 });
 
 window.addEventListener("hashchange", render);
@@ -4773,7 +4873,7 @@ async function loadJoinedState(user) {
   state.account.role = "member";
   state.posts = []; state.events = []; state.mergeRequests = []; state.connections = [];
   try { await loadSupportTickets(user); } catch (e) { state.tickets = []; }
-  state.incomingClaims = []; state.incoming = []; state.incomingJoins = [];
+  state.incomingClaims = []; state.incoming = []; state.incomingJoins = []; state.adminNotes = [];
   activeTicketId = null;
   if (!state.people.some(p => p.me) && state.people[0]) state.people[0].me = true; // never leave the UI without a "me" card
 }
@@ -4842,6 +4942,8 @@ async function loadProductionState(user) {
   try { const ic = await supabase.rpc('my_incoming_claims'); state.incomingClaims = ic.error ? [] : (ic.data || []); } catch (e) { state.incomingClaims = []; }
   try { const inc = await supabase.rpc('my_incoming_connections'); state.incoming = inc.error ? [] : (inc.data || []); } catch (e) { state.incoming = []; }
   try { const ij = await supabase.rpc('my_incoming_join_requests'); state.incomingJoins = ij.error ? [] : (ij.data || []); } catch (e) { state.incomingJoins = []; }
+  await loadAdminNotes(user);
+  startNotifPoll();
   if (state.incomingJoins.length) setTimeout(() => toast(`${state.incomingJoins.length} naye member tree join karna chahte hain — Connections & Sharing mein dekhein`), 900);
   if (state.incoming.length) setTimeout(() => toast(`You have ${state.incoming.length} connection request${state.incoming.length === 1 ? "" : "s"} — see Connections & Sharing`), 600);
 }
