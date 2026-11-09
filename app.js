@@ -1250,7 +1250,7 @@ function chartCardHTML(c) {
     ? `<span class="ch-badge" role="button" title="Inke parivaar ka tree dekhein" onclick="event.stopPropagation();chartGoFamily('${esc(p.id)}')"><svg viewBox="0 0 24 24" width="15" height="15"><circle cx="12" cy="7" r="4.2" fill="#b3b3b3"/><circle cx="7" cy="14.5" r="4.2" fill="#b3b3b3"/><circle cx="17" cy="14.5" r="4.2" fill="#b3b3b3"/></svg></span>` : "";
   const add = canAddRelativeTo(p.id)
     ? `<span class="ch-add" role="button" title="Relative add karein" onclick="event.stopPropagation();chartAddMenu(event,'${esc(p.id)}')"><svg viewBox="0 0 24 24" width="19" height="19"><circle cx="10" cy="7" r="4" fill="#f07d3c"/><path d="M2 20c0-4 3.5-6.5 8-6.5s8 2.5 8 6.5z" fill="#f07d3c"/><circle cx="19" cy="17" r="4.4" fill="#f07d3c" stroke="#fff" stroke-width="1.2"/><path d="M19 15v4M17 17h4" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg></span>` : "";
-  return `<button type="button" class="ch-card${p.me ? " me" : ""}${p.lifeStatus === "deceased" ? " gone" : ""}" data-id="${esc(p.id)}" style="left:${c.x}px;top:${c.y}px" title="${esc(p.name)}" onclick="chartOpen('${esc(p.id)}')">${add}${badge}${av}<b>${esc(p.name)}</b>${spouseCardLine(p) ? `<span class="ch-sp" title="${esc(spouseCardLine(p))}">💍 ${esc(spouseCardLine(p))}</span>` : ""}<span class="ch-yrs">${esc(yrs)}</span></button>`;
+  return `<button type="button" class="ch-card${p.me ? " me" : ""}${p.lifeStatus === "deceased" ? " gone" : ""}" data-id="${esc(p.id)}" style="left:${c.x}px;top:${c.y}px" title="${esc(p.name)}" onclick="chartOpen('${esc(p.id)}')">${add}${badge}${av}<b>${esc(p.name)}</b><span class="ch-yrs">${esc(yrs)}</span></button>`;
 }
 function treeChart() {
   const roots = chartRoots();
@@ -1522,8 +1522,6 @@ function branchNode(p, isCenter) {
     <strong>${esc(p.name)}</strong>
     <div class="mini">${years}${p.status === "unclaimed" ? " · Unclaimed" : ""}</div>
     <div class="mini rel">${deriveRelationship(me().id, p.id).label}</div>
-    ${spouseCardLine(p) ? `<div class="mini sp">💍 ${esc(spouseCardLine(p))}</div>` : ""}
-    ${kidsCaption(p.id)}
   </div>`;
 }
 
