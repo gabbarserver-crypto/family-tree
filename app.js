@@ -351,22 +351,18 @@ function hidesParents(id) {
 let branchView = null; // { id, prevCenter } while a married woman's own family branch is open
 
 function computeBranchGenerations(xId) {
+  // Branch view of X: X + husband/wife; X's parents (and the other parent); X's brothers & sisters with their spouses and ALL their
+  // descendants; and X's OWN children, their spouses, grandchildren... (X's in-laws' parents/siblings stay out).
   const gen = { [xId]: 0 };
-  spousesOf(xId).forEach(sp => { gen[sp] = 0; }); // her husband only (no his parents / no her children)
+  const place = (id, g) => { if (id && !(id in gen)) { gen[id] = g; return true; } return false; };
+  const addSpouses = (id, g) => spousesOf(id).forEach(sp => place(sp, g));
+  const down = (id, g) => childrenOf(id).forEach(c => { if (place(c, g + 1)) { addSpouses(c, g + 1); down(c, g + 1); } });
+  addSpouses(xId, 0);
   const parents = parentsOf(xId);
-  parents.forEach(pa => { gen[pa] = -1; });
-  parents.forEach(pa => spousesOf(pa).forEach(sp => { if (!(sp in gen)) gen[sp] = -1; }));
-  // siblings + their spouses + all their descendants
-  const down = (id, g) => {
-    if (id in gen && id !== xId) { /* already placed */ }
-    childrenOf(id).forEach(c => {
-      if (c === xId || c in gen) return;
-      gen[c] = g + 1;
-      spousesOf(c).forEach(sp => { if (!(sp in gen)) gen[sp] = g + 1; });
-      down(c, g + 1);
-    });
-  };
+  parents.forEach(pa => place(pa, -1));
+  parents.forEach(pa => addSpouses(pa, -1));
   parents.forEach(pa => down(pa, -1));
+  down(xId, 0);
   return gen;
 }
 function openBranch(id) {
@@ -375,6 +371,8 @@ function openBranch(id) {
   if (!branchView) branchView = { prevCenter: treeCenterId };
   branchView.id = id;
   treeExpanded = new Set();
+  // nobody of their own recorded yet (no wife/husband, no children): open with the "+ Add wife / son / daughter" boxes already showing
+  if (!spousesOf(id).length && !childrenOf(id).length && canAddRelativeTo(id)) treeExpanded.add(id);
   treeCenterId = id; treeScale = 1;
   go("tree"); requestAnimationFrame(drawTreeConnectors);
 }
@@ -1245,7 +1243,7 @@ function treeBranch() {
   }).join("");
   const banner = treeViewing ? `<div class="tree-view-banner"><img src="/assets/tree-icon.png" alt=""><span>Aap <b>${esc(treeViewing.ownerName)}</b> ki tree dekh rahe hain (sirf dekhne ke liye). Aapki apni tree chhupi hui hai.</span><button type="button" class="primary" onclick="exitTreeView()">← Meri tree par wapas</button></div>` : "";
   const bp = branchView && personById(branchView.id);
-  const banner2 = bp ? `<div class="tree-view-banner"><span><b>${esc(bp.name)}</b> ki family tree (unke parents, bhai-behen aur unke bachhe)</span><button type="button" class="primary" onclick="exitBranch()">← Meri tree par wapas</button></div>` : "";
+  const banner2 = bp ? `<div class="tree-view-banner"><span><b>${esc(bp.name)}</b> ki family tree (unke parents, bhai-behen, unke bachhe aur sab ke bachhe)</span><button type="button" class="primary" onclick="exitBranch()">← Meri tree par wapas</button></div>` : "";
   return `${banner}${banner2}<div class="tree-canvas" id="treeCanvas">
     <div class="tree-sizer" id="treeSizer"><div class="tree-stage" id="treeStage">
       <svg id="treeLines" style="position:absolute;top:0;left:0;pointer-events:none;overflow:visible"></svg>
@@ -1283,9 +1281,9 @@ function branchNode(p, isCenter) {
   const branchable = !ownTree && !treeViewing && hidesParents(p.id);
   const isBranchRoot = !!branchView && branchView.id === p.id;
   const badgeTitle = ownTree ? (backToMine ? "Back to my tree" : "Open " + esc(p.name) + "'s own tree")
-    : isBranchRoot ? "Back to my tree" : branchable ? "Open " + esc(p.name) + "'s family tree" : "Center tree on " + esc(p.name);
+    : isBranchRoot ? "Back to my tree" : (branchable || branchView) ? "Open " + esc(p.name) + "'s family tree" : "Center tree on " + esc(p.name);
   const badgeClick = ownTree ? `openPersonTree('${p.id}')`
-    : isBranchRoot ? `exitBranch()` : branchable ? `openBranch('${p.id}')` : (branchView ? `exitBranch()` : `centerTree('${p.id}')`);
+    : isBranchRoot ? `exitBranch()` : (branchable || branchView) ? `openBranch('${p.id}')` : `centerTree('${p.id}')`;
   // The tree icon only shows when this person really HAS a tree of their own: an account/tree of their own, or their own parents
   // recorded (e.g. a wife whose mother/father are added). Otherwise there is nothing to open, so no icon.
   const hasOwnTree = ownTree || isBranchRoot || parentsOf(p.id).some(x => personById(x));
