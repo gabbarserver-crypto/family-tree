@@ -644,6 +644,7 @@ function render() {
     <nav class="bottomnav">${BOTTOM_TABS.map(id => flatNav.find(x => x[0] === id)).filter(Boolean).map(([id, label, icon]) => navItem(id, BOTTOM_LABELS[id] || label, icon, navPage).replace("</button>", id === "wall" ? '<i class="dm-badge dm-dot" hidden></i></button>' : "</button>")).join("")}<button class="nav ${BOTTOM_TABS.includes(navPage) ? "" : "active"}" onclick="openMoreMenu()" aria-label="More pages"><span class="ic">☰</span><span>More</span></button></nav>
   </div>`;
   if (page === "tree") requestAnimationFrame(treeStyle === "chart" ? chartAfterRender : drawTreeConnectors);
+  if (page === "home") requestAnimationFrame(dailyQuoteInit);
   if (page === "wall") requestAnimationFrame(loadWallFeed);
   if (page === "horoscope") requestAnimationFrame(loadHoroscope);
   if (page === "merge") mergeInitSelects();
@@ -885,10 +886,111 @@ function horoMiniHTML() {
     <button type="button" class="primary" onclick="openHoroscope()">Poora horoscope dekhein →</button></div>`;
 }
 
+/* ---------------- Daily quote image (dashboard) ----------------
+   One quote a day, drawn as a picture. The pick depends on the signed-in person + the date, so every admin / member sees a different one,
+   and it changes by itself every day. To add your own lines, just add them to DAILY_QUOTES. */
+const DAILY_QUOTES = [
+  "Parivaar wo jagah hai jahan har kahani ki shuruaat aur har dil ka sukoon milta hai.",
+  "Jadein jitni gehri hongi, ped utna hi unchaa uthega.",
+  "Rishte nibhane ke liye waqt nikalna padta hai, bahane nahi.",
+  "Ghar deewaron se nahi, apno ki hansi se banta hai.",
+  "Bade-buzurgon ka saath ho to har musibat chhoti lagti hai.",
+  "Family: where life begins and love never ends.",
+  "Jo parivaar saath baithkar khaata hai, wo saath mein hi muskurata hai.",
+  "Apno ke liye nikala gaya ek pal, poori zindagi ki yaad ban jaata hai.",
+  "Ek chhota sa phone call, kisi ka poora din roshan kar sakta hai.",
+  "Rishton ki khoobsurti unme hai jo bina kahe samajh liye jaate hain.",
+  "Roots give us strength; branches give us reach.",
+  "Dadi-Nani ki kahaniyan, sabse keemti virasat hain.",
+  "Jahan pyaar hai, wahan ghar hai.",
+  "Parivaar ka matlab: har haal me, har kisi ke saath.",
+  "Khoon ke rishte ho ya dil ke, nibhane se hi gehre hote hain.",
+  "Aaj kisi apne ko yaad karo, unhe bahut accha lagega.",
+  "A family tree is a story that keeps growing.",
+  "Maa ki duaon me wo taqat hai jo taqdeer badal deti hai.",
+  "Pita ka saath wo chhaaon hai jo dhoop me bhi thandak deti hai.",
+  "Bhai-behen: bachpan ke sabse pyaare saathi.",
+  "Jo apni jadon ko yaad rakhta hai, wo kabhi bhatakta nahi.",
+  "Choti-choti khushiyan milke bante hain bade tyohaar.",
+  "Rishte paison se nahi, bharose se chalte hain.",
+  "Ek-dusre ka haath thaame rakho, raaste khud aasaan ho jaate hain.",
+  "Purane photos dekhna, apno ko dobara jeena hai.",
+  "Our ancestors planted the seeds; we grow in their shade.",
+  "Kabhi kisi apne se naraaz ho to pehle baat kar lo, ho sakta hai wo intezaar kar raha ho.",
+  "Parivaar ke saath bitaya hua har din ek tyohaar hai.",
+  "Dua, pyaar aur saath, isse badi koi daulat nahi.",
+  "Har pidhi ek nayi kahani likhti hai, par jadein wahi rehti hain.",
+  "Jahan buzurgon ka samman hai, wahan barkat hai.",
+  "Love makes a house a home.",
+  "Sabse sundar tasveer wo hai jisme saara parivaar saath ho.",
+  "Rishton me meethaas ghulne me waqt lagta hai, par rang gehra chadhta hai.",
+  "Apno ki kami tab samajh aati hai jab wo paas nahi hote, isliye abhi mil lo.",
+  "Ek parivaar, anginat yaadein.",
+  "Sabr, samman aur sneh: parivaar ki teen neev.",
+  "Jin gharon me hansi goonjti hai, wahan bhagwan khud baste hain.",
+  "Be the reason your family smiles today.",
+  "Chhote ko pyaar, bade ko samman, yehi hai sanskaar.",
+  "Aaj ka din apno ke naam, ek message to banta hai."
+];
+const DQ_THEMES = [["#4a2c6e", "#b07d1e"], ["#14532d", "#d4a017"], ["#7c2d12", "#f59e0b"], ["#1e3a5f", "#e0a526"], ["#831843", "#f4b942"], ["#134e4a", "#e6c97a"]];
+let dqShift = 0, dqUrl = "";
+function dqHash(str) { let h = 2166136261; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+function dqPick() {
+  const d = new Date(), day = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+  const who = currentUser?.id || state.account?.email || state.account?.name || "guest";
+  const h = dqHash(who + "|" + day);
+  return { quote: DAILY_QUOTES[(h + dqShift) % DAILY_QUOTES.length], theme: DQ_THEMES[(h + dqShift * 7) % DQ_THEMES.length], day: d };
+}
+function dqWrap(ctx, text, maxW) {
+  const words = text.split(" "), lines = []; let line = "";
+  words.forEach(w => { const t = line ? line + " " + w : w; if (ctx.measureText(t).width > maxW && line) { lines.push(line); line = w; } else line = t; });
+  if (line) lines.push(line); return lines;
+}
+async function dqDraw() {
+  const { quote, theme, day } = dqPick(), W = 1080, H = 1080, c = document.createElement("canvas"); c.width = W; c.height = H;
+  const ctx = c.getContext("2d");
+  try { await document.fonts.ready; } catch (e) {}
+  const g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, theme[0]); g.addColorStop(1, "#0f0a1a"); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = .08; ctx.fillStyle = theme[1]; ctx.beginPath(); ctx.arc(W - 120, 140, 330, 0, 7); ctx.fill(); ctx.beginPath(); ctx.arc(80, H - 60, 260, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
+  ctx.strokeStyle = theme[1]; ctx.lineWidth = 4; ctx.globalAlpha = .7; ctx.strokeRect(44, 44, W - 88, H - 88); ctx.globalAlpha = 1;
+  ctx.fillStyle = theme[1]; ctx.font = "700 220px Georgia, serif"; ctx.textAlign = "left"; ctx.fillText("\u201C", 90, 290);
+  ctx.fillStyle = "#fff"; ctx.textAlign = "center";
+  let size = 64, lines;
+  for (; size >= 40; size -= 4) { ctx.font = `600 ${size}px Fraunces, Georgia, serif`; lines = dqWrap(ctx, quote, W - 240); if (lines.length * size * 1.35 < 560) break; }
+  const top = 330 + (560 - lines.length * size * 1.35) / 2;
+  lines.forEach((l, i) => ctx.fillText(l, W / 2, top + size + i * size * 1.35));
+  ctx.fillStyle = theme[1]; ctx.fillRect(W / 2 - 60, 905, 120, 4);
+  ctx.fillStyle = "#f3e9d2"; ctx.font = "600 30px Inter, Arial, sans-serif";
+  ctx.fillText(day.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" }), W / 2, 960);
+  ctx.font = "700 34px Fraunces, Georgia, serif"; ctx.fillStyle = "#fff"; ctx.fillText("FamilyTree", W / 2, 1010);
+  try { const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = "/assets/tree-logo-icon.png"; }); ctx.drawImage(img, W - 190, 70, 110, 110); } catch (e) {}
+  return c.toDataURL("image/png");
+}
+async function dailyQuoteInit() {
+  const el = document.getElementById("dqImg"); if (!el) return;
+  try { dqUrl = await dqDraw(); const now = document.getElementById("dqImg"); if (now) { now.src = dqUrl; now.hidden = false; } } catch (e) { console.warn("daily quote failed", e); }
+}
+function dailyQuoteCardHTML() {
+  return `<div class="card dq-card"><div class="dq-head"><h3>✨ Aaj ka vichar</h3><button type="button" class="ghost" onclick="dqAnother()">🔄 Doosra</button></div>
+    <img id="dqImg" class="dq-img" alt="Aaj ka quote" hidden>
+    <div class="actions" style="margin-top:10px"><button type="button" class="secondary" onclick="dqShare()">📤 Share</button><button type="button" class="secondary" onclick="dqDownload()">⬇ Download</button></div></div>`;
+}
+function dqAnother() { dqShift++; dailyQuoteInit(); }
+function dqDownload() { if (!dqUrl) return; const a = document.createElement("a"); a.href = dqUrl; a.download = "familytree-quote.png"; document.body.appendChild(a); a.click(); a.remove(); }
+async function dqShare() {
+  if (!dqUrl) return;
+  try {
+    const blob = await (await fetch(dqUrl)).blob(), file = new File([blob], "familytree-quote.png", { type: "image/png" });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: "FamilyTree" }); return; }
+  } catch (e) { if (e && e.name === "AbortError") return; }
+  dqDownload();
+}
+
 /* ---------------- home ---------------- */
 function home() {
   const upcoming = state.events.slice(0, 2);
   return `<div class="page-head"><h2>Family Dashboard</h2><p class="muted">Your family network, based on the logged-in account.</p></div>
+  ${dailyQuoteCardHTML()}
   <div class="grid g4">
     <div class="card stat-card"><div class="muted">People in tree</div><div class="stat">${state.people.length}</div></div>
     <div class="card stat-card"><div class="muted">Unclaimed profiles</div><div class="stat">${state.people.filter(p => p.status === "unclaimed").length}</div></div>
@@ -4314,7 +4416,7 @@ Object.assign(window, {
   assignTicket, refreshSupport, arRelTypeChanged, cityPicked, cityStateChanged,
   importGedcomPicked, setPeopleSearch, clearPeopleSearch, setPeopleSort, openMoreMenu, closeMoreMenu,
   /* these were used by inline onclick/onchange but never exported, so the Branch/Chart switch, the whole Chart toolbar and the profile Privacy dropdown did nothing */
-  setEvFilter, setEvRange, openEventWish, openPersonWall, openNewWallPost, wallToggleTagPicker, wallToggleLoc, wallLocRender, wallLocClear, wallLocGPS, wallLocSearch, wallLocPick, wallLocPaste, wallLocToggleMap, wallAddTag, wallRemoveTag, wallPost, wallReactToggle, wallReact, wallToggleComments, wallAddComment, wallDeleteComment, wallDeletePost, setTreeStyle, chartAddMenu, chartBack, chartFit, chartGoFamily, chartOpen, chartSetRoot, chartZoom, chartPanStart, chartWheel, setPrivacy
+  setEvFilter, setEvRange, openEventWish, dqAnother, dqShare, dqDownload, openPersonWall, openNewWallPost, wallToggleTagPicker, wallToggleLoc, wallLocRender, wallLocClear, wallLocGPS, wallLocSearch, wallLocPick, wallLocPaste, wallLocToggleMap, wallAddTag, wallRemoveTag, wallPost, wallReactToggle, wallReact, wallToggleComments, wallAddComment, wallDeleteComment, wallDeletePost, setTreeStyle, chartAddMenu, chartBack, chartFit, chartGoFamily, chartOpen, chartSetRoot, chartZoom, chartPanStart, chartWheel, setPrivacy
 });
 
 window.addEventListener("hashchange", render);

@@ -697,3 +697,8 @@ input[type=search]{-webkit-appearance:none;appearance:none}
 .ch-sp{margin-top:3px;max-width:100%;font-size:9.5px;line-height:1.2;font-weight:600;color:#7a4b8c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ch-card.me .ch-sp{color:#e6c97a}
 .branch-node .mini.sp{color:var(--plum-deep,#4a2c6e);font-weight:600}
+
+/* Daily quote image */
+.dq-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px}
+.dq-head h3{margin:0}
+.dq-img{display:block;width:100%;max-width:420px;aspect-ratio:1/1;border-radius:14px;margin:0 auto;box-shadow:0 6px 18px rgba(0,0,0,.18);background:var(--paper-raised)}
