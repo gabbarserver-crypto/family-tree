@@ -711,3 +711,14 @@ input[type=search]{-webkit-appearance:none;appearance:none}
 .notif-item{padding:12px;border:1px solid var(--line);border-radius:12px;margin-bottom:10px;background:var(--paper)}
 .notif-item.new{border-color:var(--gold);background:var(--gold-tint,#fbf0d8)}
 .notif-t{font-size:14.5px;margin-bottom:3px}
+
+/* Add Relative wizard */
+.ar-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ar-grid.one{grid-template-columns:1fr}
+.ar-opt{display:flex;align-items:center;gap:10px;padding:12px;border:1.5px solid var(--line);border-radius:12px;background:var(--paper-raised);cursor:pointer;position:relative}
+.ar-opt input{position:absolute;opacity:0;pointer-events:none}
+.ar-opt:has(input:checked){border-color:var(--gold);background:#fff7e6;box-shadow:0 0 0 2px rgba(184,129,31,.25)}
+.ar-opt .ar-ic{font-size:24px;line-height:1}
+.ar-opt b{display:block;font-size:14.5px}
+.ar-opt small{display:block;font-size:11.5px;color:var(--ink-soft);margin-top:1px}
+.ar-opt.off{opacity:.45;cursor:not-allowed;background:#f1efec}

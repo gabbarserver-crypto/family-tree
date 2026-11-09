@@ -2093,16 +2093,87 @@ function createPerson() {
 }
 
 /* ---------------- Add Relative — rich form (photo, contact, life details) ---------------- */
-function openAddRelative(targetId, typeKey) {
+function openAddRelative(targetId, typeKey, mode) {
   if (!canAddRelativeTo(targetId)) { toast("Only this tree's owner or admins can add relatives to other people"); return; }
   if ((RELATION_TYPES[typeKey] || {}).edgeType === "sibling" && !parentsOf(targetId).length) { toast("Brother/Sister add karne ke liye pehle parents (Father/Mother) add karein"); return; }
   addRelativeTargetId = targetId;
   addRelativeTypeKey = typeKey;
-  addRelativeMode = "new";
+  addRelativeMode = mode === "existing" || mode === "uid" ? mode : "new";
   arFoundPerson = null;
   addRelativePhotoFile = null;
   addRelativePersonId = crypto.randomUUID();
   go("addRelative");
+  if (addRelativeMode === "existing") refreshExistingOptions();
+  if (addRelativeMode === "uid") document.getElementById("arUid")?.focus();
+}
+
+/* ---- "Add Relative" wizard (opened from the profile popup after tapping a card) ----
+   Step 1: choose the relation (Father, Mother, Husband, Wife, Brother, Sister, Son, Daughter) — impossible ones are disabled.
+   Step 2: choose how to add (New member / From tree / By Unique ID). Then the normal add form opens. */
+const ADD_REL_ORDER = ["father", "mother", "husband", "wife", "brother", "sister", "son", "daughter"];
+const ADD_REL_ICON = { father: "👨", mother: "👩", husband: "🤵", wife: "👰", brother: "👦", sister: "👧", son: "👶", daughter: "👶" };
+let arWizard = { id: null, rel: null };
+/* Which relations may be added to this person? Returns { key: reason } for every DISABLED one (enabled ones are absent). */
+function relationBlockers(id) {
+  const p = personById(id), out = {}; if (!p) return out;
+  const pars = parentsOf(id).map(personById).filter(Boolean);
+  const nm = x => esc(x.name);
+  const dad = pars.find(x => x.gender === "Male"), mom = pars.find(x => x.gender === "Female");
+  if (dad) out.father = "Already added: " + nm(dad);
+  else if (pars.length >= 2) out.father = "Parents already added";
+  if (mom) out.mother = "Already added: " + nm(mom);
+  else if (pars.length >= 2) out.mother = "Parents already added";
+  const sps = spousesOf(id).map(personById).filter(Boolean);
+  if (p.gender === "Male") out.husband = "Male ke liye Husband nahi";
+  else if (sps.length) out.husband = "Already added: " + nm(sps[0]);
+  if (p.gender === "Female") out.wife = "Female ke liye Wife nahi";
+  else if (sps.length) out.wife = "Already added: " + nm(sps[0]);
+  if (!pars.length) { out.brother = "Pehle Father/Mother add karein"; out.sister = "Pehle Father/Mother add karein"; }
+  return out;
+}
+function openAddRelativeWizard(id, step) {
+  const p = personById(id); if (!p) return;
+  if (!canAddRelativeTo(id)) { toast("Only this tree's owner or admins can add relatives to other people"); return; }
+  if (arWizard.id !== id) arWizard = { id, rel: null };
+  profileModalOrigin = "view"; profileModalLocked = false;
+  const back = `<button type="button" class="ghost" onclick="openProfilePopup('${esc(id)}')">← Profile</button>`;
+  if (step === 2 && arWizard.rel) {
+    const t = RELATION_TYPES[arWizard.rel], cand = existingCandidates(id, arWizard.rel).length;
+    const opts = [
+      ["new", "➕", "New member", "Naya profile banayein"],
+      ["existing", "👥", "From tree", cand ? "Tree me pehle se maujood vyakti chunein" : "Koi eligible member nahi", !cand],
+      ["uid", "🔎", "By Unique ID", state.joined ? "Join approve hone ke baad" : "Unique ID (Person ID) se link karein", !!state.joined]
+    ];
+    profileModalShell(`<div class="modal-head"><h3>${esc(t.label)} add karein</h3><button type="button" class="ghost" aria-label="Close" onclick="closeEditProfile()">✕</button></div>
+      <div class="modal-body"><p class="muted" style="margin:0">${esc(p.name)} ka <b>${esc(t.label)}</b> kaise add karna hai?</p>
+        <div class="ar-grid one">${opts.map(([k, ic, lb, sub, off], i) => `<label class="ar-opt${off ? " off" : ""}"><input type="radio" name="arHow" value="${k}" ${off ? "disabled" : i === 0 ? "checked" : ""}><span class="ar-ic">${ic}</span><span><b>${lb}</b><small>${sub}</small></span></label>`).join("")}</div>
+      </div>
+      <div class="actions modal-foot"><button type="button" class="ghost" onclick="openAddRelativeWizard('${esc(id)}',1)">← Back</button>
+        <button type="button" class="primary" onclick="addRelativeWizardGo()">Next →</button></div>`);
+    return;
+  }
+  const blocked = relationBlockers(id);
+  if (arWizard.rel && blocked[arWizard.rel]) arWizard.rel = null;
+  profileModalShell(`<div class="modal-head"><h3>➕ Add Relative</h3><button type="button" class="ghost" aria-label="Close" onclick="closeEditProfile()">✕</button></div>
+    <div class="modal-body"><p class="muted" style="margin:0"><b>${esc(p.name)}</b> ka kaun add karna hai?</p>
+      <div class="ar-grid">${ADD_REL_ORDER.map(k => { const why = blocked[k], t = RELATION_TYPES[k];
+        return `<label class="ar-opt${why ? " off" : ""}"><input type="radio" name="arRel" value="${k}" ${why ? "disabled" : ""} ${arWizard.rel === k ? "checked" : ""} onchange="arPickRel(this.value)"><span class="ar-ic">${ADD_REL_ICON[k]}</span><span><b>${t.label}</b>${why ? `<small>${why}</small>` : ""}</span></label>`; }).join("")}</div>
+    </div>
+    <div class="actions modal-foot">${back}<button type="button" id="arNext" class="primary" ${arWizard.rel ? "" : "disabled"} onclick="addRelativeWizardNext()">Next →</button></div>`);
+}
+function arPickRel(k) { arWizard.rel = k; const b = document.getElementById('arNext'); if (b) b.disabled = false; }
+function addRelativeWizardNext() {
+  const k = document.querySelector('input[name="arRel"]:checked')?.value;
+  if (!k) { toast("Pehle relation chunein"); return; }
+  if (relationBlockers(arWizard.id)[k]) { toast("Ye relation abhi add nahi ho sakta"); return; }
+  arWizard.rel = k;
+  openAddRelativeWizard(arWizard.id, 2);
+}
+function addRelativeWizardGo() {
+  const how = document.querySelector('input[name="arHow"]:checked')?.value || "new";
+  const { id, rel } = arWizard; if (!id || !rel) return;
+  closeEditProfile();
+  openAddRelative(id, rel, how);
 }
 function pickAddRelativePhoto() {
   const input = document.createElement("input");
@@ -3254,6 +3325,7 @@ function openProfilePopup(id) {
     <div class="actions modal-foot">
       <button type="button" class="secondary" onclick="openPersonWall('${esc(p.id)}')">📝 Wall</button>
       ${me() && p.id === me().id ? "" : `<button type="button" class="secondary rel-btn" onclick="openRelationChart('${esc(p.id)}')" title="Aapse kya rishta hai, chart me dekhein">${REL_ICON_SVG} Relation</button>`}
+      ${canAddRelativeTo(p.id) ? `<button type="button" class="primary" onclick="openAddRelativeWizard('${esc(p.id)}')">➕ Add Relative</button>` : ""}
       <button type="button" class="ghost" onclick="openFullProfile('${esc(p.id)}')">Open full profile</button>
       ${canEditPerson(p) ? `<button type="button" class="primary" onclick="openEditProfile('${esc(p.id)}', true)">✏️ Edit</button>` : ""}
     </div>`);
@@ -4507,7 +4579,7 @@ Object.assign(window, {
   reviewItem, saveAddRelative, sendReply, shareId, toast, treeFocusMe,
   treeReset, treeZoom, treeFit, toggleTreeExpand, treeSearch, treeSearchInput, treeSearchKey, treeSearchPick, setTreeRole,
   openTransferProfile, closeTransferModal, copyTransferCode, cancelTransferProfile, redeemTransferCode,
-  setAddRelativeMode, refreshExistingOptions, openMyProfile, saveProfileEdits, openEditProfile, closeEditProfile, openProfilePopup, openFullProfile, cancelEditProfile, deletePerson, removeLink, openDeleteMyProfile, searchRelativeByUid, linkByUniqueId, approveIncoming, rejectIncoming,
+  openAddRelativeWizard, addRelativeWizardNext, addRelativeWizardGo, arPickRel, setAddRelativeMode, refreshExistingOptions, openMyProfile, saveProfileEdits, openEditProfile, closeEditProfile, openProfilePopup, openFullProfile, cancelEditProfile, deletePerson, removeLink, openDeleteMyProfile, searchRelativeByUid, linkByUniqueId, approveIncoming, rejectIncoming,
   loadMemories, addMemory, deleteMemory,
   runClaimSearch, requestClaim, cancelClaim, startFreshProfile, approveClaim, rejectClaim,
   openJoinPreview, closeJoinPreview, sendJoinRequest, approveJoin, rejectJoin, cancelJoin, ackJoinRejected,
