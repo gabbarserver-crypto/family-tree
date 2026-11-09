@@ -429,8 +429,8 @@ input[type=search]{-webkit-appearance:none;appearance:none}
   .tree-badge.left{left:-10px}
   .tree-badge.right{right:-10px}
   .tree-badge.right.own-tree{width:30px;height:30px;top:-12px}
-  .tree-controls{gap:6px;justify-content:stretch}
-  .tree-controls button{flex:1 1 auto;padding:10px 8px;font-size:13px}
+  /* mobile: no zoom / fit / reset / focus-me buttons under the Branch tree (pinch to zoom, drag to pan) */
+  .tree-controls{display:none}
   .tree-view-banner{padding:10px 12px}
   .tree-view-banner span{min-width:0;flex-basis:100%}
 

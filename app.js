@@ -1174,6 +1174,11 @@ function centerTreeOnMe() {
   const node = stage.querySelector(".branch-node.me"); if (!node) return;
   let x = 0, n = node; while (n && n !== stage) { x += n.offsetLeft; n = n.offsetParent; }
   canvas.scrollLeft = Math.max(0, sizer.offsetLeft + (x + node.offsetWidth / 2) * treeScale - canvas.clientWidth / 2);
+  /* Vertical too: the tree is tall, and at 100% on a phone the top-left of the canvas is empty (the oldest
+     ancestors sit at the far right), so without this the user lands on a blank area and must zoom out to see it. */
+  const r = node.getBoundingClientRect();
+  const dy = r.top + r.height / 2 - window.innerHeight / 2;
+  if (Math.abs(dy) > 40) window.scrollBy(0, dy);
 }
 /* Mouse drag-to-pan for the Branch tree (touch keeps native scrolling). A drag never counts as a click on a card/button. */
 (function initTreeMousePan() {
