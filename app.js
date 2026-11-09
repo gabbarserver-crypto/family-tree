@@ -615,7 +615,7 @@ async function logout() { skipClaimSearch = false; if (supabase) await supabase.
 function topCenterHTML(page) {
   if (page !== "tree" && page !== "wall" && page !== "events") return "";
   const search = page === "tree" ? `<div class="top-search-wrap"><input id="treeSearch" class="top-search" placeholder="Search name, nickname or Person ID…" autocomplete="off" oninput="treeSearchInput(this.value)" onfocus="treeSearchInput(this.value)" onkeydown="treeSearchKey(event)"><div id="treeSearchResults" class="search-results" hidden></div></div>` : "";
-  return `<div class="topbar-center"><span class="top-title">${treeViewing ? esc(treeViewing.ownerName) + "'s Family Tree" : "My Family Tree"}</span>${search}${page === "tree" ? treeStyleSwitchHTML() : `<div class="view-switch"><button class="${page === "wall" ? "active" : ""}" onclick="go('wall')">Family Wall</button><button class="${page === "events" ? "active" : ""}" onclick="go('events')">📅 Events</button></div>`}</div>`;
+  return `<div class="topbar-center"><span class="top-title">${treeViewing ? esc(treeViewing.ownerName) + "'s Family Tree" : "My Family Tree"}</span>${search}${page === "tree" ? treeStyleSwitchHTML() : `<div class="view-switch"><button class="${page === "wall" ? "active" : ""}" onclick="go('wall')">Family Wall</button><button class="${page === "events" ? "active" : ""}" onclick="go('events')">📅 Events</button><button type="button" onclick="openChatSheet()">💬 Chat<span class="dm-badge" hidden></span></button></div>`}</div>`;
 }
 function render() {
   if (!loggedIn) { renderLogin(); return; }
