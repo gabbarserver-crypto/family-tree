@@ -563,6 +563,7 @@ function renderLogin() {
   <div class="brand"><img src="/assets/logo.png" alt="FamilyTree" style="height:64px;width:64px;object-fit:contain;vertical-align:middle;margin-right:8px"><span>Family<em>Tree</em></span></div>
   <h1>Roots, remembered.</h1>
   <p class="muted">Build your family tree, connect with relatives, and keep memories in one place.</p>
+  ${localStorage.getItem(INVITE_KEY) ? `<div class="card" style="margin:14px 0;border-left:4px solid var(--gold,#e0a526)"><b>🔗 Aapko family tree ka invite mila hai.</b><br><span class="muted" style="font-size:13px">Neeche login karo — uske baad aap invite accept kar paoge.</span></div>` : ''}
   ${!supabaseConfigured ? `<div class="card" style="margin:14px 0"><strong>Supabase is not configured.</strong><p class="muted">Add VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY in Vercel/local environment variables.</p></div>` : ''}
   <div class="login-actions">
     <button class="primary full" onclick="googleLogin()">Continue with Google</button>
@@ -2276,7 +2277,7 @@ function peopleListHTML() {
   if (!rows.length) return count + '<div class="card"><p class="muted">Koi match nahi mila. Kuch aur search karke dekhein.</p></div>';
   return count + `<div class="list">${rows.map(({ p, label, kin }) => `<div class="row person-row" style="cursor:pointer" onclick="openProfile('${p.id}')">
     <div class="person-main" style="display:flex;gap:12px;align-items:center">${avatarHTML(p)}<div class="person-txt"><strong>${esc(p.name)}</strong><div class="muted" style="font-size:12.5px">${esc(label)} · ${esc(p.personCode || p.id)}</div>${kin ? `<div class="person-kin">${esc(kin)}</div>` : ""}</div></div>
-    <div class="person-side" style="display:flex;gap:8px;align-items:center">${p.status === "unclaimed" ? '<span class="badge">Unclaimed</span>' : '<span class="badge sage">Claimed</span>'}${canDeletePerson(p) ? `<button type="button" class="danger" style="padding:6px 12px;font-size:12.5px" title="Delete this profile" aria-label="Delete this profile" onclick="event.stopPropagation();deletePerson('${esc(p.id)}')">🗑<span class="person-del-txt"> Delete</span></button>` : ""}</div>
+    <div class="person-side" style="display:flex;gap:8px;align-items:center">${p.status === "unclaimed" ? '<span class="badge">Unclaimed</span>' : '<span class="badge sage">Claimed</span>'}${canInviteProfile(p) ? `<button type="button" class="secondary" style="padding:6px 12px;font-size:12.5px" title="Invite link bhejo" aria-label="Invite link bhejo" onclick="event.stopPropagation();openProfileInvite('${esc(p.id)}')">🔗<span class="person-del-txt"> Invite</span></button>` : ""}${canDeletePerson(p) ? `<button type="button" class="danger" style="padding:6px 12px;font-size:12.5px" title="Delete this profile" aria-label="Delete this profile" onclick="event.stopPropagation();deletePerson('${esc(p.id)}')">🗑<span class="person-del-txt"> Delete</span></button>` : ""}</div>
   </div>`).join("")}</div>`;
 }
 function refreshPeopleList() { const el = document.getElementById("peopleList"); if (el) el.innerHTML = peopleListHTML(); }
@@ -3544,7 +3545,9 @@ function buildFamilyEvents(days = 365) {
   const gone = p => p.lifeStatus === "deceased" || !!p.details?.dod;
   state.people.forEach(p => {
     const b = evParse(p.dob), dd = evParse(p.details?.dod), mar = evParse(p.details?.marriage?.date);
-    if (b && !gone(p)) { const dt = evNext(b.m, b.d, t0); if (dt) push({ type: "birth", emoji: "🎂", date: dt, ids: [p.id], kin: kinLine(p), title: `${p.name} ka Birthday`, detail: `Janm: ${fmtDate(p.dob)}` + (b.y ? ` · ${dt.getFullYear() - b.y} saal ka` : "") }); }
+    if (b && !gone(p)) { const dt = evNext(b.m, b.d, t0); if (dt) push({ type: "birth", emoji: "🎂", date: dt, ids: [p.id], kin: kinLine(p), title: `${p.name} ka Birthday`, detail: p.gender === "Female"
+      ? `Janm: ${new Date(2000, b.m - 1, b.d).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}`   // female: birth year and age are hidden
+      : `Janm: ${fmtDate(p.dob)}` + (b.y ? ` · ${dt.getFullYear() - b.y} saal ka` : "") }); }
     if (dd) { const dt = evNext(dd.m, dd.d, t0); if (dt) push({ type: "death", emoji: "🕯", date: dt, ids: [p.id], kin: kinLine(p), title: `${p.name} ki Death Anniversary`, detail: `Dehant: ${fmtDate(p.details.dod)}` + (dd.y ? ` · ${dt.getFullYear() - dd.y} saal pehle` : "") }); }
     if (mar) {
       const sp = spousesOf(p.id).map(personById).filter(Boolean)[0], key = [p.id, sp?.id || ""].sort().join("|") + "|" + p.details.marriage.date;
@@ -4130,6 +4133,7 @@ Object.assign(window, {
   loadMemories, addMemory, deleteMemory,
   runClaimSearch, requestClaim, cancelClaim, startFreshProfile, approveClaim, rejectClaim,
   openJoinPreview, closeJoinPreview, sendJoinRequest, approveJoin, rejectJoin, cancelJoin, ackJoinRejected,
+  openProfileInvite, closeProfileInvite, generateProfileInvite, copyProfileInvite, revokeProfileInvite, acceptProfileInvite, declineProfileInvite,
   assignTicket, refreshSupport, arRelTypeChanged, cityPicked, cityStateChanged,
   importGedcomPicked, setPeopleSearch, clearPeopleSearch, setPeopleSort, openMoreMenu, closeMoreMenu,
   /* these were used by inline onclick/onchange but never exported, so the Branch/Chart switch, the whole Chart toolbar and the profile Privacy dropdown did nothing */
@@ -4171,6 +4175,7 @@ async function bootOnce() {
   try {
     await ensureProfileAndTree(user);
     await resolveJoinState(user);
+    if (!state.joined && await showPendingInvite(user)) return;
     if (!state.joined && await needsClaimStep(user)) { await renderClaimStep(); return; }
     await loadProductionState(user);
     render();
@@ -4280,6 +4285,96 @@ async function rejectJoin(requestId, added) {
   try { await loadProductionState(currentUser); } catch (e) { console.error(e); }
   render();
 }
+
+/* ---------------- invite link for an unclaimed profile (admin optional) ---------------- */
+/* An owner/admin picks an unclaimed profile in People and chooses "Admin bhi banao" or "Sirf member".
+   The link is  <site>/?invite=TOKEN  (single-use, expires, hashed in the DB). It is stashed in localStorage on page load because the
+   login redirect drops the URL; after sign-in the person sees a confirm screen and the server links them to exactly that profile. */
+const INVITE_KEY = "ft_invite_token";
+function canInviteProfile(p) { return !!supabase && !!currentUser && !!p && p.status === "unclaimed" && !p.claimed_by && !p.external && !treeViewing && canEditTree(); }
+let inviteDraftPerson = null;
+function openProfileInvite(id) {
+  const p = personById(id);
+  if (!canInviteProfile(p)) { toast("Sirf tree owner/admin unclaimed profile ka invite bana sakte hain"); return; }
+  inviteDraftPerson = p.id;
+  document.getElementById("inviteModal")?.remove();
+  const ov = document.createElement("div"); ov.className = "modal-overlay"; ov.id = "inviteModal";
+  ov.innerHTML = `<div class="modal-card"><div class="modal-head"><h3>🔗 Invite link — ${esc(p.name)}</h3><button class="ghost" onclick="closeProfileInvite()">✕</button></div>
+    <div class="modal-body" id="inviteBody">
+      <p class="muted" style="margin:0">Ye link jisko bhejoge, wo login karke <b>${esc(p.name)}</b> wali profile apni bana lega. Link ek hi baar chalega.</p>
+      <label class="card" style="display:flex;gap:10px;align-items:flex-start;padding:12px;cursor:pointer"><input type="radio" name="invAdmin" value="0" checked style="margin-top:4px">
+        <span><b>Sirf member</b><br><span class="muted" style="font-size:12.5px">Profile uski ho jayegi. Wo profiles add/edit kar sakta hai, par admin manage, join approve ya invite nahi bana sakta.</span></span></label>
+      <label class="card" style="display:flex;gap:10px;align-items:flex-start;padding:12px;cursor:pointer"><input type="radio" name="invAdmin" value="1" style="margin-top:4px">
+        <span><b>Admin bhi banao</b><br><span class="muted" style="font-size:12.5px">Profile uski ho jayegi aur wo tree ka <b>admin</b> banega: add/edit, join requests approve, doosre admin add/remove aur invite links.</span></span></label>
+      <div class="field"><label>Link kitne din chale</label><select id="invDays"><option value="1">1 din</option><option value="7" selected>7 din</option><option value="30">30 din</option></select></div>
+    </div>
+    <div class="modal-foot"><button class="ghost" onclick="closeProfileInvite()">Cancel</button><button class="primary" onclick="generateProfileInvite()">Link banao</button></div></div>`;
+  document.body.appendChild(ov);
+}
+function closeProfileInvite() { document.getElementById("inviteModal")?.remove(); }
+async function generateProfileInvite() {
+  const p = personById(inviteDraftPerson);
+  if (!p) return;
+  const makeAdmin = document.querySelector('input[name="invAdmin"]:checked')?.value === "1";
+  const days = Number(document.getElementById("invDays")?.value) || 7;
+  if (makeAdmin && !confirm(`${p.name} wali profile jo bhi is link se kholega wo tree ka ADMIN ban jayega. Sirf usi ko bhejo jise aap jaante ho. Continue?`)) return;
+  const { data, error } = await supabase.rpc("create_profile_invite", { p_person_id: p.id, p_make_admin: makeAdmin, p_days: days });
+  if (error) { toast(/create_profile_invite|function|schema cache/i.test(error.message) ? "Run supabase-profile-invite.sql in Supabase first" : error.message); return; }
+  const link = `${location.origin}${location.pathname}?invite=${data.token}`;
+  const wa = `https://wa.me/?text=${encodeURIComponent(`Family tree me aapki profile (${p.name}) ready hai. Is link se join karo: ${link}`)}`;
+  const body = document.getElementById("inviteBody"), foot = document.querySelector("#inviteModal .modal-foot");
+  if (!body || !foot) return;
+  body.innerHTML = `<p style="margin:0">✅ Link ready — <b>${data.make_admin ? "Admin bhi banega" : "Sirf member banega"}</b>.</p>
+    <input id="inviteLinkText" readonly value="${esc(link)}" onclick="this.select()" style="width:100%">
+    <p class="muted" style="font-size:12.5px;margin:0">Valid till ${esc(fmtDate(data.expires_at))}, sirf ek baar chalega. Ye link dobara nahi dikhega, aur naya link banane par purana band ho jayega.</p>`;
+  foot.innerHTML = `<button class="ghost" onclick="revokeProfileInvite('${esc(p.id)}')">Link band karo</button><a class="secondary" style="padding:10px 16px;border-radius:12px;text-decoration:none" href="${esc(wa)}" target="_blank" rel="noopener">WhatsApp</a><button class="primary" onclick="copyProfileInvite()">Copy link</button>`;
+}
+async function copyProfileInvite() {
+  const t = document.getElementById("inviteLinkText")?.value || "";
+  try { await navigator.clipboard.writeText(t); toast("Link copy ho gaya"); } catch (e) { document.getElementById("inviteLinkText")?.select(); toast("Link select karke copy karo"); }
+}
+async function revokeProfileInvite(personId) {
+  const { error } = await supabase.rpc("revoke_profile_invite", { p_person_id: personId });
+  closeProfileInvite();
+  toast(error ? error.message : "Link band ho gaya");
+}
+/* Receiver side */
+async function showPendingInvite(user) {
+  const token = localStorage.getItem(INVITE_KEY);
+  if (!token) return false;
+  const { data: d, error } = await supabase.rpc("peek_profile_invite", { p_token: token });
+  if (error) {
+    if (/peek_profile_invite|function|schema cache/i.test(error.message)) { toast("Run supabase-profile-invite.sql in Supabase first"); return false; }
+    localStorage.removeItem(INVITE_KEY);
+    toast(/expired|invalid/i.test(error.message) ? "Ye invite link expire ho gaya ya band hai. Bhejne wale se naya link maango." : error.message);
+    return false;
+  }
+  document.getElementById("app").innerHTML = `<main class="login"><section class="login-card" style="max-width:520px">
+    <div class="eyebrow">Family invite</div>
+    <h1 style="font-size:28px">🌳 ${esc(d.tree_name || "Family tree")}</h1>
+    <p class="muted"><b>${esc(d.invited_by)}</b> ne aapko is tree me profile <b>${esc(d.person_name)}</b> ke roop me invite kiya hai.</p>
+    <div class="card" style="margin:12px 0"><b>Accept karne par:</b><br><span class="muted" style="font-size:13.5px">• Ye profile aapki ho jayegi<br>• ${d.make_admin ? "Aap is tree ke <b>admin</b> banoge (add/edit, join approve, admin manage, invite)" : "Aap tree ke <b>member</b> banoge (profiles add/edit kar sakoge)"}</span></div>
+    <p class="muted" style="font-size:12.5px">Agar ye profile aap nahi ho, to Accept mat karo.</p>
+    <button class="primary full" onclick="acceptProfileInvite()">✅ Ye main hu — Accept</button>
+    <button class="ghost full" style="margin-top:8px" onclick="declineProfileInvite()">Abhi nahi</button>
+    <button class="ghost full" style="margin-top:8px" onclick="logout()">Logout</button>
+  </section></main>`;
+  return true;
+}
+async function acceptProfileInvite() {
+  const token = localStorage.getItem(INVITE_KEY);
+  if (!token) { bootAuthenticatedApp(); return; }
+  const { data, error } = await supabase.rpc("accept_profile_invite", { p_token: token });
+  if (error) {
+    toast(error.message);
+    if (/expired|invalid|no longer|already/i.test(error.message)) { localStorage.removeItem(INVITE_KEY); setTimeout(bootAuthenticatedApp, 1200); }
+    return;
+  }
+  localStorage.removeItem(INVITE_KEY);
+  toast(data && data.admin ? "Profile aapki ho gayi. Ab aap is tree ke admin hain." : "Profile aapki ho gayi. Ab aap is tree ke member hain.");
+  location.hash = "tree"; bootAuthenticatedApp();
+}
+function declineProfileInvite() { localStorage.removeItem(INVITE_KEY); bootAuthenticatedApp(); }
 
 /* ---------------- first-login: find & claim a profile someone already made ---------------- */
 let skipClaimSearch = false;
@@ -4480,5 +4575,17 @@ supabase?.auth.onAuthStateChange((event, session) => {
   }
   if ((event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') && session?.user) currentUser = session.user; // no full reload on every token refresh
 });
+
+/* An invite link is /?invite=TOKEN (or #invite=TOKEN). Keep the token, then clean the URL so it is not left in history. */
+try {
+  const sp = new URLSearchParams(location.search), hp = new URLSearchParams(location.hash.replace(/^#/, ""));
+  const tk = sp.get("invite") || hp.get("invite");
+  if (tk && /^[0-9a-f]{32,128}$/i.test(tk)) {
+    localStorage.setItem(INVITE_KEY, tk);
+    sp.delete("invite"); hp.delete("invite");
+    const q = sp.toString(), h = hp.toString();
+    history.replaceState(null, "", location.pathname + (q ? "?" + q : "") + (h ? "#" + h : ""));
+  }
+} catch (e) { console.warn("invite link parse failed", e); }
 
 bootAuthenticatedApp();
