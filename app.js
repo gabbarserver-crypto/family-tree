@@ -609,6 +609,16 @@ async function phoneLogin() {
   const phone = prompt('Enter mobile number with country code, e.g. +9198XXXXXXXX'); if (!phone) return;
   try { await sendPhoneOtp(phone); const otp = prompt('Enter the OTP you received'); if (!otp) return; await verifyPhoneOtp(phone, otp); await bootAuthenticatedApp(); } catch(e) { toast(e.message); }
 }
+/* Light / dark theme: remembered in this browser; first visit follows the device setting. */
+function currentTheme() { return document.documentElement.dataset.theme === "dark" ? "dark" : "light"; }
+function toggleTheme() {
+  const next = currentTheme() === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("ft-theme", next); } catch (e) {}
+  const m = document.querySelector('meta[name=theme-color]'); if (m) m.content = next === "dark" ? "#211a2c" : "#ffffff";
+  document.querySelectorAll(".theme-toggle").forEach(b => { b.textContent = next === "dark" ? "☀️" : "🌙"; b.title = next === "dark" ? "Light mode" : "Dark mode"; });
+  if (typeof render === "function" && loggedIn) render();   // tree connector lines are drawn with theme colours
+}
 async function logout() { skipClaimSearch = false; if (supabase) await supabase.auth.signOut(); loggedIn = false; currentUser = null; state = { account: {}, people: [], relationships: [], connections: [], mergeRequests: [], events: [], posts: [], tickets: [], audit: [], treeId: null, joined: null }; location.hash = 'home'; render(); }
 
 /* ---------------- Notifications (🔔 in the header) ----------------
@@ -717,6 +727,7 @@ function render() {
       <div class="brand"><img src="/assets/logo.png" alt="FamilyTree" style="height:32px;width:32px;object-fit:contain;vertical-align:middle;margin-right:6px"><span>Family<em>Tree</em></span><small>V11</small></div>
       ${topCenterHTML(page)}
       <div class="top-actions">
+        <button type="button" class="theme-toggle" title="${currentTheme() === "dark" ? "Light mode" : "Dark mode"}" onclick="toggleTheme()">${currentTheme() === "dark" ? "☀️" : "🌙"}</button>
         ${notifBellHTML()}
         <span class="muted top-name" style="font-size:13px;cursor:pointer" title="My Profile" onclick="openMyProfile()">${esc(state.account.name)}</span>
         <div style="cursor:pointer" title="My Profile" onclick="openMyProfile()">${myself() ? avatarHTML(myself()) : `<div class="avatar">${esc(initials(state.account.name))}</div>`}</div>
@@ -1704,13 +1715,18 @@ function centerTreeOnMe() {
     if (e.pointerType !== "mouse" || e.button !== 0) return;
     const cv = e.target.closest && e.target.closest("#treeCanvas"); if (!cv) return;
     if (e.target.closest("input,textarea,select,a")) return;
-    pan = { x: e.clientX, y: e.clientY, l: cv.scrollLeft, t: cv.scrollTop, cv }; moved = false;
+    pan = { x: e.clientX, y: e.clientY, l: cv.scrollLeft, t: cv.scrollTop, wy: window.scrollY, cv }; moved = false;
   });
   window.addEventListener("pointermove", e => {
     if (!pan) return;
     const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
     if (!moved && Math.abs(dx) + Math.abs(dy) > 5) { moved = true; pan.cv.classList.add("grab"); }
-    if (moved) { pan.cv.scrollLeft = pan.l - dx; pan.cv.scrollTop = pan.t - dy; e.preventDefault(); }
+    if (moved) {
+      pan.cv.scrollLeft = pan.l - dx;
+      // The tree grows with its content, so up/down is the PAGE's scroll, not the canvas's: drag moves the page too.
+      if (pan.cv.scrollHeight > pan.cv.clientHeight + 1) pan.cv.scrollTop = pan.t - dy; else window.scrollTo(window.scrollX, pan.wy - dy);
+      e.preventDefault();
+    }
   });
   const end = () => { if (!pan) return; pan.cv.classList.remove("grab"); pan = null; setTimeout(() => { moved = false; }, 0); };
   window.addEventListener("pointerup", end); window.addEventListener("pointercancel", end);
@@ -1854,7 +1870,7 @@ function drawTreeConnectors() {
   const svg = document.getElementById("treeLines");
   if (!stage || !svg) return;
   layoutTreeRows(stage);
-  const LINE = "#c9bfa8", DOT = "#4a2e6b";
+  const LINE = currentTheme() === "dark" ? "#6f6480" : "#c9bfa8", DOT = currentTheme() === "dark" ? "#d9c6f3" : "#4a2e6b";
   const get = key => document.getElementById(nodeElId(key));
   // IMPORTANT: .gen rows are position:relative, so offsetLeft/offsetTop are relative to the ROW,
   // not the stage. Walk the offsetParent chain so every coordinate is relative to the stage.
@@ -4599,6 +4615,7 @@ async function importGedcomPicked(inputEl) {
    scoped to the module — they are NOT attached to window automatically
    the way classic <script> globals are. */
 Object.assign(window, {
+  toggleTheme,
   setHoroscope, loadHoroscope, openHoroscope, setHoroCity, tarotDraw, wallPickMedia, wallRemoveFile, wallViewImage, wallMediaShare, wallMediaDownload, wallSaveMedia,
   avatarFallback, sendChat, chatKey,
   openPersonTree, exitTreeView, openBranch, exitBranch,
