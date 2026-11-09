@@ -512,12 +512,12 @@ const HOROSCOPE_URL = "";
 const GAMES_URL = "https://games.1infinity.online/games/auth.html?redirect=index.html";
 const NAV = [
   { group: "Family", items: [
-    ["home", "Home", "🏠"], ["tree", "My Tree", "🌳"], ["people", "People", "👨‍👩‍👧"],
+    ["home", "Home", "🏠"], ["tree", "My Tree", "img:/assets/tree-logo-icon.png"], ["people", "People", "👨‍👩‍👧"],
     ["add", "Add Person", "➕"], ["merge", "Merge", "🔀"], ["importGed", "Import GEDCOM", "📥"], ["relationship", "Relationship", "🔗"], ["horoscope", "Horoscope", "img:/assets/horoscope-icon.png"],
     ["treeAdmins", "Tree Admins", "👑"]
   ]},
   { group: "Social", items: [
-    ["wall", "Family Wall", "📝"], ["events", "Events", "📅"], ["chat", "Chat", "💬"], ["sharing", "Connections", "🔗🤝"], ["games", "Games", "🎮"]
+    ["wall", "Family Wall", "📝"], ["events", "Events", "📅"], ["sharing", "Connections", "🔗🤝"], ["games", "Games", "🎮"]
   ]},
   { group: "Account", items: [
     ["profile", "My Profile", "👤"], ["support", "Support", "🎧"]
@@ -526,7 +526,7 @@ const NAV = [
 const ADMIN_NAV = { group: "Admin", items: [ ["admin", "Admin & Safety", "🛡️"], ["production", "Production", "🚀"] ] };
 
 function navHTML(page, withLogout = true) {
-  const groups = NAV.map(g => ({ group: g.group, items: g.items.filter(([id]) => (id !== "add" || canEditTree()) && (withLogout || id !== "chat")) }));
+  const groups = NAV.map(g => ({ group: g.group, items: g.items.filter(([id]) => (id !== "add" || canEditTree()) && true) }));
   if (isStaff()) groups.push(ADMIN_NAV);
   return groups.map(g => `<div class="navgroup"><div class="navgroup-label">${g.group}</div>${
     g.items.map(([id, label, icon]) => navItem(id, label, icon, page)).join("")
@@ -537,7 +537,7 @@ function navItem(id, label, icon, page) {
   return `<button class="nav ${page === id ? "active" : ""}" onclick="go('${id}')"><span class="ic">${ic}</span><span>${label}</span></button>`;
 }
 /* Phones: the sidebar is hidden, so every page that is not a bottom tab lives in this "More" sheet. */
-const BOTTOM_TABS = ["home", "tree", "people", "wall"];   // Chat lives in the Wall header now (Family Wall | Events | Chat)
+const BOTTOM_TABS = ["home", "tree", "people", "wall", "horoscope"];   // Chat is inside the Wall feed now
 const BOTTOM_LABELS = { tree: "Tree", wall: "Wall" };
 function openMoreMenu() {
   closeMoreMenu();
@@ -585,17 +585,18 @@ async function logout() { skipClaimSearch = false; if (supabase) await supabase.
 
 /* ---------------- shell ---------------- */
 function topCenterHTML(page) {
-  if (page !== "tree" && page !== "wall" && page !== "chat" && page !== "events") return "";
+  if (page !== "tree" && page !== "wall" && page !== "events") return "";
   const search = page === "tree" ? `<div class="top-search-wrap"><input id="treeSearch" class="top-search" placeholder="Search name, nickname or Person ID…" autocomplete="off" oninput="treeSearchInput(this.value)" onfocus="treeSearchInput(this.value)" onkeydown="treeSearchKey(event)"><div id="treeSearchResults" class="search-results" hidden></div></div>` : "";
-  return `<div class="topbar-center"><span class="top-title">${treeViewing ? esc(treeViewing.ownerName) + "'s Family Tree" : "My Family Tree"}</span>${search}${page === "tree" ? treeStyleSwitchHTML() : `<div class="view-switch"><button class="${page === "wall" ? "active" : ""}" onclick="go('wall')">Family Wall</button><button class="${page === "events" ? "active" : ""}" onclick="go('events')">📅 Events</button><button class="${page === "chat" ? "active" : ""}" onclick="go('chat')">💬 Chat<span class="dm-badge" hidden></span></button></div>`}</div>`;
+  return `<div class="topbar-center"><span class="top-title">${treeViewing ? esc(treeViewing.ownerName) + "'s Family Tree" : "My Family Tree"}</span>${search}${page === "tree" ? treeStyleSwitchHTML() : `<div class="view-switch"><button class="${page === "wall" ? "active" : ""}" onclick="go('wall')">Family Wall</button><button class="${page === "events" ? "active" : ""}" onclick="go('events')">📅 Events</button></div>`}</div>`;
 }
 function render() {
   if (!loggedIn) { renderLogin(); return; }
-  const page = (location.hash || "#home").slice(1);
+  let page = (location.hash || "#home").slice(1);
+  if (page === "chat") { history.replaceState(null, "", "#wall"); page = "wall"; setTimeout(openChatSheet, 0); }   // old #chat links: Wall + chat sheet
   if (treeViewing && page !== "tree" && page !== "profile") exitTreeView(false);
-  if (page !== "chat") teardownChat();
+  if (!document.getElementById("chatSheet")) teardownChat();
   const app = document.getElementById("app");
-  const navPage = (page === "events" || page === "chat") ? "wall" : page;   // Events and Chat are inside the Wall tab
+  const navPage = page === "events" ? "wall" : page;   // Events is inside the Wall tab
   const flatNav = NAV.flatMap(g => g.items).filter(([id]) => id !== "add" || canEditTree()).concat(isStaff() ? ADMIN_NAV.items : []);
   app.innerHTML = `<div class="shell">
     <header class="topbar">
@@ -618,7 +619,6 @@ function render() {
   if (page === "wall") requestAnimationFrame(loadWallFeed);
   if (page === "horoscope") requestAnimationFrame(loadHoroscope);
   if (page === "merge") mergeInitSelects();
-  if (page === "chat") requestAnimationFrame(initChat);
   if (page === "profile") requestAnimationFrame(() => loadMemories(activeProfileId || me()?.id));
   refreshDmBadge();
 }
@@ -627,7 +627,7 @@ function switchRole() {}
 function pageView(p) {
   const map = {
     home, tree, add, addRelative, people, merge, relationship, profile: () => profile(activeProfileId || me().id),
-    wall, events: eventsPage, chat, sharing, support, admin, production, treeAdmins, importGed, horoscope: horoscopePage, games: gamesPage
+    wall, events: eventsPage, sharing, support, admin, production, treeAdmins, importGed, horoscope: horoscopePage, games: gamesPage
   };
   if ((p === "admin" || p === "production") && !isStaff()) return accessDenied();
   if (p === "add" && !canEditTree()) return accessDenied("Tree admin access required", "Only this tree's owner or admins can add relatives. Ask the owner to promote you from the Tree Admins page.");
@@ -3607,7 +3607,7 @@ function wall() {
   return `<div class="page-head"><h2>Family Wall</h2><p class="muted">Poori family ki posts ek jagah. Apni wall par likhne ke liye "New post" dabao.</p></div>
   <div class="actions" style="margin-bottom:12px"><button class="primary" onclick="openNewWallPost()">＋ New post</button></div>
   <div class="card"><h3>Aane wale events</h3>${evPreviewHTML()}</div>
-  <div class="card" id="feed"><h3>Feed</h3><div id="wallFeed" class="wall-feed"><p class="muted">Loading…</p></div></div>`;
+  <div class="card" id="feed"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px"><h3 style="margin:0">Feed</h3><button type="button" class="secondary" onclick="openChatSheet()">💬 Chat<span class="dm-badge" hidden></span></button></div><div id="wallFeed" class="wall-feed"><p class="muted">Loading…</p></div></div>`;
 }
 function postHTML(p) { return `<div class="post" data-id="${p.id}"><div class="post-head"><div class="avatar">${esc(initials(p.author))}</div><strong>${esc(p.author)}</strong></div><p>${esc(p.text)}</p><div class="actions"><button class="ghost" onclick="likePost(${p.id})">❤️ ${p.likes}</button><button class="ghost">💬 ${p.comments}</button></div></div>`; }
 async function publishPost() {
@@ -3680,7 +3680,7 @@ function dmSearchResultsHTML() {
 function dmListHTML() {
   const admins = dmPeople().filter(dmIsAdmin).sort((a, b) => (b.treeRole === "owner") - (a.treeRole === "owner") || (a.name || "").localeCompare(b.name || ""));
   const recent = dmThreads();
-  return `<div class="page-head"><h2>💬 Chat</h2><p class="muted">Kisi ek member se seedha baat karo. Poore parivaar ko kuch batana ho to Family Wall par post karo; sabko feed me dikhega aur baat comments me ho jayegi.</p></div>
+  return `<p class="muted" style="margin:0 0 12px">Kisi ek member se seedha baat karo. Poore parivaar ko kuch batana ho to Family Wall par post karo; sabko feed me dikhega aur baat comments me ho jayegi.</p>
   ${recent.length ? `<div class="card"><h3>Recent chats</h3>${recent.map(dmRecentHTML).join("")}</div>` : ""}
   ${admins.length ? `<div class="card"><h3>Admins</h3>${admins.map(dmRowHTML).join("")}</div>` : ""}
   <div class="card"><h3>Members</h3>
@@ -3703,10 +3703,19 @@ function dmThreadHTML() {
   </div>`;
 }
 function dmRootHTML() {
-  if (isPendingJoiner()) return `<div class="page-head"><h2>💬 Chat</h2></div><div class="card"><p class="muted">Join request approve hone ke baad aap chat kar paoge.</p></div>`;
+  if (isPendingJoiner()) return `<div class="card"><p class="muted">Join request approve hone ke baad aap chat kar paoge.</p></div>`;
   return dmOpenWith ? dmThreadHTML() : dmListHTML();
 }
-function chat() { return `<div id="dmRoot">${dmRootHTML()}</div>`; }
+function openChatSheet() {
+  if (document.getElementById("chatSheet")) return;
+  const ov = document.createElement("div"); ov.id = "chatSheet"; ov.className = "modal-overlay";
+  ov.setAttribute("role", "dialog"); ov.setAttribute("aria-label", "Chat");
+  ov.addEventListener("click", e => { if (e.target === ov) closeChatSheet(); });
+  ov.innerHTML = `<div class="chat-sheet-card"><div class="chat-sheet-top"><strong>💬 Chat</strong><button type="button" class="iconbtn" aria-label="Close chat" onclick="closeChatSheet()">✕</button></div><div class="chat-sheet-body"><div id="dmRoot">${dmRootHTML()}</div></div></div>`;
+  document.body.appendChild(ov);
+  initChat();
+}
+function closeChatSheet() { document.getElementById("chatSheet")?.remove(); teardownChat(); refreshDmBadge(true); }
 function refreshDmRoot() {
   const root = document.getElementById("dmRoot"); if (!root) return;
   root.innerHTML = dmRootHTML();
@@ -4218,7 +4227,7 @@ Object.assign(window, {
   runClaimSearch, requestClaim, cancelClaim, startFreshProfile, approveClaim, rejectClaim,
   openJoinPreview, closeJoinPreview, sendJoinRequest, approveJoin, rejectJoin, cancelJoin, ackJoinRejected,
   openProfileInvite, closeProfileInvite, generateProfileInvite, copyProfileInvite, revokeProfileInvite, acceptProfileInvite, declineProfileInvite,
-  dmOpen, dmBack, dmSearchInput,
+  dmOpen, dmBack, dmSearchInput, openChatSheet, closeChatSheet,
   assignTicket, refreshSupport, arRelTypeChanged, cityPicked, cityStateChanged,
   importGedcomPicked, setPeopleSearch, clearPeopleSearch, setPeopleSort, openMoreMenu, closeMoreMenu,
   /* these were used by inline onclick/onchange but never exported, so the Branch/Chart switch, the whole Chart toolbar and the profile Privacy dropdown did nothing */
