@@ -132,5 +132,8 @@ Profile edit and Add Relative now have a State dropdown and a City dropdown that
 Existing free-text cities are kept. Data source/licence: `public/data/india-cities-SOURCE.txt` (ODbL — keep the attribution).
 
 ## Wall post location (new)
-Run `supabase/supabase-wall-location.sql` once in the Supabase SQL editor (after `supabase-wall-media.sql`), then `npm install` (adds `leaflet`).
+Run `supabase/supabase-wall-location.sql` once in the Supabase SQL editor (after `supabase-wall-media.sql`), (no npm install needed: the map library loads from a CDN).
 In "New post" tap 📍 Location: type a place name and/or lat/lng, use GPS, search by name, paste a Google Maps link, or tap/drag a pin on the map.
+
+## Post reactions (new)
+Run `supabase/supabase-wall-reactions.sql` once in the Supabase SQL editor (after `supabase-wall-location.sql`). Replaces the single like with 👍 ❤️ 😂 😢 🙏 🙌 (one reaction per person per post; old likes become ❤️).

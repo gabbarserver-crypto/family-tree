@@ -505,7 +505,7 @@ const NAV = [
     ["treeAdmins", "Tree Admins", "👑"]
   ]},
   { group: "Social", items: [
-    ["wall", "Family Wall", "📝"], ["chat", "Family Chat", "💬"], ["sharing", "Connections", "🔗🤝"], ["games", "Games", "🎮"]
+    ["wall", "Family Wall", "📝"], ["events", "Events", "📅"], ["chat", "Family Chat", "💬"], ["sharing", "Connections", "🔗🤝"], ["games", "Games", "🎮"]
   ]},
   { group: "Account", items: [
     ["profile", "My Profile", "👤"], ["support", "Support", "🎧"]
@@ -571,9 +571,9 @@ async function logout() { skipClaimSearch = false; if (supabase) await supabase.
 
 /* ---------------- shell ---------------- */
 function topCenterHTML(page) {
-  if (page !== "tree" && page !== "wall" && page !== "chat") return "";
+  if (page !== "tree" && page !== "wall" && page !== "chat" && page !== "events") return "";
   const search = page === "tree" ? `<div class="top-search-wrap"><input id="treeSearch" class="top-search" placeholder="Search name, nickname or Person ID…" autocomplete="off" oninput="treeSearchInput(this.value)" onfocus="treeSearchInput(this.value)" onkeydown="treeSearchKey(event)"><div id="treeSearchResults" class="search-results" hidden></div></div>` : "";
-  return `<div class="topbar-center"><span class="top-title">${treeViewing ? esc(treeViewing.ownerName) + "'s Family Tree" : "My Family Tree"}</span>${search}${page === "tree" ? treeStyleSwitchHTML() : `<div class="view-switch"><button class="${page === "tree" ? "active" : ""}" onclick="go('tree')">Family Tree</button><button class="${page === "wall" ? "active" : ""}" onclick="go('wall')">Family Wall</button><button class="${page === "chat" ? "active" : ""}" onclick="go('chat')">💬 Chat</button></div>`}</div>`;
+  return `<div class="topbar-center"><span class="top-title">${treeViewing ? esc(treeViewing.ownerName) + "'s Family Tree" : "My Family Tree"}</span>${search}${page === "tree" ? treeStyleSwitchHTML() : page === "chat" ? "" : `<div class="view-switch"><button class="${page === "wall" ? "active" : ""}" onclick="go('wall')">Family Wall</button><button class="${page === "events" ? "active" : ""}" onclick="go('events')">📅 Events</button></div>`}</div>`;
 }
 function render() {
   if (!loggedIn) { renderLogin(); return; }
@@ -611,7 +611,7 @@ function switchRole() {}
 function pageView(p) {
   const map = {
     home, tree, add, addRelative, people, merge, relationship, profile: () => profile(activeProfileId || me().id),
-    wall, chat, sharing, support, admin, production, treeAdmins, importGed, horoscope: horoscopePage, games: gamesPage
+    wall, events: eventsPage, chat, sharing, support, admin, production, treeAdmins, importGed, horoscope: horoscopePage, games: gamesPage
   };
   if ((p === "admin" || p === "production") && !isStaff()) return accessDenied();
   if (p === "add" && !canEditTree()) return accessDenied("Tree admin access required", "Only this tree's owner or admins can add relatives. Ask the owner to promote you from the Tree Admins page.");
@@ -2530,7 +2530,8 @@ function editProfileFormHTML(p) {
     <div class="field"><label>City</label>${cityFieldHTML("mp", d.city)}</div>
     <div class="field"><label>Married</label>
       <select id="mpMarried"><option value="" ${d.married ? "" : "selected"}>— Select —</option><option value="yes" ${d.married === "yes" ? "selected" : ""}>Married</option><option value="no" ${d.married === "no" ? "selected" : ""}>Unmarried</option></select>
-    </div>`;
+    </div>
+    <div class="field"><label>Marriage date (anniversary ke liye)</label><input id="mpMarriageDate" type="date" value="${v(d.marriage?.date)}"></div>`;
 }
 let profileModalLocked = false; // true while the edit form is open: outside click / Esc must not discard typed data
 let profileModalOrigin = "edit"; // "view" = opened from the tree (Cancel/Save go back to the view), "edit" = opened straight into the form
@@ -2579,7 +2580,7 @@ function filledDetailsHTML(p) {
 /* ---------------- person wall: posts, likes, comments, tags. Used in the person's Wall popup (ctx "m") and in the Wall tab feed (ctx "f") ---------------- */
 let wallPersonId = null, wallTags = [], wallOpenComments = new Set(), wallComposerOnly = false;
 function fmtDateTime(d) { if (!d) return ""; const x = new Date(d); return Number.isNaN(x.getTime()) ? "" : x.toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }); }
-function wallErr(e) { const m = e.message || ""; if (/p_place_name|place_name|wall-location/i.test(m)) return "Run supabase-wall-location.sql in Supabase first"; if (/p_media|wall-media|bucket not found/i.test(m)) return "Run supabase-wall-media.sql in Supabase first"; return /No access/i.test(m) ? m : /list_person_wall|list_wall_feed|toggle_wall_like|add_person_wall_post|list_wall_comments|add_wall_comment|function|schema cache/i.test(m) ? "Run supabase-person-wall.sql in Supabase first" : (m || "Something went wrong"); }
+function wallErr(e) { const m = e.message || ""; if (/p_place_name|place_name|wall-location/i.test(m)) return "Run supabase-wall-location.sql in Supabase first"; if (/p_media|wall-media|bucket not found/i.test(m)) return "Run supabase-wall-media.sql in Supabase first"; if (/my_reaction|reactions|set_wall_reaction/i.test(m)) return "Run supabase-wall-reactions.sql in Supabase first"; return /No access/i.test(m) ? m : /list_person_wall|list_wall_feed|toggle_wall_like|add_person_wall_post|list_wall_comments|add_wall_comment|function|schema cache/i.test(m) ? "Run supabase-person-wall.sql in Supabase first" : (m || "Something went wrong"); }
 function wallComposerHTML(placeholder) {
   return `<div class="wall-compose">
     <textarea id="wallText" rows="3" maxlength="2000" placeholder="${esc(placeholder)}"></textarea>
@@ -2678,11 +2679,42 @@ async function wallHydrateMedia(root) {    // turn data-wm paths into short-live
     if (u) e.src = u; else { const n = document.createElement("div"); n.className = "muted"; n.textContent = "Media available nahi hai"; e.replaceWith(n); }
   });
 }
+/* ---- save / share a post's photo or video (WhatsApp etc. through the phone's share sheet; download as a fallback) ---- */
+const WALL_MIME_EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm" };
+async function wallMediaFile(url) {
+  const r = await fetch(url); if (!r.ok) throw new Error("fetch failed");
+  const blob = await r.blob();
+  return new File([blob], `familytree-${Date.now()}.${WALL_MIME_EXT[blob.type] || "jpg"}`, { type: blob.type });
+}
+async function wallMediaDownload(url) {
+  try {
+    const f = await wallMediaFile(url), a = document.createElement("a");
+    a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  } catch (e) { window.open(url, "_blank"); }
+}
+async function wallMediaShare(url) {
+  try {
+    const f = await wallMediaFile(url);
+    if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: "FamilyTree" }); return; }
+    toast("Is device par seedha share nahi ho sakta. Download ho raha hai, phir WhatsApp me bhej do");
+    wallMediaDownload(url);
+  } catch (e) { if (e && e.name === "AbortError") return; toast("Share nahi ho paya. Download try karo"); }
+}
+function wallSaveMedia(btn, mode) {   // buttons on a video
+  const v = btn.closest(".wall-vwrap")?.querySelector("video"); if (!v?.src) { toast("Video abhi load ho raha hai"); return; }
+  (mode === "share" ? wallMediaShare : wallMediaDownload)(v.src);
+}
 function wallViewImage(url) {
   if (!url) return;
-  const el = document.createElement("div"); el.className = "modal-overlay"; el.style.zIndex = 140; el.style.background = "rgba(0,0,0,.85)";
-  el.innerHTML = `<img src="${esc(url)}" alt="" style="max-width:100%;max-height:100%;border-radius:8px">`;
-  el.onclick = () => el.remove(); document.body.appendChild(el);
+  const el = document.createElement("div"); el.className = "modal-overlay wall-viewer"; el.style.zIndex = 140; el.style.background = "rgba(0,0,0,.88)";
+  el.innerHTML = `<img src="${esc(url)}" alt="" style="max-width:100%;max-height:calc(100% - 64px);border-radius:8px">
+    <div class="wall-viewer-bar"><button type="button" data-a="share">📤 Share</button><button type="button" data-a="download">⬇ Download</button><button type="button" data-a="close">✕ Close</button></div>`;
+  el.onclick = e => {
+    const a = e.target.closest && e.target.closest("button")?.dataset.a;
+    if (a === "share") wallMediaShare(url); else if (a === "download") wallMediaDownload(url); else if (a === "close" || e.target === el) el.remove();
+  };
+  document.body.appendChild(el);
 }
 /* ---- location on posts ----
    Type a place name / lat+lng by hand, use phone GPS, search a place by name, paste a Google Maps link, or tap on a map.
@@ -2800,15 +2832,23 @@ async function wallMapPin(lat, lng, pan) {
   }
   if (pan) wallMap.setView([lat, lng], Math.max(wallMap.getZoom(), 15));
 }
+function wallLoadLeaflet() {   // Leaflet comes from a CDN on first use, so nothing needs to be installed with npm
+  if (window.L) return Promise.resolve(window.L);
+  return new Promise((res, rej) => {
+    const css = document.createElement("link"); css.rel = "stylesheet"; css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+    css.integrity = "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="; css.crossOrigin = ""; document.head.appendChild(css);
+    const s = document.createElement("script"); s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    s.integrity = "sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="; s.crossOrigin = "";
+    s.onload = () => window.L ? res(window.L) : rej(new Error("leaflet missing")); s.onerror = () => rej(new Error("leaflet load failed")); document.head.appendChild(s);
+  });
+}
 async function wallLocToggleMap() {
   const box = document.getElementById("wallLocMap"); if (!box) return;
   box.hidden = !box.hidden; if (box.hidden) return;
   if (wallMap) { setTimeout(() => wallMap.invalidateSize(), 50); return; }
   box.textContent = "Map load ho raha hai…";
   try {
-    const [lf, i1, i2, i3] = await Promise.all([import("leaflet"), import("leaflet/dist/images/marker-icon.png"), import("leaflet/dist/images/marker-icon-2x.png"), import("leaflet/dist/images/marker-shadow.png"), import("leaflet/dist/leaflet.css")]);
-    const L = lf.default || lf;
-    L.Icon.Default.mergeOptions({ iconUrl: i1.default, iconRetinaUrl: i2.default, shadowUrl: i3.default });
+    const L = await wallLoadLeaflet();
     box.textContent = "";
     const la = parseFloat(document.getElementById("wallLat").value), lo = parseFloat(document.getElementById("wallLng").value), has = isFinite(la) && isFinite(lo);
     wallMap = L.map(box).setView(has ? [la, lo] : [22.5, 79], has ? 15 : 5);
@@ -2856,7 +2896,7 @@ function wallPostHTML(m, ctx) {
   const onWall = m.person_id && !m.on_own_wall ? ` <span class="muted">›</span> <button type="button" class="wall-link" onclick="openPersonWall('${esc(m.person_id)}')">${esc(m.person_name || "")}'s wall</button>` : "";
   const media = Array.isArray(m.media) ? m.media : [];
   const mediaHTML = media.length ? `<div class="wall-media n${Math.min(media.length, 4)}">${media.map(x => x.type === "video"
-    ? `<video data-wm="${esc(x.path)}" controls playsinline preload="metadata"></video>`
+    ? `<div class="wall-vwrap"><video data-wm="${esc(x.path)}" controls playsinline preload="metadata"></video><div class="wall-vact"><button type="button" title="Share" onclick="wallSaveMedia(this,'share')">📤</button><button type="button" title="Download" onclick="wallSaveMedia(this,'download')">⬇</button></div></div>`
     : `<img data-wm="${esc(x.path)}" alt="Post photo" loading="lazy" onclick="wallViewImage(this.src)">`).join("")}</div>` : "";
   return `<div class="wall-post" id="wp-${k}" data-media="${esc(JSON.stringify(media.map(x => x.path)))}">
     <div class="wall-post-head"><span><b>${esc(m.author_name || "Family member")}</b>${onWall} <span class="muted">· ${esc(fmtDateTime(m.created_at))}</span></span>
@@ -2864,7 +2904,7 @@ function wallPostHTML(m, ctx) {
     ${m.body ? `<div class="wall-body">${esc(m.body)}</div>` : ""}${mediaHTML}${wallLocTagHTML(m)}
     ${tags ? `<div class="wall-chips">With ${tags}</div>` : ""}
     <div class="wall-actions">
-      <button type="button" class="wall-act${m.liked_by_me ? " on" : ""}" id="wl-${k}" onclick="wallLike('${id}','${ctx}')">${m.liked_by_me ? "❤️" : "🤍"} <span>${Number(m.like_count) || 0}</span></button>
+      <div class="wall-react" id="wr-${k}">${wallReactHTML(m.id, ctx, m.reactions || (Number(m.like_count) ? { heart: Number(m.like_count) } : {}), m.my_reaction || (m.liked_by_me ? "heart" : null))}</div>
       <button type="button" class="wall-act" onclick="wallToggleComments('${id}','${ctx}')">💬 <span id="wcn-${k}">${Number(m.comment_count) || 0}</span></button>
     </div>
     <div class="wall-comments" id="wc-${k}" hidden></div>
@@ -2895,13 +2935,22 @@ async function loadWallFeed() {
   wallReopenComments("f");
 }
 function wallRefresh(ctx) { if (ctx === "f") loadWallFeed(); else { loadPersonWall(); if (document.getElementById("wallFeed")) loadWallFeed(); } }
-async function wallLike(postId, ctx) {
-  const { data, error } = await supabase.rpc("toggle_wall_like", { p_post_id: postId });
-  if (error) { toast(wallErr(error)); return; }
+/* ---- reactions: one per person per post (tap the button, pick an emoji; pick the same one again to remove it) ---- */
+const WALL_REACTIONS = [["like", "👍", "Like"], ["heart", "❤️", "Pyaar"], ["laugh", "😂", "Haha"], ["sad", "😢", "Dukh"], ["namaste", "🙏", "Namaste"], ["highfive", "🙌", "High five"]];
+function wallReactHTML(postId, ctx, reactions, mine) {
+  const id = esc(postId), cur = WALL_REACTIONS.find(r => r[0] === mine);
+  const summary = WALL_REACTIONS.map(r => [r, Number((reactions || {})[r[0]]) || 0]).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1])
+    .map(([r, n]) => `<span class="wall-rx${r[0] === mine ? " mine" : ""}" title="${esc(r[2])}">${r[1]} ${n}</span>`).join("");
+  return `<button type="button" class="wall-act${cur ? " on" : ""}" onclick="wallReactToggle('${id}','${ctx}')">${cur ? cur[1] + " " + esc(cur[2]) : "🙂 React"}</button>${summary}
+    <div class="wall-picker" hidden>${WALL_REACTIONS.map(r => `<button type="button" class="${r[0] === mine ? "sel" : ""}" title="${esc(r[2])}" aria-label="${esc(r[2])}" onclick="wallReact('${id}','${ctx}','${r[0]}')">${r[1]}</button>`).join("")}</div>`;
+}
+function wallReactToggle(postId, ctx) { const pk = document.querySelector(`#wr-${ctx}-${postId} .wall-picker`); if (pk) pk.hidden = !pk.hidden; }
+async function wallReact(postId, ctx, key) {
+  if (!supabase || !currentUser) { toast("Sign in to react"); return; }
+  const { data, error } = await supabase.rpc("set_wall_reaction", { p_post_id: postId, p_reaction: key });
+  if (error) { toast(/set_wall_reaction|function|schema cache/i.test(error.message || "") ? "Run supabase-wall-reactions.sql in Supabase first" : wallErr(error)); return; }
   const r = Array.isArray(data) ? data[0] : data; if (!r) return;
-  const b = document.getElementById("wl-" + ctx + "-" + postId); if (!b) return;
-  b.classList.toggle("on", !!r.liked);
-  b.innerHTML = `${r.liked ? "❤️" : "🤍"} <span>${Number(r.like_count) || 0}</span>`;
+  const box = document.getElementById(`wr-${ctx}-${postId}`); if (box) box.innerHTML = wallReactHTML(postId, ctx, r.reactions || {}, r.my_reaction || null);
 }
 function wallToggleComments(postId, ctx) {
   const box = document.getElementById("wc-" + ctx + "-" + postId); if (!box) return;
@@ -3058,7 +3107,7 @@ async function saveProfileEdits(id) {
   p.mobile = mobile || undefined;
   p.email = emailPending ? oldCardEmail : (email || undefined);
   p.lifeStatus = dod ? "deceased" : "living";
-  p.details = { ...(p.details || {}), firstName: first, middleName: middle, surname: last, dod: dod || "", birth_time: g("mpBirthTime"), state: g("mpState"), city: g("mpCity"), married: document.getElementById("mpMarried").value };
+  p.details = { ...(p.details || {}), firstName: first, middleName: middle, surname: last, dod: dod || "", birth_time: g("mpBirthTime"), state: g("mpState"), city: g("mpCity"), married: document.getElementById("mpMarried").value, marriage: { ...((p.details || {}).marriage || {}), date: g("mpMarriageDate") } };
   if (p.me) { state.account.name = p.name; if (email && !emailPending) state.account.email = email; }
   await save();
   if (p.me && supabase && currentUser) { try { await supabase.from("profiles").update({ display_name: p.name, ...(email && !emailPending ? { email } : {}) }).eq("id", currentUser.id); } catch (e) { console.warn("display_name update failed", e); } }
@@ -3436,11 +3485,80 @@ function findRelation() {
   </div>`;
 }
 
+/* ---------------- Events: birthdays, marriage & death anniversaries (computed from the tree) + DB events ---------------- */
+let evFilter = "all", evRange = 365;
+const EV_FILTERS = [["all", "Sab"], ["birth", "🎂 Birthday"], ["marriage", "💍 Anniversary"], ["death", "🕯 Death anniv."], ["custom", "🎉 Other"]];
+const EV_RANGES = [[30, "30 din"], [90, "90 din"], [365, "1 saal"]];
+function evParse(v) {   // -> {y, m, d} (y may be 0 if unknown) or null
+  if (!v) return null;
+  const s = String(v), iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (iso) return { y: +iso[1], m: +iso[2], d: +iso[3] };
+  const x = new Date(s); return Number.isNaN(x.getTime()) ? null : { y: x.getFullYear(), m: x.getMonth() + 1, d: x.getDate() };
+}
+function evNext(m, d, t0) {   // next date >= today on which month/day falls (Feb 29 -> Feb 28 in non-leap years)
+  for (let y = t0.getFullYear(); y <= t0.getFullYear() + 1; y++) {
+    let dt = new Date(y, m - 1, d); if (dt.getMonth() !== m - 1) dt = new Date(y, m - 1, d - 1);
+    if (dt >= t0) return dt;
+  }
+  return null;
+}
+function buildFamilyEvents(days = 365) {
+  const now = new Date(), t0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()), out = [], seen = new Set();
+  const push = e => { const n = Math.round((e.date - t0) / 864e5); if (n >= 0 && n <= days) out.push({ ...e, daysAway: n }); };
+  const gone = p => p.lifeStatus === "deceased" || !!p.details?.dod;
+  state.people.forEach(p => {
+    const b = evParse(p.dob), dd = evParse(p.details?.dod), mar = evParse(p.details?.marriage?.date);
+    if (b && !gone(p)) { const dt = evNext(b.m, b.d, t0); if (dt) push({ type: "birth", emoji: "🎂", date: dt, ids: [p.id], title: `${p.name} ka Birthday`, detail: `Janm: ${fmtDate(p.dob)}` + (b.y ? ` · ${dt.getFullYear() - b.y} saal ka` : "") }); }
+    if (dd) { const dt = evNext(dd.m, dd.d, t0); if (dt) push({ type: "death", emoji: "🕯", date: dt, ids: [p.id], title: `${p.name} ki Death Anniversary`, detail: `Dehant: ${fmtDate(p.details.dod)}` + (dd.y ? ` · ${dt.getFullYear() - dd.y} saal pehle` : "") }); }
+    if (mar) {
+      const sp = spousesOf(p.id).map(personById).filter(Boolean)[0], key = [p.id, sp?.id || ""].sort().join("|") + "|" + p.details.marriage.date;
+      if (!seen.has(key)) {
+        seen.add(key);
+        const spName = sp?.name || p.details.marriage.spouse, dt = evNext(mar.m, mar.d, t0);
+        if (dt) push({ type: "marriage", emoji: "💍", date: dt, ids: [p.id, sp?.id].filter(Boolean), title: `${p.name}${spName ? " & " + spName : ""} ki Marriage Anniversary`, detail: `Shaadi: ${fmtDate(p.details.marriage.date)}` + (mar.y ? ` · ${dt.getFullYear() - mar.y} saal ki shaadi` : "") });
+      }
+    }
+  });
+  (state.events || []).forEach(e => {   // one-time events saved in the database
+    const x = evParse(e.date); if (!x) return;
+    push({ type: "custom", emoji: e.emoji || "🎉", date: new Date(x.y, x.m - 1, x.d), ids: [], title: e.title, detail: String(e.type || "Event").replace(/_/g, " ") });
+  });
+  return out.sort((a, b) => a.date - b.date || a.title.localeCompare(b.title));
+}
+const evWhen = n => n === 0 ? "Aaj 🎉" : n === 1 ? "Kal" : `${n} din baad`;
+function evRowHTML(e) {
+  const dt = e.date, mon = dt.toLocaleString("en-IN", { month: "short" }), wd = dt.toLocaleString("en-IN", { weekday: "short" });
+  const attr = e.ids.length ? `onclick="openProfilePopup('${esc(e.ids[0])}')"` : "";
+  return `<button type="button" class="ev-row ev-${e.type}${e.daysAway === 0 ? " today" : ""}" ${attr}>
+    <span class="ev-date"><b>${dt.getDate()}</b><small>${mon}</small></span>
+    <span class="ev-main"><strong>${e.emoji} ${esc(e.title)}</strong><span class="muted">${esc(e.detail)} · ${wd}</span></span>
+    <span class="ev-when">${evWhen(e.daysAway)}</span></button>`;
+}
+function evPreviewHTML() {
+  const list = buildFamilyEvents(60).slice(0, 3);
+  return (list.length ? list.map(evRowHTML).join("") : '<p class="muted">Agle 60 din me koi event nahi.</p>') + `<button class="ghost" style="margin-top:8px" onclick="go('events')">Sab events dekho →</button>`;
+}
+function setEvFilter(f) { evFilter = f; render(); }
+function setEvRange(n) { evRange = n; render(); }
+function eventsPage() {
+  const list = buildFamilyEvents(evRange).filter(e => evFilter === "all" || e.type === evFilter);
+  const chips = (arr, cur, fn) => `<div class="ev-chips">${arr.map(([k, l]) => `<button type="button" class="ev-chip${k === cur ? " on" : ""}" onclick="${fn}(${typeof k === "number" ? k : `'${k}'`})">${l}</button>`).join("")}</div>`;
+  let lastMonth = "", body = "";
+  list.forEach(e => {
+    const mk = e.date.toLocaleString("en-IN", { month: "long", year: "numeric" });
+    if (mk !== lastMonth) { body += `<h4 class="ev-month">${mk}</h4>`; lastMonth = mk; }
+    body += evRowHTML(e);
+  });
+  return `<div class="page-head"><h2>Events</h2><p class="muted">Family ke birthday, marriage anniversary aur death anniversary, date ke hisaab se.</p></div>
+  ${chips(EV_FILTERS, evFilter, "setEvFilter")}${chips(EV_RANGES, evRange, "setEvRange")}
+  <div class="card ev-list">${body || '<p class="muted">Is range me koi event nahi. Profile me Date of Birth, Marriage date ya Date of Death bharo to yahan dikhenge.</p>'}</div>`;
+}
+
 /* ---------------- V6: family wall ---------------- */
 function wall() {
   return `<div class="page-head"><h2>Family Wall</h2><p class="muted">Poori family ki posts ek jagah. Apni wall par likhne ke liye "New post" dabao.</p></div>
   <div class="actions" style="margin-bottom:12px"><button class="primary" onclick="openNewWallPost()">＋ New post</button></div>
-  <div class="card"><h3>Upcoming Family Events</h3>${state.events.map(e => `<div class="event-chip"><span class="em">${e.emoji}</span><div><strong>${esc(e.title)}</strong><div class="muted" style="font-size:12.5px">${e.sub}</div></div></div>`).join("")}</div>
+  <div class="card"><h3>Aane wale events</h3>${evPreviewHTML()}</div>
   <div class="card" id="feed"><h3>Feed</h3><div id="wallFeed" class="wall-feed"><p class="muted">Loading…</p></div></div>`;
 }
 function postHTML(p) { return `<div class="post" data-id="${p.id}"><div class="post-head"><div class="avatar">${esc(initials(p.author))}</div><strong>${esc(p.author)}</strong></div><p>${esc(p.text)}</p><div class="actions"><button class="ghost" onclick="likePost(${p.id})">❤️ ${p.likes}</button><button class="ghost">💬 ${p.comments}</button></div></div>`; }
@@ -3961,7 +4079,7 @@ async function importGedcomPicked(inputEl) {
    scoped to the module — they are NOT attached to window automatically
    the way classic <script> globals are. */
 Object.assign(window, {
-  setHoroscope, loadHoroscope, setHoroCity, tarotDraw, wallPickMedia, wallRemoveFile, wallViewImage,
+  setHoroscope, loadHoroscope, setHoroCity, tarotDraw, wallPickMedia, wallRemoveFile, wallViewImage, wallMediaShare, wallMediaDownload, wallSaveMedia,
   avatarFallback, sendChat, chatKey,
   openPersonTree, exitTreeView, openBranch, exitBranch,
   openChangeEmail, saveNewEmail,
@@ -3979,7 +4097,7 @@ Object.assign(window, {
   assignTicket, refreshSupport, arRelTypeChanged, cityPicked, cityStateChanged,
   importGedcomPicked, setPeopleSearch, clearPeopleSearch, setPeopleSort, openMoreMenu, closeMoreMenu,
   /* these were used by inline onclick/onchange but never exported, so the Branch/Chart switch, the whole Chart toolbar and the profile Privacy dropdown did nothing */
-  openPersonWall, openNewWallPost, wallToggleTagPicker, wallToggleLoc, wallLocRender, wallLocClear, wallLocGPS, wallLocSearch, wallLocPick, wallLocPaste, wallLocToggleMap, wallAddTag, wallRemoveTag, wallPost, wallLike, wallToggleComments, wallAddComment, wallDeleteComment, wallDeletePost, setTreeStyle, chartAddMenu, chartBack, chartFit, chartGoFamily, chartOpen, chartSetRoot, chartZoom, chartPanStart, chartWheel, setPrivacy
+  setEvFilter, setEvRange, openPersonWall, openNewWallPost, wallToggleTagPicker, wallToggleLoc, wallLocRender, wallLocClear, wallLocGPS, wallLocSearch, wallLocPick, wallLocPaste, wallLocToggleMap, wallAddTag, wallRemoveTag, wallPost, wallReactToggle, wallReact, wallToggleComments, wallAddComment, wallDeleteComment, wallDeletePost, setTreeStyle, chartAddMenu, chartBack, chartFit, chartGoFamily, chartOpen, chartSetRoot, chartZoom, chartPanStart, chartWheel, setPrivacy
 });
 
 window.addEventListener("hashchange", render);
@@ -4305,7 +4423,7 @@ async function loadProductionState(user) {
   } catch (e) { console.warn("email sync failed", e); }
   if (syncSpouseParents()) save();
   state.posts=(posts||[]).map(p=>({id:p.id,author:p.author_profile_id===user.id?state.account.name:'Family Member',text:p.body||'',likes:0,comments:0,author_profile_id:p.author_profile_id}));
-  state.events=(events||[]).map(e=>({id:e.id,emoji:'🎉',title:e.title,sub:e.event_date + ' · ' + e.event_type}));
+  state.events=(events||[]).map(e=>({id:e.id,emoji:'🎉',title:e.title,sub:e.event_date + ' · ' + e.event_type,date:e.event_date,type:e.event_type}));
   state.mergeRequests=(merges||[]).map(r=>({id:r.id,a:peopleById[r.source_person_id]?.full_name||r.source_person_id,b:peopleById[r.target_person_id]?.full_name||r.target_person_id,keptId:r.target_person_id,removedId:r.source_person_id,status:r.status==='completed'?'Merged':'Pending'}));
   state.connections=(conns||[]).map(c=>({id:c.id,name:peopleById[c.person_id]?.full_name||'Family member',relation:peopleById[c.person_id]?deriveRelationship(people.find(p=>p.claimed_by===user.id)?.id,c.person_id).label:'Family member',status:c.status==='approved'?'connected':'pending',requestId:c.id}));
   await loadSupportTickets(user);
