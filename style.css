@@ -647,3 +647,14 @@ input[type=search]{-webkit-appearance:none;appearance:none}
 .wall-vwrap video{width:100%}
 .wall-vact{position:absolute;top:6px;right:6px;display:flex;gap:6px}
 .wall-vact button{width:34px;height:34px;border-radius:50%;border:0;background:rgba(0,0,0,.6);color:#fff;font-size:16px;line-height:1;cursor:pointer;padding:0}
+
+/* merge: type-to-search picker */
+.mpick{position:relative}
+.mpick input[type=text]{width:100%}
+.mpick-list{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:30;background:var(--paper-raised);border:1px solid var(--line);border-radius:12px;max-height:300px;overflow:auto;box-shadow:0 8px 22px rgba(0,0,0,.16)}
+.mpick-list[hidden]{display:none}
+.mpick-item{display:block;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);padding:9px 12px;cursor:pointer;color:inherit;font:inherit;font-size:14px}
+.mpick-item:last-child{border-bottom:0}
+.mpick-item:hover,.mpick-item:focus{background:var(--gold-tint,#fbf0d8)}
+.mpick-item small{display:block;font-size:12px;margin-top:2px}
+.mpick-more{padding:9px 12px;font-size:12.5px}

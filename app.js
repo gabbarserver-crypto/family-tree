@@ -3283,9 +3283,6 @@ function findDuplicateGroups() {
 function canMergeDirect() { return canEditTree() || isStaff(); }
 
 function merge() {
-  const people = mergeCandidates().slice().sort((a, b) => a.name.localeCompare(b.name));
-  const opt = p => `<option value="${esc(p.id)}">${esc(p.name)}${p.me ? " (You)" : ""}${p.external ? " (dusri tree)" : ""} — ${esc(personHint(p))}</option>`;
-  const optsA = people.map(opt).join("");
   const groups = findDuplicateGroups();
   const direct = canMergeDirect();
   const dupCard = groups.length ? `<div class="card">
@@ -3303,23 +3300,50 @@ function merge() {
   ${dupCard}
   <div class="card form">
     <h3>Manual merge</h3>
-    <div class="field"><label>Profile A</label><select id="ma">${optsA}</select></div>
-    <div class="field"><label>Profile B</label><select id="mb">${optsA}</select></div>
+    ${mergePickerHTML("ma", "Profile A")}
+    ${mergePickerHTML("mb", "Profile B")}
     <button class="secondary" style="justify-self:start" onclick="compareMerge()">Compare Profiles</button>
   </div>
   <div id="mergeCompare"></div>
   <div class="card"><h3>Requests</h3>${state.mergeRequests.length ? state.mergeRequests.map((r, i) => `<div class="row"><span>${esc(r.a)} ↔ ${esc(r.b)}</span><span class="badge ${r.status === "Merged" ? "sage" : ""}">${esc(r.status)}</span>${r.status === "Pending" && (isStaff() || canEditTree()) ? `<button class="secondary" onclick="approveMerge(${i})">Approve &amp; Merge</button>` : ""}</div>`).join("") : "<p class='muted'>No requests yet.</p>"}</div>`;
 }
-/* Make Profile B default to a different person than A so "Compare" works straight away. */
+/* Type-to-search pickers for Profile A / B. The chosen person's id lives in a hidden input (#ma / #mb), so compareMerge() reads it as before. */
+function mergePickerHTML(key, label) {
+  return `<div class="field"><label>${label}</label><div class="mpick">
+    <input type="hidden" id="${key}">
+    <input type="text" id="${key}Text" autocomplete="off" placeholder="Naam, nickname, mobile ya Person ID type karo…" oninput="mergePickSearch('${key}', true)" onfocus="mergePickSearch('${key}')" onkeydown="mergePickKey(event, '${key}')">
+    <div class="mpick-list" id="${key}List" hidden></div></div></div>`;
+}
+function mergePickSearch(key, typing) {
+  const txt = document.getElementById(key + "Text"), hid = document.getElementById(key), box = document.getElementById(key + "List"); if (!txt || !box) return;
+  if (typing) hid.value = "";                                   // typing again = no person chosen yet
+  const words = txt.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const hay = p => [p.name, p.nickname, p.personCode, p.mobile, p.email].filter(Boolean).join(" ").toLowerCase();
+  const hits = mergeCandidates().filter(p => words.every(w => hay(p).includes(w)))
+    .sort((a, b) => (+b.name.toLowerCase().startsWith(words[0] || "") - +a.name.toLowerCase().startsWith(words[0] || "")) || a.name.localeCompare(b.name));
+  box.innerHTML = hits.slice(0, 8).map(p => `<button type="button" class="mpick-item" onclick="mergePickChoose('${key}','${esc(p.id)}')"><b>${esc(p.name)}</b>${p.me ? " (You)" : ""}${p.external ? " (dusri tree)" : ""}<small class="muted">${esc(personHint(p))}${p.personCode ? " · " + esc(p.personCode) : ""}</small></button>`).join("")
+    + (hits.length > 8 ? `<div class="mpick-more muted">+${hits.length - 8} aur — naam ka aur hissa likho</div>` : "")
+    || '<div class="mpick-more muted">Koi profile nahi mila</div>';
+  box.hidden = false;
+}
+function mergePickChoose(key, id) {
+  const p = personById(id); if (!p) return;
+  document.getElementById(key).value = id; document.getElementById(key + "Text").value = p.name; document.getElementById(key + "List").hidden = true;
+}
+function mergePickKey(e, key) {
+  if (e.key === "Enter") { e.preventDefault(); const first = document.querySelector(`#${key}List .mpick-item`); if (first) first.click(); }
+  else if (e.key === "Escape") document.getElementById(key + "List").hidden = true;
+}
+let mergeOutsideBound = false;
 function mergeInitSelects() {
-  const a = document.getElementById("ma"), b = document.getElementById("mb");
-  if (a && b && b.options.length > 1 && a.value === b.value) b.selectedIndex = 1;
+  if (mergeOutsideBound) return; mergeOutsideBound = true;
+  document.addEventListener("click", e => { if (!e.target.closest || !e.target.closest(".mpick")) document.querySelectorAll(".mpick-list").forEach(x => x.hidden = true); });
 }
 function compareMerge() {
   const a = personById(document.getElementById("ma").value);
   const b = personById(document.getElementById("mb").value);
   const box = document.getElementById("mergeCompare");
-  if (!a || !b) return;
+  if (!a || !b) { toast("Dono profile chuno: naam type karke list me se select karo"); return; }
   if (a.id === b.id) { box.innerHTML = `<div class="card"><p class="muted">Do alag profiles chuno (A aur B same hain).</p></div>`; return; }
   const same = (x, y) => x && y && x === y;
   const rowField = (label, av, bv) => `<div class="row"><span class="muted">${label}</span><span>${esc(av) || "—"}</span><span>${esc(bv) || "—"}</span></div>`;
@@ -4083,7 +4107,7 @@ Object.assign(window, {
   avatarFallback, sendChat, chatKey,
   openPersonTree, exitTreeView, openBranch, exitBranch,
   openChangeEmail, saveNewEmail,
-  acceptConnection, addRelative, approveMerge, centerTree, changePhoto, compareMerge, mergeSelectedGroups,
+  acceptConnection, addRelative, approveMerge, centerTree, changePhoto, compareMerge, mergeSelectedGroups, mergePickSearch, mergePickChoose, mergePickKey,
   createPerson, createTicket, findPerson, findRelation, go, googleLogin,
   invite, likePost, logout, openAddRelative, openProfile, openTicket,
   phoneLogin, pickAddRelativePhoto, publishPost, requestMerge, resolveTicket,
