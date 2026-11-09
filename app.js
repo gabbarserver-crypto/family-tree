@@ -619,7 +619,42 @@ function toggleTheme() {
   document.querySelectorAll(".theme-toggle").forEach(b => { b.textContent = next === "dark" ? "☀️" : "🌙"; b.title = next === "dark" ? "Light mode" : "Dark mode"; });
   if (typeof render === "function" && loggedIn) render();   // tree connector lines are drawn with theme colours
 }
-async function logout() { skipClaimSearch = false; if (supabase) await supabase.auth.signOut(); loggedIn = false; currentUser = null; state = { account: {}, people: [], relationships: [], connections: [], mergeRequests: [], events: [], posts: [], tickets: [], audit: [], treeId: null, joined: null }; location.hash = 'home'; render(); }
+/* ---------------- Native (Android APK) push notifications via Firebase Cloud Messaging ----------------
+   Only runs inside the Capacitor app. In a normal browser nothing here does anything. The device token is saved in
+   public.device_tokens (see supabase/supabase-push.sql) and the send-push Edge Function delivers the messages. */
+let nativePushReady = false, nativePushToken = null;
+const isNativeApp = () => !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+async function saveDeviceToken(token) {
+  if (!supabase || !currentUser || !token) return;
+  const { error } = await supabase.from("device_tokens").upsert({ token, user_id: currentUser.id, platform: "android", updated_at: new Date().toISOString() }, { onConflict: "token" });
+  if (error) console.warn("device token not saved (run supabase-push.sql):", error.message);
+}
+async function initNativePush() {
+  if (!isNativeApp() || !currentUser) return;
+  const PN = window.Capacitor.Plugins && window.Capacitor.Plugins.PushNotifications; if (!PN) return;
+  try {
+    if (!nativePushReady) {
+      nativePushReady = true;
+      await PN.addListener("registration", t => { nativePushToken = t.value; saveDeviceToken(t.value); });
+      await PN.addListener("registrationError", e => console.warn("push registration error", e));
+      // App open: show the same in-app toast + refresh the bell
+      await PN.addListener("pushNotificationReceived", n => { toast("🔔 " + (n.title || "Naya notification")); try { pollNotifications(); } catch (e) {} });
+      // Tapped a notification: open the right place
+      await PN.addListener("pushNotificationActionPerformed", a => {
+        const d = (a.notification && a.notification.data) || {};
+        if (d.page) { try { go(d.page); } catch (e) {} } else { try { openNotifications(); } catch (e) {} }
+      });
+    }
+    let perm = await PN.checkPermissions();
+    if (perm.receive === "prompt" || perm.receive === "prompt-with-rationale") perm = await PN.requestPermissions();
+    if (perm.receive === "granted") await PN.register();
+  } catch (e) { console.warn("push init failed", e); }
+}
+async function removeDeviceToken() {
+  if (!nativePushToken || !supabase) return;
+  try { await supabase.from("device_tokens").delete().eq("token", nativePushToken); } catch (e) {}
+}
+async function logout() { await removeDeviceToken(); skipClaimSearch = false; if (supabase) await supabase.auth.signOut(); loggedIn = false; currentUser = null; state = { account: {}, people: [], relationships: [], connections: [], mergeRequests: [], events: [], posts: [], tickets: [], audit: [], treeId: null, joined: null }; location.hash = 'home'; render(); }
 
 /* ---------------- Notifications (🔔 in the header) ----------------
    Counts everything that waits for me: people asking to join the tree, profile-claim requests, "add you to my tree" requests,
@@ -5081,6 +5116,7 @@ async function loadProductionState(user) {
   try { const ij = await supabase.rpc('my_incoming_join_requests'); state.incomingJoins = ij.error ? [] : (ij.data || []); } catch (e) { state.incomingJoins = []; }
   await loadAdminNotes(user);
   startNotifPoll();
+  initNativePush();
   if (state.incomingJoins.length) setTimeout(() => toast(`${state.incomingJoins.length} naye member tree join karna chahte hain — Connections & Sharing mein dekhein`), 900);
   if (state.incoming.length) setTimeout(() => toast(`You have ${state.incoming.length} connection request${state.incoming.length === 1 ? "" : "s"} — see Connections & Sharing`), 600);
 }

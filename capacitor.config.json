@@ -1,0 +1,14 @@
+{
+  "appId": "com.sharma.familytree",
+  "appName": "FamilyTree",
+  "webDir": "dist",
+  "server": {
+    "url": "https://family.1infinity.online",
+    "androidScheme": "https",
+    "allowNavigation": ["family.1infinity.online", "*.supabase.co", "accounts.google.com"]
+  },
+  "android": { "backgroundColor": "#ffffff" },
+  "plugins": {
+    "PushNotifications": { "presentationOptions": ["badge", "sound", "alert"] }
+  }
+}
