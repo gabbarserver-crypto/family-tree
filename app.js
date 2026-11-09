@@ -1,4 +1,4 @@
-import { supabase, supabaseConfigured, signInWithGoogle, sendPhoneOtp, verifyPhoneOtp } from "./supabase.js";
+import { supabase, supabaseConfigured, signInWithGoogle, handleNativeAuthUrl, sendPhoneOtp, verifyPhoneOtp } from "./supabase.js";
 import { importGedcomFile } from "./gedcom.js";
 
 /* ==========================================================================
@@ -5155,3 +5155,16 @@ try {
 } catch (e) { console.warn("invite link parse failed", e); }
 
 bootAuthenticatedApp();
+
+/* Android app: Google login finishes in the phone's browser and returns here through com.sharma.familytree://login-callback */
+try {
+  const AppPlugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+  if (AppPlugin && isNativeApp()) {
+    const onUrl = async url => {
+      try { if (await handleNativeAuthUrl(url)) bootAuthenticatedApp(); }
+      catch (e) { toast("Google login failed: " + e.message); }
+    };
+    AppPlugin.addListener("appUrlOpen", e => onUrl(e && e.url));
+    if (AppPlugin.getLaunchUrl) AppPlugin.getLaunchUrl().then(r => r && r.url && onUrl(r.url)).catch(() => {});
+  }
+} catch (e) { console.warn("native login listener failed", e); }

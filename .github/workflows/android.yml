@@ -15,7 +15,7 @@ jobs:
         with: { node-version: 20, cache: npm }
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 21 }
-      - run: npm ci
+      - run: npm install
       - run: npx vite build && npx cap sync android
       # Release signing is used only when the 4 secrets exist; otherwise a debug-signed APK is produced (installs fine).
       - name: Decode keystore
