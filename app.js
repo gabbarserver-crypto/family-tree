@@ -2491,18 +2491,19 @@ function filledDetailsHTML(p) {
 /* ---------------- person wall: posts, likes, comments, tags. Used in the person's Wall popup (ctx "m") and in the Wall tab feed (ctx "f") ---------------- */
 let wallPersonId = null, wallTags = [], wallOpenComments = new Set(), wallComposerOnly = false;
 function fmtDateTime(d) { if (!d) return ""; const x = new Date(d); return Number.isNaN(x.getTime()) ? "" : x.toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }); }
-function wallErr(e) { const m = e.message || ""; return /No access/i.test(m) ? m : /list_person_wall|list_wall_feed|toggle_wall_like|add_person_wall_post|list_wall_comments|add_wall_comment|function|schema cache/i.test(m) ? "Run supabase-person-wall.sql in Supabase first" : (m || "Something went wrong"); }
+function wallErr(e) { const m = e.message || ""; if (/p_media|wall-media|bucket not found/i.test(m)) return "Run supabase-wall-media.sql in Supabase first"; return /No access/i.test(m) ? m : /list_person_wall|list_wall_feed|toggle_wall_like|add_person_wall_post|list_wall_comments|add_wall_comment|function|schema cache/i.test(m) ? "Run supabase-person-wall.sql in Supabase first" : (m || "Something went wrong"); }
 function wallComposerHTML(placeholder) {
   return `<div class="wall-compose">
     <textarea id="wallText" rows="3" maxlength="2000" placeholder="${esc(placeholder)}"></textarea>
     <div id="wallTagChips" class="wall-chips"></div>
     <div id="wallTagPicker" hidden></div>
-    <div class="wall-compose-actions"><button type="button" class="ghost" onclick="wallToggleTagPicker()">🏷 Tag</button><button type="button" class="primary" onclick="wallPost()">Post</button></div>
+    <div id="wallMediaChips" class="wall-media-chips"></div>
+    <div class="wall-compose-actions"><button type="button" class="ghost" onclick="wallToggleTagPicker()">🏷 Tag</button><button type="button" class="ghost" onclick="wallPickMedia()">📎 Photo / Video</button><button type="button" class="primary" id="wallPostBtn" onclick="wallPost()">Post</button></div>
   </div>`;
 }
 function openPersonWall(id) {
   const p = personById(id); if (!p) return;
-  wallPersonId = id; wallTags = []; wallOpenComments = new Set(); wallComposerOnly = false;
+  wallPersonId = id; wallFiles = []; wallTags = []; wallOpenComments = new Set(); wallComposerOnly = false;
   profileModalOrigin = "view"; profileModalLocked = false;
   profileModalShell(`<div class="modal-head"><h3>📝 ${esc(p.name)}'s Wall</h3><button type="button" class="ghost" aria-label="Close" onclick="closeEditProfile()">✕</button></div>
     <div class="modal-body">
@@ -2516,7 +2517,7 @@ function openPersonWall(id) {
 function openNewWallPost() {
   const mp = myself();
   if (!mp) { toast("Pehle apna profile claim karo"); return; }
-  wallPersonId = mp.id; wallTags = []; wallOpenComments = new Set(); wallComposerOnly = true;
+  wallPersonId = mp.id; wallFiles = []; wallTags = []; wallOpenComments = new Set(); wallComposerOnly = true;
   profileModalOrigin = "view"; profileModalLocked = false;
   profileModalShell(`<div class="modal-head"><h3>✍️ New post</h3><button type="button" class="ghost" aria-label="Close" onclick="closeEditProfile()">✕</button></div>
     <div class="modal-body">
@@ -2537,25 +2538,104 @@ function wallRenderTagPicker() {
 function wallToggleTagPicker() { const el = document.getElementById("wallTagPicker"); if (!el) return; el.hidden = !el.hidden; if (!el.hidden) wallRenderTagPicker(); }
 function wallAddTag(pid) { if (!pid || wallTags.includes(pid)) return; wallTags.push(pid); wallRenderTags(); wallRenderTagPicker(); }
 function wallRemoveTag(pid) { wallTags = wallTags.filter(x => x !== pid); wallRenderTags(); wallRenderTagPicker(); }
+/* ---- photos / videos on posts (private bucket "wall-media"; run supabase-wall-media.sql) ---- */
+const WALL_MAX_FILES = 4, WALL_MAX_VIDEO_MB = 40;
+const WALL_VIDEO_EXT = { "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm" };
+let wallFiles = [];
+function wallPickMedia() {
+  const input = document.createElement("input");
+  input.type = "file"; input.multiple = true; input.accept = "image/*,video/mp4,video/quicktime,video/webm";
+  input.onchange = () => wallAddFiles([...input.files]);
+  input.click();
+}
+function wallAddFiles(list) {
+  for (const f of list) {
+    if (wallFiles.length >= WALL_MAX_FILES) { toast(`Ek post mein max ${WALL_MAX_FILES} files`); break; }
+    const isV = f.type.startsWith("video/"), isI = f.type.startsWith("image/");
+    if (!isV && !isI) { toast("Sirf photo ya video chun sakte hain"); continue; }
+    if (isV && !WALL_VIDEO_EXT[f.type]) { toast("Video MP4, MOV ya WebM hona chahiye"); continue; }
+    if (isV && f.size > WALL_MAX_VIDEO_MB * 1048576) { toast(`Video ${WALL_MAX_VIDEO_MB}MB se chhota hona chahiye`); continue; }
+    f._url = isI ? URL.createObjectURL(f) : null;
+    wallFiles.push(f);
+  }
+  wallRenderFiles();
+}
+function wallRemoveFile(i) { const f = wallFiles[i]; if (f?._url) URL.revokeObjectURL(f._url); wallFiles.splice(i, 1); wallRenderFiles(); }
+function wallRenderFiles() {
+  const box = document.getElementById("wallMediaChips"); if (!box) return;
+  box.innerHTML = wallFiles.map((f, i) => `<div class="wall-thumb">${f._url ? `<img src="${f._url}" alt="">` : `<span class="vid">🎬<small>${esc(f.name.slice(0, 14))}</small></span>`}<button type="button" aria-label="Remove" onclick="wallRemoveFile(${i})">✕</button></div>`).join("");
+}
+async function wallPrepImage(file) {       // shrink to max 1600px JPEG (keeps GIFs as they are so they stay animated)
+  if (file.type === "image/gif") return { blob: file, type: "image/gif", ext: "gif" };
+  let bmp;
+  try { bmp = await createImageBitmap(file, { imageOrientation: "from-image" }); }
+  catch (e) { throw new Error("Ye photo process nahi ho paayi (JPG ya PNG try karein)"); }
+  const k = Math.min(1, 1600 / Math.max(bmp.width, bmp.height)), c = document.createElement("canvas");
+  c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+  c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height); bmp.close?.();
+  const blob = await new Promise(r => c.toBlob(r, "image/jpeg", 0.85));
+  if (!blob) throw new Error("Photo process nahi ho paayi");
+  return { blob, type: "image/jpeg", ext: "jpg" };
+}
+async function wallHydrateMedia(root) {    // turn data-wm paths into short-lived signed URLs
+  if (!root || !supabase) return;
+  const els = [...root.querySelectorAll("[data-wm]")]; if (!els.length) return;
+  const { data, error } = await supabase.storage.from("wall-media").createSignedUrls([...new Set(els.map(e => e.dataset.wm))], 3600);
+  if (error || !data) return;
+  const urls = new Map(data.map(d => [d.path, d.signedUrl]));
+  els.forEach(e => {
+    const u = urls.get(e.dataset.wm);
+    if (u) e.src = u; else { const n = document.createElement("div"); n.className = "muted"; n.textContent = "Media available nahi hai"; e.replaceWith(n); }
+  });
+}
+function wallViewImage(url) {
+  if (!url) return;
+  const el = document.createElement("div"); el.className = "modal-overlay"; el.style.zIndex = 140; el.style.background = "rgba(0,0,0,.85)";
+  el.innerHTML = `<img src="${esc(url)}" alt="" style="max-width:100%;max-height:100%;border-radius:8px">`;
+  el.onclick = () => el.remove(); document.body.appendChild(el);
+}
 async function wallPost() {
   const t = document.getElementById("wallText"); const body = (t?.value || "").trim();
-  if (!body) { toast("Write something first"); return; }
+  if (!body && !wallFiles.length) { toast("Kuch likho ya photo/video jodo"); return; }
   if (!supabase || !currentUser) { toast("Sign in to post"); return; }
-  const { error } = await supabase.rpc("add_person_wall_post", { p_person_id: wallPersonId, p_body: body, p_tagged: wallTags });
-  if (error) { toast(wallErr(error)); return; }
+  const btn = document.getElementById("wallPostBtn");
+  if (btn) { btn.disabled = true; btn.textContent = wallFiles.length ? "Uploading…" : "Posting…"; }
+  const uploaded = [];
+  try {
+    for (const f of wallFiles) {
+      const isV = f.type.startsWith("video/");
+      const prep = isV ? { blob: f, type: f.type, ext: WALL_VIDEO_EXT[f.type] } : await wallPrepImage(f);
+      const path = `${currentUser.id}/${crypto.randomUUID()}.${prep.ext}`;
+      const { error: upErr } = await supabase.storage.from("wall-media").upload(path, prep.blob, { contentType: prep.type, cacheControl: "3600" });
+      if (upErr) throw upErr;
+      uploaded.push({ path, type: isV ? "video" : "image" });
+    }
+    const { error } = await supabase.rpc("add_person_wall_post", { p_person_id: wallPersonId, p_body: body, p_tagged: wallTags, p_media: uploaded });
+    if (error) throw error;
+  } catch (e) {
+    if (uploaded.length) supabase.storage.from("wall-media").remove(uploaded.map(u => u.path)).catch(() => {});   // don't leave orphan files
+    toast(wallErr(e));
+    if (btn) { btn.disabled = false; btn.textContent = "Post"; }
+    return;
+  }
   toast("Posted");
+  wallFiles.forEach(f => f._url && URL.revokeObjectURL(f._url)); wallFiles = [];
   if (wallComposerOnly) closeEditProfile();
-  else { t.value = ""; wallTags = []; wallRenderTags(); const pk = document.getElementById("wallTagPicker"); if (pk) pk.hidden = true; loadPersonWall(); }
+  else { t.value = ""; wallTags = []; wallRenderTags(); wallRenderFiles(); if (btn) { btn.disabled = false; btn.textContent = "Post"; } const pk = document.getElementById("wallTagPicker"); if (pk) pk.hidden = true; loadPersonWall(); }
   if (document.getElementById("wallFeed")) loadWallFeed(); // Wall tab is open behind the popup: refresh it too
 }
 function wallPostHTML(m, ctx) {
   const tags = (m.tagged || []).map(t => `<button type="button" class="wall-chip link" onclick="openProfilePopup('${esc(t.id)}')">🏷 ${esc(t.name)}</button>`).join("");
   const id = esc(m.id), k = ctx + "-" + id;
   const onWall = m.person_id && !m.on_own_wall ? ` <span class="muted">›</span> <button type="button" class="wall-link" onclick="openPersonWall('${esc(m.person_id)}')">${esc(m.person_name || "")}'s wall</button>` : "";
-  return `<div class="wall-post" id="wp-${k}">
+  const media = Array.isArray(m.media) ? m.media : [];
+  const mediaHTML = media.length ? `<div class="wall-media n${Math.min(media.length, 4)}">${media.map(x => x.type === "video"
+    ? `<video data-wm="${esc(x.path)}" controls playsinline preload="metadata"></video>`
+    : `<img data-wm="${esc(x.path)}" alt="Post photo" loading="lazy" onclick="wallViewImage(this.src)">`).join("")}</div>` : "";
+  return `<div class="wall-post" id="wp-${k}" data-media="${esc(JSON.stringify(media.map(x => x.path)))}">
     <div class="wall-post-head"><span><b>${esc(m.author_name || "Family member")}</b>${onWall} <span class="muted">· ${esc(fmtDateTime(m.created_at))}</span></span>
       ${m.can_delete ? `<button type="button" class="ghost" title="Delete" onclick="wallDeletePost('${id}','${ctx}')">🗑</button>` : ""}</div>
-    <div class="wall-body">${esc(m.body)}</div>
+    ${m.body ? `<div class="wall-body">${esc(m.body)}</div>` : ""}${mediaHTML}
     ${tags ? `<div class="wall-chips">With ${tags}</div>` : ""}
     <div class="wall-actions">
       <button type="button" class="wall-act${m.liked_by_me ? " on" : ""}" id="wl-${k}" onclick="wallLike('${id}','${ctx}')">${m.liked_by_me ? "❤️" : "🤍"} <span>${Number(m.like_count) || 0}</span></button>
@@ -2574,6 +2654,7 @@ async function loadPersonWall() {
   if (!now || wallPersonId !== pid) return; // closed or switched to another person
   if (error) { now.innerHTML = `<p class="muted">${esc(wallErr(error))}</p>`; return; }
   now.innerHTML = (data || []).map(m => wallPostHTML(m, "m")).join("") || '<p class="muted">Abhi kisi ne kuchh nahi likha. Pehli post aap likho.</p>';
+  wallHydrateMedia(now);
   wallReopenComments("m");
 }
 /* Wall tab: everyone's posts in the tree, newest first. */
@@ -2584,6 +2665,7 @@ async function loadWallFeed() {
   const now = document.getElementById("wallFeed"); if (!now) return;
   if (error) { now.innerHTML = `<p class="muted">${esc(wallErr(error))}</p>`; return; }
   now.innerHTML = (data || []).map(m => wallPostHTML(m, "f")).join("") || '<p class="muted">Abhi kisi ne kuchh post nahi kiya. "New post" se shuruaat karo.</p>';
+  wallHydrateMedia(now);
   wallReopenComments("f");
 }
 function wallRefresh(ctx) { if (ctx === "f") loadWallFeed(); else { loadPersonWall(); if (document.getElementById("wallFeed")) loadWallFeed(); } }
@@ -2631,8 +2713,10 @@ async function wallDeleteComment(id, postId, ctx) {
 }
 async function wallDeletePost(id, ctx) {
   if (!confirm("Delete this post?")) return;
+  let paths = []; try { paths = JSON.parse(document.getElementById("wp-" + ctx + "-" + id)?.dataset.media || "[]"); } catch (e) {}
   const { error } = await supabase.rpc("delete_person_wall_post", { p_id: id });
   if (error) { toast(wallErr(error)); return; }
+  if (paths.length) supabase.storage.from("wall-media").remove(paths).catch(() => {});   // only the uploader's own files can be removed
   wallOpenComments.delete(ctx + ":" + id); wallRefresh(ctx);
 }
 /* Popup that shows a person's profile (opened by clicking a card in the tree). */
@@ -2758,36 +2842,108 @@ async function saveProfileEdits(id) {
 }
 function setPrivacy(id, val) { const p = state.people.find(x => x.id === id); if (p) { p.privacy = val; save(); toast("Privacy set to " + val); } }
 
+/* ---------------- Profile photo: Camera / Gallery + square crop ---------------- */
+function closePhotoSheet() { document.getElementById("photoSheet")?.remove(); }
+function closePhotoCrop() { document.getElementById("photoCrop")?.remove(); }
 function changePhoto(id) {
   if (!supabase || !currentUser) { toast("Please sign in to upload a photo"); return; }
-  const input = document.createElement("input");
-  input.type = "file";
-  input.accept = "image/png,image/jpeg,image/webp,image/gif";
-  input.onchange = async () => {
-    const file = input.files && input.files[0];
-    if (!file) return;
-    if (!file.type.startsWith("image/")) { toast("Please choose an image file"); return; }
-    if (file.size > 5 * 1024 * 1024) { toast("Image must be under 5MB"); return; }
-    toast("Uploading photo…");
-    try {
-      const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
-      const path = `${currentUser.id}/${id}-${Date.now()}.${ext}`;
-      const { error: upErr } = await supabase.storage.from("avatars").upload(path, file, { upsert: true, cacheControl: "3600" });
-      if (upErr) throw upErr;
-      const { data: pub } = supabase.storage.from("avatars").getPublicUrl(path);
-      const avatar_url = pub.publicUrl;
-      const { error: dbErr } = await supabase.from("persons").update({ avatar_url }).eq("id", id);
-      if (dbErr) throw dbErr;
-      const p = state.people.find(x => x.id === id);
-      if (p) p.avatar_url = avatar_url;
-      toast("Photo updated");
-      render();
-    } catch (e) {
-      console.error("Photo upload failed", e);
-      toast("Photo upload failed: " + e.message);
+  closePhotoSheet();
+  const el = document.createElement("div");
+  el.id = "photoSheet"; el.className = "modal-overlay"; el.style.zIndex = 120;
+  el.innerHTML = `<div class="modal-card" style="max-width:360px"><div class="modal-head"><h3>Profile photo</h3><button type="button" class="ghost" id="phClose" aria-label="Close">✕</button></div>
+    <div class="modal-body"><button type="button" class="primary" id="phCam">📷 Camera se photo lein</button><button type="button" class="secondary" id="phGal">🖼️ Gallery se chunein</button></div></div>`;
+  document.body.appendChild(el);
+  const pick = useCamera => {          // must run inside the click handler so the browser allows the picker
+    const input = document.createElement("input");
+    input.type = "file"; input.accept = "image/*";
+    if (useCamera) input.setAttribute("capture", "user");   // opens the camera on phones; desktops show the normal file picker
+    input.onchange = () => { const f = input.files && input.files[0]; closePhotoSheet(); if (f) openPhotoCrop(id, f); };
+    input.click();
+  };
+  el.addEventListener("click", e => { if (e.target === el) closePhotoSheet(); });
+  document.getElementById("phClose").onclick = closePhotoSheet;
+  document.getElementById("phCam").onclick = () => pick(true);
+  document.getElementById("phGal").onclick = () => pick(false);
+}
+async function openPhotoCrop(id, file) {
+  if (!file.type.startsWith("image/")) { toast("Please choose an image file"); return; }
+  if (file.size > 25 * 1024 * 1024) { toast("Image is too large (max 25MB)"); return; }
+  let bmp;
+  try { bmp = await createImageBitmap(file, { imageOrientation: "from-image" }); }
+  catch (e) {
+    try { bmp = await new Promise((res, rej) => { const im = new Image(), u = URL.createObjectURL(file); im.onload = () => { URL.revokeObjectURL(u); res(im); }; im.onerror = rej; im.src = u; }); }
+    catch (e2) { toast("Ye photo khul nahi paayi. JPG ya PNG try karein."); return; }
+  }
+  const W = bmp.width, H = bmp.height, S = Math.max(220, Math.min(320, window.innerWidth - 72)), OUT = 512;
+  const base = Math.max(S / W, S / H);                    // smallest scale that still covers the square
+  let zoom = 1, ox = 0, oy = 0;                           // ox/oy = image-centre offset from the crop-square centre (view pixels)
+  closePhotoCrop();
+  const el = document.createElement("div");
+  el.id = "photoCrop"; el.className = "modal-overlay"; el.style.zIndex = 130;
+  el.innerHTML = `<div class="modal-card" style="max-width:380px"><div class="modal-head"><h3>Photo crop karein</h3><button type="button" class="ghost" id="pcX" aria-label="Close">✕</button></div>
+    <div class="modal-body" style="justify-items:center"><canvas id="pcCanvas" class="crop-stage" width="${S}" height="${S}" style="width:${S}px;height:${S}px"></canvas>
+      <div class="muted" style="font-size:12.5px">Photo ko khinch kar sahi jagah layein · zoom ke liye slider</div>
+      <input id="pcZoom" type="range" min="1" max="4" step="0.01" value="1" style="width:${S}px" aria-label="Zoom"></div>
+    <div class="actions modal-foot"><button type="button" class="ghost" id="pcCancel">Cancel</button><button type="button" class="primary" id="pcSave">Save photo</button></div></div>`;
+  document.body.appendChild(el);
+  const cv = document.getElementById("pcCanvas"), ctx = cv.getContext("2d");
+  const clamp = () => { const k = base * zoom, mx = Math.max(0, (W * k - S) / 2), my = Math.max(0, (H * k - S) / 2); ox = Math.min(mx, Math.max(-mx, ox)); oy = Math.min(my, Math.max(-my, oy)); };
+  const paint = (c, size, overlay) => {
+    const f = size / S, k = base * zoom * f;
+    c.fillStyle = "#111"; c.fillRect(0, 0, size, size);
+    c.drawImage(bmp, size / 2 + ox * f - W * k / 2, size / 2 + oy * f - H * k / 2, W * k, H * k);
+    if (overlay) {                                          // dim everything outside the circle so the final round avatar is visible
+      c.save(); c.beginPath(); c.rect(0, 0, size, size); c.arc(size / 2, size / 2, size / 2 - 2, 0, Math.PI * 2, true);
+      c.fillStyle = "rgba(0,0,0,.5)"; c.fill("evenodd"); c.restore();
+      c.beginPath(); c.arc(size / 2, size / 2, size / 2 - 2, 0, Math.PI * 2); c.strokeStyle = "rgba(255,255,255,.85)"; c.lineWidth = 2; c.stroke();
     }
   };
-  input.click();
+  const redraw = () => { clamp(); paint(ctx, S, true); };
+  const setZoom = z => { zoom = Math.min(4, Math.max(1, z)); document.getElementById("pcZoom").value = zoom; redraw(); };
+  redraw();
+  // drag to pan, pinch to zoom, wheel to zoom
+  const ptrs = new Map(); let lastDist = 0;
+  cv.addEventListener("pointerdown", e => { cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); lastDist = 0; cv.style.cursor = "grabbing"; });
+  cv.addEventListener("pointermove", e => {
+    const p = ptrs.get(e.pointerId); if (!p) return;
+    const nx = e.clientX, ny = e.clientY;
+    if (ptrs.size === 1) { ox += nx - p.x; oy += ny - p.y; ptrs.set(e.pointerId, { x: nx, y: ny }); redraw(); }
+    else { ptrs.set(e.pointerId, { x: nx, y: ny }); const [a, b2] = [...ptrs.values()], d = Math.hypot(a.x - b2.x, a.y - b2.y); if (lastDist) setZoom(zoom * d / lastDist); lastDist = d; }
+  });
+  const up = e => { ptrs.delete(e.pointerId); lastDist = 0; cv.style.cursor = "grab"; };
+  cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
+  cv.addEventListener("wheel", e => { e.preventDefault(); setZoom(zoom * (e.deltaY < 0 ? 1.08 : 1 / 1.08)); }, { passive: false });
+  document.getElementById("pcZoom").oninput = e => setZoom(parseFloat(e.target.value));
+  const close = () => { closePhotoCrop(); bmp.close?.(); };
+  document.getElementById("pcX").onclick = close; document.getElementById("pcCancel").onclick = close;
+  document.getElementById("pcSave").onclick = async () => {
+    const btn = document.getElementById("pcSave"); btn.disabled = true; btn.textContent = "Saving…";
+    const out = document.createElement("canvas"); out.width = out.height = OUT;
+    paint(out.getContext("2d"), OUT, false);
+    const blob = await new Promise(r => out.toBlob(r, "image/jpeg", 0.9));
+    close();
+    if (!blob) { toast("Photo save nahi ho paayi"); return; }
+    await uploadAvatarBlob(id, blob);
+  };
+}
+async function uploadAvatarBlob(id, blob) {
+  toast("Uploading photo…");
+  try {
+    const path = `${currentUser.id}/${id}-${Date.now()}.jpg`;
+    const { error: upErr } = await supabase.storage.from("avatars").upload(path, blob, { upsert: true, cacheControl: "3600", contentType: "image/jpeg" });
+    if (upErr) throw upErr;
+    const { data: pub } = supabase.storage.from("avatars").getPublicUrl(path);
+    const avatar_url = pub.publicUrl;
+    const { error: dbErr } = await supabase.from("persons").update({ avatar_url }).eq("id", id);
+    if (dbErr) throw dbErr;
+    const p = state.people.find(x => x.id === id);
+    if (p) p.avatar_url = avatar_url;
+    toast("Photo updated");
+    render();
+  } catch (e) {
+    console.error("Photo upload failed", e);
+    toast("Photo upload failed: " + e.message);
+  }
 }
 
 /* ---------------- V4: merge ---------------- */
@@ -3509,7 +3665,7 @@ async function importGedcomPicked(inputEl) {
    scoped to the module — they are NOT attached to window automatically
    the way classic <script> globals are. */
 Object.assign(window, {
-  setHoroscope, loadHoroscope, setHoroCity, tarotDraw,
+  setHoroscope, loadHoroscope, setHoroCity, tarotDraw, wallPickMedia, wallRemoveFile, wallViewImage,
   avatarFallback, sendChat, chatKey,
   openPersonTree, exitTreeView, openBranch, exitBranch,
   openChangeEmail, saveNewEmail,

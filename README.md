@@ -109,3 +109,9 @@ Run `supabase/supabase-person-wall.sql` once in Supabase (SQL editor).
 - Write a **new post**, **🏷 tag** people from the tree, **❤️ like** and **💬 comment**. Authors (and the wall owner) can delete posts/comments.
 - Who can see/write: the tree owner and anyone whose claimed profile is a member of a tree that contains that person (same rule as Family Chat).
 - **Wall tab** = family feed: everyone's posts in the tree, newest first (with ❤️ / 💬 / tags). **＋ New post** writes on *your own* wall. Re-run `supabase-person-wall.sql` after updating (it adds `list_wall_feed`).
+
+## Wall photos & videos (new)
+Run `supabase/supabase-wall-media.sql` once in Supabase (after `supabase-person-wall.sql`). It adds a `media` column, a **private** `wall-media` storage bucket with policies, and replaces `add_person_wall_post`, `list_person_wall`, `list_wall_feed`.
+- Composer has **📎 Photo / Video**: up to 4 files per post; photos are shrunk to 1600px JPEG in the browser, videos (MP4/MOV/WebM) max 40 MB (Supabase free plan allows 50 MB per file, 1 GB storage total).
+- Files are shown through 1-hour signed URLs, so only people who can view that wall can see them.
+- Deleting a post also removes its files when the uploader deletes it; if a wall owner deletes someone else's post the files stay in storage (clean up from the dashboard if needed).
