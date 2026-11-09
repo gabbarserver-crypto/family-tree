@@ -2560,6 +2560,7 @@ async function saveAddRelative() {
 
 /* ---------------- people ---------------- */
 let peopleQuery = "";
+let peopleOnlyUnlinked = false;
 let peopleSort = "name-asc";
 const PEOPLE_SORTS = {
   "name-asc": "Name (A → Z)",
@@ -2572,6 +2573,10 @@ const PEOPLE_SORTS = {
 function peopleListHTML() {
   const q = peopleQuery.trim().toLowerCase();
   let rows = state.people.map(p => ({ p, label: p.me ? "Self" : deriveRelationship(me().id, p.id).label, kin: kinLine(p) }));
+  const linked = new Set(); state.relationships.forEach(r => { linked.add(r.from); linked.add(r.to); });
+  const isUnlinked = p => !linked.has(p.id);
+  const unlinkedTotal = state.people.filter(isUnlinked).length;
+  if (peopleOnlyUnlinked) rows = rows.filter(r => isUnlinked(r.p));
   if (q) rows = rows.filter(({ p, label, kin }) => [p.name, p.id, p.personCode, p.birthPlace, p.currentPlace, label, kin].some(v => (v || "").toString().toLowerCase().includes(q)));
   const byName = (a, b) => (a.p.name || "").localeCompare(b.p.name || "", undefined, { sensitivity: "base" });
   const dob = r => r.p.dob || "";   // ISO strings sort correctly; empty DOB always goes last
@@ -2585,16 +2590,18 @@ function peopleListHTML() {
     "newest": (a, b) => (b.p.created_at || "").localeCompare(a.p.created_at || "") || byName(a, b)
   };
   rows.sort(sorters[peopleSort] || byName);
-  const count = `<p class="muted" style="font-size:12.5px;margin:0 0 8px">${rows.length === state.people.length ? rows.length + " people" : rows.length + " of " + state.people.length + " people"}</p>`;
-  if (!rows.length) return count + '<div class="card"><p class="muted">Koi match nahi mila. Kuch aur search karke dekhein.</p></div>';
+  const chips = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 8px"><button type="button" class="${peopleOnlyUnlinked ? "ghost" : "primary"}" style="padding:6px 14px;font-size:13px;min-height:0" onclick="setPeopleUnlinked(false)">Sab (${state.people.length})</button><button type="button" class="${peopleOnlyUnlinked ? "primary" : "ghost"}" style="padding:6px 14px;font-size:13px;min-height:0" onclick="setPeopleUnlinked(true)" title="Jinka kisi se koi rishta link nahi hai">⚠️ Unlinked (${unlinkedTotal})</button></div>`;
+  const count = chips + `<p class="muted" style="font-size:12.5px;margin:0 0 8px">${rows.length === state.people.length ? rows.length + " people" : rows.length + " of " + state.people.length + " people"}</p>`;
+  if (!rows.length) return count + `<div class="card"><p class="muted">${peopleOnlyUnlinked && !q ? "Koi unlinked profile nahi hai — sab kisi na kisi se juda hua hai. 🎉" : "Koi match nahi mila. Kuch aur search karke dekhein."}</p></div>`;
   return count + `<div class="list">${rows.map(({ p, label, kin }) => `<div class="row person-row" style="cursor:pointer" onclick="openProfile('${p.id}')">
-    <div class="person-main" style="display:flex;gap:12px;align-items:center">${avatarHTML(p)}<div class="person-txt"><strong>${esc(p.name)}</strong><div class="muted" style="font-size:12.5px">${esc(label)} · ${esc(p.personCode || p.id)}</div>${kin ? `<div class="person-kin">${esc(kin)}</div>` : ""}</div></div>
+    <div class="person-main" style="display:flex;gap:12px;align-items:center">${avatarHTML(p)}<div class="person-txt"><strong>${esc(p.name)}</strong>${isUnlinked(p) ? ' <span class="badge" style="background:var(--terracotta-tint);color:var(--terracotta)" title="Kisi se link nahi hai">⚠️ Not linked</span>' : ""}<div class="muted" style="font-size:12.5px">${esc(label)} · ${esc(p.personCode || p.id)}</div>${kin ? `<div class="person-kin">${esc(kin)}</div>` : ""}</div></div>
     <div class="person-side" style="display:flex;gap:8px;align-items:center">${p.status === "unclaimed" ? '<span class="badge">Unclaimed</span>' : '<span class="badge sage">Claimed</span>'}${canInviteProfile(p) ? `<button type="button" class="secondary" style="padding:6px 12px;font-size:12.5px" title="Invite link bhejo" aria-label="Invite link bhejo" onclick="event.stopPropagation();openProfileInvite('${esc(p.id)}')">🔗<span class="person-del-txt"> Invite</span></button>` : ""}${canDeletePerson(p) ? `<button type="button" class="danger" style="padding:6px 12px;font-size:12.5px" title="Delete this profile" aria-label="Delete this profile" onclick="event.stopPropagation();deletePerson('${esc(p.id)}')">🗑<span class="person-del-txt"> Delete</span></button>` : ""}</div>
   </div>`).join("")}</div>`;
 }
 function refreshPeopleList() { const el = document.getElementById("peopleList"); if (el) el.innerHTML = peopleListHTML(); }
 function setPeopleSearch(v) { peopleQuery = v || ""; refreshPeopleList(); }
 function clearPeopleSearch() { peopleQuery = ""; const i = document.getElementById("peopleSearch"); if (i) { i.value = ""; i.focus(); } refreshPeopleList(); }
+function setPeopleUnlinked(on) { peopleOnlyUnlinked = !!on; refreshPeopleList(); }
 function setPeopleSort(v) { peopleSort = PEOPLE_SORTS[v] ? v : "name-asc"; refreshPeopleList(); }
 function people() {
   return `<div class="page-head"><h2>People</h2><p class="muted">Everyone connected to your family tree.</p></div>
@@ -4624,6 +4631,7 @@ async function importGedcomPicked(inputEl) {
    scoped to the module — they are NOT attached to window automatically
    the way classic <script> globals are. */
 Object.assign(window, {
+  setPeopleUnlinked,
   toggleTheme,
   setHoroscope, loadHoroscope, openHoroscope, setHoroCity, tarotDraw, wallPickMedia, wallRemoveFile, wallViewImage, wallMediaShare, wallMediaDownload, wallSaveMedia,
   avatarFallback, sendChat, chatKey,
