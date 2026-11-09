@@ -2795,6 +2795,7 @@ async function removeLink(relId) {
   }
   toast("Link removed");
   render();
+  if (popupPersonId && document.getElementById("editModal") && profileModalOrigin === "view" && personById(popupPersonId)) openProfilePopup(popupPersonId);   // refresh the open popup
 }
 /* Delete MY profile / account.
    - I am also in someone else's tree  -> my card stays there as UNCLAIMED (contact info + photo removed), account is deleted
@@ -3324,8 +3325,10 @@ async function wallDeletePost(id, ctx) {
   wallOpenComments.delete(ctx + ":" + id); wallRefresh(ctx);
 }
 /* Popup that shows a person's profile (opened by clicking a card in the tree). */
+let popupPersonId = null;
 function openProfilePopup(id) {
   const p = personById(id); if (!p) return;
+  popupPersonId = id;
   profileModalOrigin = "view";
   profileModalLocked = false;
   const rel = p.me ? "Self" : deriveRelationship(me().id, p.id).label;
@@ -3337,6 +3340,7 @@ function openProfilePopup(id) {
         ${kinLine(p) ? `<div class="person-kin" style="margin:0 0 6px">${esc(kinLine(p))}</div>` : '<div style="margin-bottom:4px"></div>'}
         ${p.status === "unclaimed" ? '<span class="badge">Unclaimed</span>' : '<span class="badge sage">Claimed</span>'}</div></div>
       <div>${filledDetailsHTML(p)}</div>
+      ${linksCardHTML(p)}
     </div>
     <div class="actions modal-foot">
       <button type="button" class="secondary" onclick="openPersonWall('${esc(p.id)}')">📝 Wall</button>
@@ -3423,6 +3427,7 @@ async function saveNewEmail(id) {
 }
 function cancelEditProfile(id) { if (profileModalOrigin === "view") openProfilePopup(id); else closeEditProfile(); }
 function closeEditProfile() {
+  popupPersonId = null;
   profileModalLocked = false;
   document.getElementById("editModal")?.remove();
   document.body.style.overflow = "";
@@ -3815,6 +3820,7 @@ function relationship() {
   <div class="card form"><datalist id="relPeople">${opts}</datalist>
   ${field("ra", "Person A", mine ? relPickLabel(mine) : "")}
   ${field("rb", "Person B", "")}
+  ${field("rc", "Person C (optional)", "")}
   <button class="primary" style="justify-self:start" onclick="findRelation()">Find Relationship</button><div id="relout"></div></div>`;
 }
 /* Relationship path drawn as a small family tree: parents sit above children, spouses side by side,
@@ -3870,19 +3876,22 @@ function fitRelTrees() {
   });
 }
 window.addEventListener("resize", () => fitRelTrees());
-function findRelation() {
-  const a = relPickValue("ra"), b = relPickValue("rb");
-  if (!a || !b) { toast(!a ? "Person A list se chunein" : "Person B list se chunein"); return; }
+/* One result card: "<b> is <label> of <a>" + the path chart. */
+function relResultHTML(a, b) {
   const result = deriveRelationship(a.id, b.id);
-  const box = document.getElementById("relout");
-  if (result.path === null) {
-    box.innerHTML = `<div class="card" style="margin-top:10px"><strong>${esc(b.name)} isn't connected to ${esc(a.name)} in the graph yet.</strong><p class="muted" style="margin-top:6px">Add a parent, spouse or child edge to connect them.</p></div>`;
-    return;
-  }
-  box.innerHTML = `<div class="card" style="margin-top:10px">
+  if (result.path === null) return `<div class="card" style="margin-top:10px"><strong>${esc(b.name)} isn't connected to ${esc(a.name)} in the graph yet.</strong><p class="muted" style="margin-top:6px">Add a parent, spouse or child edge to connect them.</p></div>`;
+  return `<div class="card" style="margin-top:10px">
     <strong>${esc(b.name)} is ${a.id === b.id ? "" : `${result.label} of`} ${esc(a.name)}${a.id === b.id ? " (same person)" : ""}.</strong>
     ${result.path.length ? relationTreeHTML(a.id, result.path) : ""}
   </div>`;
+}
+function findRelation() {
+  const a = relPickValue("ra"), b = relPickValue("rb"), cRaw = (document.getElementById("rc")?.value || "").trim(), c = cRaw ? relPickValue("rc") : null;
+  if (!a || !b) { toast(!a ? "Person A list se chunein" : "Person B list se chunein"); return; }
+  if (cRaw && !c) { toast("Person C list se chunein (ya khali chhod dein)"); return; }
+  // A + B -> one result. With Person C: B->A, C->A and C->B, each with its own chart.
+  const pairs = c ? [[a, b], [a, c], [b, c]] : [[a, b]];
+  document.getElementById("relout").innerHTML = pairs.map(([x, y]) => relResultHTML(x, y)).join("");
   fitRelTrees();
 }
 
