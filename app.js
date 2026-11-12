@@ -615,7 +615,8 @@ function renderLogin() {
     ${!supabaseConfigured ? `<div class="login2-warn"><strong>Supabase is not configured.</strong><br>Add VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY in Vercel/local environment variables.</div>` : ''}
     <div class="login2-actions">
       <button class="btn-google" onclick="googleLogin()">${G} Continue with Google</button>
-      <button class="btn-fb" onclick="facebookLogin()">${FB} Continue with Facebook</button>
+      <!-- Facebook login hidden until Meta business verification is done. To enable, add back:
+      <button class="btn-fb" onclick="facebookLogin()">${FB} Continue with Facebook</button> -->
       <button class="btn-otp" onclick="phoneLogin()">${I.ph} Continue with Mobile OTP</button>
     </div>
     <div class="login2-or">OR</div>
