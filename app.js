@@ -1,4 +1,4 @@
-import { supabase, supabaseConfigured, signInWithGoogle, handleNativeAuthUrl, sendPhoneOtp, verifyPhoneOtp } from "./supabase.js";
+import { supabase, supabaseConfigured, signInWithGoogle, signInWithFacebook, handleNativeAuthUrl, sendPhoneOtp, verifyPhoneOtp } from "./supabase.js";
 import { importGedcomFile } from "./gedcom.js";
 
 /* ==========================================================================
@@ -601,6 +601,7 @@ function renderLogin() {
     sec: '<svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>',
     ph: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#b9a0ff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M11 18.5h2"/></svg>'
   };
+  const FB = '<svg width="20" height="20" viewBox="0 0 24 24"><path fill="#fff" d="M24 12a12 12 0 1 0-13.9 11.9v-8.4H7.1V12h3V9.4c0-3 1.8-4.7 4.5-4.7 1.3 0 2.7.2 2.7.2v3h-1.5c-1.5 0-2 .9-2 1.9V12h3.4l-.5 3.5h-2.9v8.4A12 12 0 0 0 24 12z"/></svg>';
   const invite = localStorage.getItem(INVITE_KEY);
   document.getElementById("app").innerHTML = `<main class="login2"><section class="login2-shell">
   <div class="login2-art" aria-hidden="true"></div>
@@ -614,6 +615,7 @@ function renderLogin() {
     ${!supabaseConfigured ? `<div class="login2-warn"><strong>Supabase is not configured.</strong><br>Add VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY in Vercel/local environment variables.</div>` : ''}
     <div class="login2-actions">
       <button class="btn-google" onclick="googleLogin()">${G} Continue with Google</button>
+      <button class="btn-fb" onclick="facebookLogin()">${FB} Continue with Facebook</button>
       <button class="btn-otp" onclick="phoneLogin()">${I.ph} Continue with Mobile OTP</button>
     </div>
     <div class="login2-or">OR</div>
@@ -626,6 +628,7 @@ function renderLogin() {
   </div></section></main>`;
 }
 async function googleLogin() { try { await signInWithGoogle(); } catch(e) { toast(e.message); } }
+async function facebookLogin() { try { await signInWithFacebook(); } catch(e) { toast(e.message); } }
 async function phoneLogin() {
   if (!supabase) return toast('Supabase is not configured');
   const phone = prompt('Enter mobile number with country code, e.g. +9198XXXXXXXX'); if (!phone) return;
@@ -4774,7 +4777,7 @@ Object.assign(window, {
   openPersonTree, exitTreeView, openBranch, exitBranch,
   openChangeEmail, saveNewEmail,
   acceptConnection, addRelative, approveMerge, centerTree, changePhoto, compareMerge, mergeSelectedGroups, mergePickSearch, mergePickChoose, mergePickKey,
-  createPerson, createTicket, findPerson, findRelation, go, googleLogin,
+  createPerson, createTicket, facebookLogin, findPerson, findRelation, go, googleLogin,
   invite, likePost, logout, openAddRelative, openProfile, openTicket,
   phoneLogin, pickAddRelativePhoto, publishPost, requestMerge, resolveTicket,
   reviewItem, saveAddRelative, sendReply, shareId, toast, treeFocusMe,

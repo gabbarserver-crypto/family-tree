@@ -13,12 +13,12 @@ export const supabase = supabaseConfigured ? createClient(url, publishableKey, {
 export const NATIVE_REDIRECT = 'com.sharma.familytree://login-callback'
 const isNative = () => !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform())
 
-export async function signInWithGoogle() {
+async function signInWithProvider(provider, extra = {}) {
   if (!supabase) throw new Error('Supabase is not configured')
   if (isNative()) {
     const { data, error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: NATIVE_REDIRECT, skipBrowserRedirect: true }
+      provider,
+      options: { redirectTo: NATIVE_REDIRECT, skipBrowserRedirect: true, ...extra }
     })
     if (error) throw error
     const B = window.Capacitor.Plugins && window.Capacitor.Plugins.Browser
@@ -27,11 +27,14 @@ export async function signInWithGoogle() {
     return
   }
   const { error } = await supabase.auth.signInWithOAuth({
-    provider: 'google',
-    options: { redirectTo: window.location.origin }
+    provider,
+    options: { redirectTo: window.location.origin, ...extra }
   })
   if (error) throw error
 }
+
+export const signInWithGoogle = () => signInWithProvider('google')
+export const signInWithFacebook = () => signInWithProvider('facebook', { scopes: 'public_profile,email' })
 
 // Called when the app is re-opened by the com.sharma.familytree://login-callback link.
 export async function handleNativeAuthUrl(url) {
