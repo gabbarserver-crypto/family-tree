@@ -268,9 +268,10 @@ function clearSpouseMarriageDate(id) {
   spousesOf(id).map(personById).filter(x => x && x.details?.marriage?.date && canEditPerson(x))
     .forEach(x => { x.details = { ...x.details, marriage: { ...x.details.marriage, date: "" } }; });
 }
-function parentsOf(id) { return state.relationships.filter(r => r.type === "parent" && r.to === id).map(r => r.from); }
-function childrenOf(id) { return state.relationships.filter(r => r.type === "parent" && r.from === id).map(r => r.to); }
-function spousesOf(id) { return state.relationships.filter(r => r.type === "spouse" && (r.from === id || r.to === id)).map(r => r.from === id ? r.to : r.from); }
+/* Always unique: the same link can exist twice in the data (e.g. imported both ways, or A-B and B-A), which used to draw the same person twice. */
+function parentsOf(id) { return [...new Set(state.relationships.filter(r => r.type === "parent" && r.to === id).map(r => r.from))]; }
+function childrenOf(id) { return [...new Set(state.relationships.filter(r => r.type === "parent" && r.from === id).map(r => r.to))]; }
+function spousesOf(id) { return [...new Set(state.relationships.filter(r => r.type === "spouse" && (r.from === id || r.to === id)).map(r => r.from === id ? r.to : r.from))]; }
 function siblingsOf(id) {
   const ps = parentsOf(id);
   const set = new Set();
@@ -544,7 +545,7 @@ const GAMES_URL = "https://games.1infinity.online/games/auth.html?redirect=index
 const NAV = [
   { group: "Family", items: [
     ["home", "Home", "🏠"], ["tree", "My Tree", "img:/assets/tree-logo-icon.png"], ["people", "People", "👨‍👩‍👧"],
-    ["add", "Add Person", "➕"], ["merge", "Merge", "🔀"], ["importGed", "Import GEDCOM", "📥"], ["relationship", "Relationship", "🔗"], ["horoscope", "Horoscope", "img:/assets/horoscope-icon.png"],
+    ["merge", "Duplicates", "🔀"], ["importGed", "Import GEDCOM", "📥"], ["relationship", "Relationship", "🔗"], ["horoscope", "Horoscope", "img:/assets/horoscope-icon.png"],
     ["treeAdmins", "Tree Admins", "👑"]
   ]},
   { group: "Social", items: [
@@ -557,6 +558,7 @@ const NAV = [
 const ADMIN_NAV = { group: "Admin", items: [ ["admin", "Admin & Safety", "🛡️"], ["production", "Production", "🚀"] ] };
 
 function navHTML(page, withLogout = true) {
+  if (page === "add" || page === "addRelative") page = "people";   // Add Person lives inside the People page now
   const groups = NAV.map(g => ({ group: g.group, items: g.items.filter(([id]) => (id !== "add" || canEditTree()) && true) }));
   if (isStaff()) groups.push(ADMIN_NAV);
   return groups.map(g => `<div class="navgroup"><div class="navgroup-label">${g.group}</div>${
@@ -1111,14 +1113,61 @@ function dailyQuoteCardHTML() {
     <div class="actions" style="margin-top:10px"><button type="button" class="secondary" onclick="dqShare()">📤 Share</button><button type="button" class="secondary" onclick="dqDownload()">⬇ Download</button></div></div>`;
 }
 function dqAnother() { dqShift++; dailyQuoteInit(); }
-function dqDownload() { if (!dqUrl) return; const a = document.createElement("a"); a.href = dqUrl; a.download = "familytree-quote.png"; document.body.appendChild(a); a.click(); a.remove(); }
+/* Inside the installed Android app (WebView) a data-URL download and file-sharing do not work. There the picture is uploaded once to
+   the public "avatars" bucket and opened / shared as a normal https link (Download = browser download, Share = share sheet or WhatsApp). */
+let dqRemote = { src: "", plain: "", dl: "" };
+async function dqJpegBlob() {
+  const png = await (await fetch(dqUrl)).blob(), bmp = await createImageBitmap(png);
+  const c = document.createElement("canvas"); c.width = bmp.width; c.height = bmp.height;
+  c.getContext("2d").drawImage(bmp, 0, 0); bmp.close?.();
+  const blob = await new Promise(r => c.toBlob(r, "image/jpeg", 0.92));
+  if (!blob) throw new Error("image ban nahi payi");
+  return blob;
+}
+async function dqRemoteUrl(forDownload) {
+  if (!supabase || !currentUser) throw new Error("Pehle login karo");
+  if (dqRemote.src !== dqUrl) {
+    const d = new Date(), key = `${d.getFullYear()}${d.getMonth() + 1}${d.getDate()}`;
+    const path = `${currentUser.id}/dq-${key}-${dqShift}-${dqHash(dqUrl.slice(-300)).toString(36)}.jpg`;
+    const { error } = await supabase.storage.from("avatars").upload(path, await dqJpegBlob(), { upsert: true, cacheControl: "3600", contentType: "image/jpeg" });
+    if (error) throw error;
+    const bucket = supabase.storage.from("avatars");
+    dqRemote = { src: dqUrl, plain: bucket.getPublicUrl(path).data.publicUrl, dl: bucket.getPublicUrl(path, { download: "familytree-quote.jpg" }).data.publicUrl };
+  }
+  return forDownload ? dqRemote.dl : dqRemote.plain;
+}
+async function dqOpenExternal(url) {
+  const B = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Browser;
+  if (B && B.open) { await B.open({ url }); return; }
+  window.open(url, "_blank");
+}
+function dqDownloadLocal() { const a = document.createElement("a"); a.href = dqUrl; a.download = "familytree-quote.png"; document.body.appendChild(a); a.click(); a.remove(); }
+async function dqDownload() {
+  if (!dqUrl) return;
+  if (isNativeApp()) {
+    try { toast("Download shuru ho raha hai…"); await dqOpenExternal(await dqRemoteUrl(true)); }
+    catch (e) { console.error(e); toast("Download nahi ho paya: " + (e.message || e)); }
+    return;
+  }
+  dqDownloadLocal();
+}
 async function dqShare() {
   if (!dqUrl) return;
+  if (isNativeApp()) {
+    let text = "";
+    try {
+      const u = await dqRemoteUrl(false);
+      text = dqPick().quote + "\n\n" + u;
+      if (navigator.share) { await navigator.share({ title: "FamilyTree", text }); return; }
+    } catch (e) { if (e && e.name === "AbortError") return; if (!text) { toast("Share nahi ho paya: " + (e.message || e)); return; } }
+    try { await dqOpenExternal("https://wa.me/?text=" + encodeURIComponent(text)); } catch (e) { toast("Share nahi ho paya"); }   // no share sheet in this WebView: WhatsApp link
+    return;
+  }
   try {
     const blob = await (await fetch(dqUrl)).blob(), file = new File([blob], "familytree-quote.png", { type: "image/png" });
     if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: "FamilyTree" }); return; }
   } catch (e) { if (e && e.name === "AbortError") return; }
-  dqDownload();
+  dqDownloadLocal();
 }
 
 /* Android app download card (hidden inside the installed app itself) */
@@ -1137,7 +1186,7 @@ function home() {
   <div class="grid g4">
     <div class="card stat-card"><div class="muted">People in tree</div><div class="stat">${state.people.length}</div></div>
     <div class="card stat-card"><div class="muted">Unclaimed profiles</div><div class="stat">${state.people.filter(p => p.status === "unclaimed").length}</div></div>
-    <div class="card stat-card"><div class="muted">Merge requests</div><div class="stat">${state.mergeRequests.length}</div></div>
+    <div class="card stat-card"><div class="muted">Duplicate requests</div><div class="stat">${state.mergeRequests.length}</div></div>
     <div class="card stat-card"><div class="muted">Connections</div><div class="stat">${state.connections.filter(c => c.status === "connected").length}</div></div>
   </div>
   <div class="card"><h3>Quick actions</h3><div class="actions">
@@ -2651,7 +2700,7 @@ function clearPeopleSearch() { peopleQuery = ""; const i = document.getElementBy
 function setPeopleUnlinked(on) { peopleOnlyUnlinked = !!on; refreshPeopleList(); }
 function setPeopleSort(v) { peopleSort = PEOPLE_SORTS[v] ? v : "name-asc"; refreshPeopleList(); }
 function people() {
-  return `<div class="page-head"><h2>People</h2><p class="muted">Everyone connected to your family tree.</p></div>
+  return `<div class="page-head" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;justify-content:space-between"><div><h2>People</h2><p class="muted">Everyone connected to your family tree.</p></div>${canEditTree() ? `<button type="button" class="primary" onclick="go('add')">➕ Add Person</button>` : ""}</div>
   <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
     <input id="peopleSearch" type="search" value="${esc(peopleQuery)}" placeholder="🔍 Search by name, relation, place or ID…" oninput="setPeopleSearch(this.value)" style="flex:1;min-width:220px">
     <button type="button" class="secondary" onclick="clearPeopleSearch()">Clear</button>
@@ -3641,20 +3690,50 @@ function sameNameLoose(a, b) {
   if (!x.length || !y.length) return false;
   if (x.join(" ") === y.join(" ")) return true;
   if ([...x].sort().join(" ") === [...y].sort().join(" ")) return true;
-  return x.length > 1 && y.length > 1 && x[0] === y[0] && x[x.length - 1] === y[y.length - 1];
+  // "Karan Sharma" ~ "Karan Lal Sharma": the shorter name must be fully contained in the longer one.
+  // (Different middle names, e.g. "Ram Kumar Sharma" vs "Ram Prakash Sharma", are NOT the same person.)
+  const [s, l] = x.length <= y.length ? [x, y] : [y, x];
+  return s.length > 1 && s[0] === l[0] && s[s.length - 1] === l[l.length - 1] && s.every(t => l.includes(t));
 }
-/* Father's name(s) of a person, taken from the relationship graph (parent link where the parent is Male). */
+/* Father's / mother's name(s) of a person, taken from the relationship graph. */
 function fatherNamesOf(id) {
   return parentsOf(id).map(personById).filter(x => x && x.gender === "Male" && x.name).map(x => x.name);
 }
-/* Duplicate rule: name must match AND father name must match. If either profile has no father recorded yet, the
-   father can't be compared: it stays a suggestion (set STRICT_FATHER_MATCH = true to skip such pairs instead). */
-const STRICT_FATHER_MATCH = false;
-function sameFatherLoose(a, b) {
-  const fa = fatherNamesOf(a.id), fb = fatherNamesOf(b.id);
-  if (!fa.length || !fb.length) return !STRICT_FATHER_MATCH;
-  return fa.some(x => fb.some(y => sameNameLoose(x, y)));
+function motherNamesOf(id) {
+  return parentsOf(id).map(personById).filter(x => x && x.gender === "Female" && x.name).map(x => x.name);
 }
+function namesOverlap(A, B) { return A.some(x => B.some(y => sameNameLoose(x, y))); }
+/* Parent/child, grandparent, spouse or sibling of each other can never be duplicates of each other. */
+function closeRelatives(aId, bId) {
+  if (spousesOf(aId).includes(bId)) return true;
+  const up = (id) => { const seen = new Set(), q = [id]; while (q.length) { const c = q.pop(); parentsOf(c).forEach(p => { if (!seen.has(p)) { seen.add(p); q.push(p); } }); } return seen; };
+  if (up(aId).has(bId) || up(bId).has(aId)) return true;
+  const pa = parentsOf(aId), pb = parentsOf(bId);
+  return pa.length > 0 && pb.some(p => pa.includes(p));   // share a parent => siblings
+}
+/* Pairwise duplicate score. -1 = definitely not duplicates (conflict); otherwise higher = more evidence.
+   Name match alone is NOT enough: at least one other positive signal (father / mother / spouse / DOB / children) is needed,
+   and any conflicting signal (different father, mother, spouse, DOB) rules the pair out. */
+const DUP_MIN_SCORE = 3;
+function dupPairScore(a, b) {
+  if (a.gender && b.gender && a.gender !== b.gender) return -1;
+  if (!sameNameLoose(a.name, b.name)) return -1;
+  if (closeRelatives(a.id, b.id)) return -1;
+  let sc = 0;
+  if (a.dob && b.dob) { if (String(a.dob) !== String(b.dob)) return -1; sc += 3; }
+  const fa = fatherNamesOf(a.id), fb = fatherNamesOf(b.id);
+  if (fa.length && fb.length) { if (!namesOverlap(fa, fb)) return -1; sc += 3; }
+  const ma = motherNamesOf(a.id), mb = motherNamesOf(b.id);
+  if (ma.length && mb.length) { if (!namesOverlap(ma, mb)) return -1; sc += 2; }
+  const sa = spousesOf(a.id).map(personById).filter(x => x && x.name).map(x => x.name);
+  const sb = spousesOf(b.id).map(personById).filter(x => x && x.name).map(x => x.name);
+  if (sa.length && sb.length) { if (!namesOverlap(sa, sb)) return -1; sc += 3; }
+  const ca = childrenOf(a.id).map(personById).filter(x => x && x.name).map(x => x.name);
+  const cb = childrenOf(b.id).map(personById).filter(x => x && x.name).map(x => x.name);
+  if (ca.length && cb.length && namesOverlap(ca, cb)) sc += 2;
+  return sc;
+}
+function sameFatherLoose(a, b) { return dupPairScore(a, b) >= DUP_MIN_SCORE; }
 function mergeCandidates() { return state.people.filter(p => p.status !== "merged" && !(p.details && p.details.deleted)); }
 function personHint(p) {
   const bits = [];
@@ -3676,22 +3755,15 @@ function mergeScore(p) {
   s += state.relationships.filter(r => r.from === p.id || r.to === p.id).length;
   return s;
 }
-/* Group likely duplicates (same / near-same name + same father name) using union-find. */
+/* Group likely duplicates. A group only forms if EVERY pair inside it is a valid duplicate pair (no chaining A~B, B~C => A~C). */
 function findDuplicateGroups() {
-  const list = mergeCandidates();
-  const parent = {}; list.forEach(p => parent[p.id] = p.id);
-  const find = x => parent[x] === x ? x : (parent[x] = find(parent[x]));
-  for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
-    const a = list[i], b = list[j];
-    if (a.gender && b.gender && a.gender !== b.gender) continue;
-    if (sameNameLoose(a.name, b.name) && sameFatherLoose(a, b)) parent[find(a.id)] = find(b.id);
+  const list = mergeCandidates().slice().sort((x, y) => mergeScore(y) - mergeScore(x));
+  const clusters = [];
+  for (const p of list) {
+    const home = clusters.find(c => c.every(q => dupPairScore(p, q) >= DUP_MIN_SCORE));
+    if (home) home.push(p); else clusters.push([p]);
   }
-  const groups = {};
-  list.forEach(p => { (groups[find(p.id)] = groups[find(p.id)] || []).push(p); });
-  return Object.values(groups).filter(g => g.length > 1).map(g => {
-    g.sort((x, y) => mergeScore(y) - mergeScore(x));
-    return { keep: g[0], remove: g.slice(1) };
-  });
+  return clusters.filter(g => g.length > 1).map(g => ({ keep: g[0], remove: g.slice(1) }));
 }
 function canMergeDirect() { return canEditTree() || isStaff(); }
 
@@ -3700,7 +3772,7 @@ function merge() {
   const direct = canMergeDirect();
   const dupCard = groups.length ? `<div class="card">
     <h3>Suggested duplicates (${groups.length})</h3>
-    <p class="muted">Same naam aur same father ke naam wale profiles mile. Jo merge karne hain unhe tick karo — pehla naam (✓ Keep) rakha jayega, baaki uske andar merge honge.</p>
+    <p class="muted">Same naam ke saath kam se kam ek aur cheez (father / mother / spouse / DOB) match hui, aur koi rishta conflict nahi karta. Jo merge karne hain unhe tick karo — pehla naam (✓ Keep) rakha jayega, baaki uske andar merge honge.</p>
     ${groups.map((g, i) => `<div class="row" style="align-items:flex-start">
       <label style="display:flex;gap:10px;align-items:flex-start;flex:1;cursor:pointer">
         <input type="checkbox" class="dupchk" value="${i}" checked style="margin-top:4px">
@@ -3709,7 +3781,7 @@ function merge() {
       </label></div>`).join("")}
     <div style="margin-top:12px"><button class="primary" onclick="mergeSelectedGroups()">${direct ? "Merge selected now" : "Send merge requests"}</button></div>
   </div>` : `<div class="card"><h3>Suggested duplicates</h3><p class="muted">Koi duplicate profile nahi mila.</p></div>`;
-  return `<div class="page-head"><h2>Duplicate Merge</h2><p class="muted">Duplicate profiles ko ek mein jodo. Saare rishte (relationships) kept profile par shift ho jayenge.</p></div>
+  return `<div class="page-head"><h2>Duplicates</h2><p class="muted">Duplicate profiles ko ek mein jodo. Saare rishte (relationships) kept profile par shift ho jayenge.</p></div>
   ${dupCard}
   <div class="card form">
     <h3>Manual merge</h3>
@@ -4466,7 +4538,7 @@ function admin() {
   return `<div class="page-head"><h2>🛡️ Admin &amp; Safety</h2><p class="muted">Management area. Admin privileges are separate from family-tree membership.</p></div>
   <div class="grid">
     <div class="card stat-card"><div class="muted">Users</div><div class="stat">${1284}</div></div>
-    <div class="card stat-card"><div class="muted">Merge Requests</div><div class="stat">${state.mergeRequests.length}</div></div>
+    <div class="card stat-card"><div class="muted">Duplicate Requests</div><div class="stat">${state.mergeRequests.length}</div></div>
     <div class="card stat-card"><div class="muted">Connections</div><div class="stat">${state.connections.length}</div></div>
   </div>
   <div class="card"><h3>Moderation Queue</h3>
