@@ -594,19 +594,36 @@ function gamesPage() { // only reached by typing #games in the address bar
 
 /* ---------------- login ---------------- */
 function renderLogin() {
-  document.getElementById("app").innerHTML = `<main class="login"><section class="login-card">
-  <div class="eyebrow">Welcome to</div>
-  <div class="brand"><img src="/assets/logo.png" alt="FamilyTree" style="height:64px;width:64px;object-fit:contain;vertical-align:middle;margin-right:8px"><span>Family<em>Tree</em></span></div>
-  <h1>Roots, remembered.</h1>
-  <p class="muted">Build your family tree, connect with relatives, and keep memories in one place.</p>
-  ${localStorage.getItem(INVITE_KEY) ? `<div class="card" style="margin:14px 0;border-left:4px solid var(--gold,#e0a526)"><b>🔗 Aapko family tree ka invite mila hai.</b><br><span class="muted" style="font-size:13px">Neeche login karo — uske baad aap invite accept kar paoge.</span></div>` : ''}
-  ${!supabaseConfigured ? `<div class="card" style="margin:14px 0"><strong>Supabase is not configured.</strong><p class="muted">Add VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY in Vercel/local environment variables.</p></div>` : ''}
-  <div class="login-actions">
-    <button class="primary full" onclick="googleLogin()">Continue with Google</button>
-    <button class="ghost full" onclick="phoneLogin()">📱 Continue with Mobile OTP</button>
-  </div>
-  <p class="muted" style="font-size:12px;margin-top:18px">Production authentication is powered by Supabase Auth.</p>
-  </section></main>`;
+  const G = '<svg width="20" height="20" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6.1 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.6-.4-3.9z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.6-.4-3.9z"/></svg>';
+  const I = {
+    fam: '<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.4"/><path d="M16 14.2c3 .2 5 2.3 5 5.8"/></svg>',
+    mem: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-8 9"/></svg>',
+    sec: '<svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>',
+    ph: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#b9a0ff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M11 18.5h2"/></svg>'
+  };
+  const invite = localStorage.getItem(INVITE_KEY);
+  document.getElementById("app").innerHTML = `<main class="login2"><section class="login2-shell">
+  <div class="login2-art" aria-hidden="true"></div>
+  <div class="login2-panel">
+    <div class="login2-brand"><img src="/assets/logo.png" alt="FamilyTree"><span class="nm">Family<em>Tree</em></span></div>
+    <p class="login2-tag">Your Family <i>•</i> Your Roots <i>•</i> Forever</p>
+    <div class="mhero" aria-hidden="true"></div>
+    <h1>Welcome Back!</h1>
+    <p class="sub">Build your family tree, connect with relatives, and keep memories in one place.</p>
+    ${invite ? `<div class="login2-invite"><b>🔗 Aapko family tree ka invite mila hai.</b><br><span>Neeche login karo — uske baad aap invite accept kar paoge.</span></div>` : ''}
+    ${!supabaseConfigured ? `<div class="login2-warn"><strong>Supabase is not configured.</strong><br>Add VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY in Vercel/local environment variables.</div>` : ''}
+    <div class="login2-actions">
+      <button class="btn-google" onclick="googleLogin()">${G} Continue with Google</button>
+      <button class="btn-otp" onclick="phoneLogin()">${I.ph} Continue with Mobile OTP</button>
+    </div>
+    <div class="login2-or">OR</div>
+    <div class="login2-feats">
+      <div>${I.fam}Add Family<br>Members</div>
+      <div>${I.mem}Preserve<br>Memories</div>
+      <div>${I.sec}Private<br>&amp; Secure</div>
+    </div>
+    <div class="login2-foot"><div>⚡ Powered by Supabase Auth</div><div>🔒 Secure • Reliable • Always with You</div></div>
+  </div></section></main>`;
 }
 async function googleLogin() { try { await signInWithGoogle(); } catch(e) { toast(e.message); } }
 async function phoneLogin() {
@@ -4956,7 +4973,7 @@ async function generateProfileInvite() {
   const { data, error } = await supabase.rpc("create_profile_invite", { p_person_id: p.id, p_make_admin: makeAdmin, p_days: days });
   if (error) { toast(/create_profile_invite|function|schema cache/i.test(error.message) ? "Run supabase-profile-invite.sql in Supabase first" : error.message); return; }
   const link = `${location.origin}${location.pathname}?invite=${data.token}`;
-  const wa = `https://wa.me/?text=${encodeURIComponent(`Family tree me aapki profile (${p.name}) ready hai. Is link se join karo: ${link}`)}`;
+  const wa = `https://wa.me/?text=${encodeURIComponent(`👋 Hi!\nआपको FamilyTree में शामिल होने के लिए आमंत्रित किया गया है।\n\n✅ अपना पारिवारिक वृक्ष बनाएं\n✅ परिवार के सदस्यों को जोड़ें\n✅ यादें, फोटो और जानकारी सुरक्षित रखें\n✅ कहीं से भी, कभी भी एक्सेस करें\n\n(${p.name} की प्रोफ़ाइल तैयार है)\nFamilyTree खोलें 👉 ${link}`)}`;
   const body = document.getElementById("inviteBody"), foot = document.querySelector("#inviteModal .modal-foot");
   if (!body || !foot) return;
   body.innerHTML = `<p style="margin:0">✅ Link ready — <b>${data.make_admin ? "Admin bhi banega" : "Sirf member banega"}</b>.</p>

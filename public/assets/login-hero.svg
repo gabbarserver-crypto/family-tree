@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1a1033"/><stop offset=".45" stop-color="#4b2a6e"/>
+      <stop offset=".72" stop-color="#c2547a"/><stop offset=".88" stop-color="#f0922f"/><stop offset="1" stop-color="#ffc857"/>
+    </linearGradient>
+    <radialGradient id="sun" cx=".5" cy=".5" r=".5">
+      <stop offset="0" stop-color="#fff3c4"/><stop offset=".35" stop-color="#ffc857" stop-opacity=".85"/><stop offset="1" stop-color="#ff9a3c" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="leaf" cx=".5" cy=".4" r=".6">
+      <stop offset="0" stop-color="#7cc24a"/><stop offset=".6" stop-color="#3f8a2e"/><stop offset="1" stop-color="#1f4d22"/>
+    </radialGradient>
+    <linearGradient id="hill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2d4a22"/><stop offset="1" stop-color="#0f1d12"/></linearGradient>
+  </defs>
+  <rect width="800" height="600" fill="url(#sky)"/>
+  <g fill="#fff" opacity=".7">
+    <circle cx="90" cy="60" r="1.6"/><circle cx="210" cy="30" r="1.2"/><circle cx="330" cy="85" r="1.4"/><circle cx="560" cy="40" r="1.5"/>
+    <circle cx="690" cy="95" r="1.3"/><circle cx="740" cy="30" r="1.6"/><circle cx="450" cy="20" r="1.1"/><circle cx="150" cy="140" r="1.2"/>
+  </g>
+  <circle cx="470" cy="440" r="190" fill="url(#sun)"/>
+  <circle cx="470" cy="450" r="62" fill="#ffd98a"/>
+  <path d="M0 470 Q200 430 400 462 T800 450 V600 H0Z" fill="#6b3a6e" opacity=".55"/>
+  <path d="M0 500 Q180 470 380 495 T800 485 V600 H0Z" fill="url(#hill)"/>
+  <!-- tree -->
+  <g>
+    <path d="M150 520 C160 440 150 380 135 320 C125 285 110 255 95 230 L125 240 C140 262 155 290 168 318 C178 262 205 215 235 188 L238 205 C215 235 195 280 190 330 C185 390 195 450 210 520Z" fill="#2a1a12"/>
+    <path d="M168 318 C150 285 150 250 128 215 L142 212 C160 240 168 275 178 300Z" fill="#2a1a12"/>
+    <g fill="url(#leaf)">
+      <ellipse cx="120" cy="170" rx="105" ry="70"/><ellipse cx="240" cy="140" rx="110" ry="78"/>
+      <ellipse cx="345" cy="190" rx="85" ry="60"/><ellipse cx="60" cy="250" rx="70" ry="55"/>
+      <ellipse cx="190" cy="235" rx="95" ry="58"/><ellipse cx="300" cy="260" rx="62" ry="42"/><ellipse cx="150" cy="95" rx="80" ry="50"/>
+    </g>
+    <g opacity=".9">
+      <circle cx="90" cy="150" r="5" fill="#ffd54a"/><circle cx="200" cy="120" r="5" fill="#ff7a59"/><circle cx="270" cy="175" r="5" fill="#ffd54a"/>
+      <circle cx="150" cy="215" r="5" fill="#f5a3c7"/><circle cx="330" cy="205" r="4" fill="#ffd54a"/><circle cx="60" cy="235" r="4" fill="#ff7a59"/>
+      <circle cx="230" cy="245" r="4" fill="#ffd54a"/><circle cx="130" cy="95" r="4" fill="#f5a3c7"/>
+    </g>
+    <!-- hanging frames -->
+    <g stroke="#d8a64a" stroke-width="1.5">
+      <line x1="95" y1="250" x2="95" y2="275"/><line x1="170" y1="270" x2="170" y2="300"/><line x1="250" y1="250" x2="250" y2="285"/>
+    </g>
+    <g fill="#e7cfa0" stroke="#d8a64a" stroke-width="4">
+      <rect x="78" y="275" width="34" height="42" rx="2"/><rect x="153" y="300" width="34" height="42" rx="2"/><rect x="233" y="285" width="34" height="42" rx="2"/>
+    </g>
+    <g fill="#6a5238">
+      <circle cx="95" cy="292" r="7"/><path d="M83 314q12-18 24 0z"/>
+      <circle cx="170" cy="317" r="7"/><path d="M158 339q12-18 24 0z"/>
+      <circle cx="250" cy="302" r="7"/><path d="M238 324q12-18 24 0z"/>
+    </g>
+  </g>
+  <!-- family silhouette -->
+  <g fill="#0d0716">
+    <circle cx="390" cy="468" r="11"/><path d="M366 530 Q368 490 390 485 Q412 490 414 530Z"/>
+    <circle cx="437" cy="466" r="11"/><path d="M413 530 Q415 488 437 483 Q459 488 461 530Z"/>
+    <circle cx="486" cy="494" r="8"/><path d="M468 534 Q469 508 486 503 Q503 508 504 534Z"/>
+  </g>
+  <path d="M0 535 Q200 515 420 530 T800 525 V600 H0Z" fill="#0b1a0e"/>
+  <g stroke="#1d3a1f" stroke-width="2" opacity=".8">
+    <path d="M40 600v-26M70 600v-34M100 600v-22M520 600v-30M560 600v-24M610 600v-34M660 600v-22M720 600v-28"/>
+  </g>
+</svg>
