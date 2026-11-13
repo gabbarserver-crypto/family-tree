@@ -3213,7 +3213,8 @@ function editProfileFormHTML(p) {
     </div>
     <div class="field"><label>Date of Birth</label><input id="mpDob" type="date" value="${v(normalizeDate(p.dob))}"></div>
     <div class="field"><label>Birth time (rashi / horoscope ke liye)</label><input id="mpBirthTime" type="time" value="${v(d.birth_time)}"></div>
-    <div class="field"><label>Date of Death</label><input id="mpDod" type="date" value="${v(d.dod)}"></div>
+    <div class="field"><label>Life status</label><select id="mpLife" onchange="if(this.value==='living'){document.getElementById('mpDod').value=''}"><option value="living"${p.lifeStatus === "deceased" || d.dod ? "" : " selected"}>Living</option><option value="deceased"${p.lifeStatus === "deceased" || d.dod ? " selected" : ""}>Deceased (Swargvaas)</option></select></div>
+    <div class="field"><label>Date of Death <span class="muted" style="font-weight:400">(pata na ho to khali chhod dein)</span></label><input id="mpDod" type="date" value="${v(d.dod)}" onchange="if(this.value)document.getElementById('mpLife').value='deceased'"></div>
     <div class="field"><label>Mobile</label><input id="mpMobile" type="tel" value="${v(p.mobile)}" placeholder="+91 98XXXXXXXX"></div>
     <div class="field"><label>Email (Gmail)</label><input id="mpEmail" type="email" value="${v(p.email)}" placeholder="name@gmail.com"></div>
     <div class="field"><label>State</label>${stateSelectHTML("mpState", d.state, "mp")}</div>
@@ -3984,7 +3985,7 @@ async function saveProfileEdits(id) {
   p.dob = dob || undefined;
   p.mobile = mobile || undefined;
   p.email = emailPending ? oldCardEmail : (email || undefined);
-  p.lifeStatus = dod ? "deceased" : "living";
+  p.lifeStatus = (dod || g("mpLife") === "deceased") ? "deceased" : "living";   // date of death is optional
   p.details = { ...(p.details || {}), firstName: first, middleName: middle, surname: last, dod: dod || "", birth_time: g("mpBirthTime"), state: g("mpState"), city: g("mpCity"), married: document.getElementById("mpMarried").value, marriage: { ...((p.details || {}).marriage || {}), date: g("mpMarriageDate") } };
   if (p.details.marriage?.date) syncMarriageDate(id); else clearSpouseMarriageDate(id);   // husband / wife get the same anniversary
   if (p.me) { state.account.name = p.name; if (email && !emailPending) state.account.email = email; }
