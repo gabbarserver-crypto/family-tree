@@ -892,15 +892,60 @@ function horoCardHTML() {
   const tabs = ["daily", "weekly", "monthly"].map(pr => `<button type="button" class="${pr === horoState.period ? "primary" : "secondary"}" onclick="setHoroscope({period:'${pr}'})">${pr[0].toUpperCase() + pr.slice(1)}</button>`).join("");
   return `<div class="card" id="horoCard"><h3>🔮 Aapka Horoscope</h3>
     <div class="muted" style="margin-bottom:8px;font-size:13px">${horoSymbol(r.sign)} Rashi: <b>${r.hindi} (${r.sign[0].toUpperCase() + r.sign.slice(1)})</b> · Nakshatra: ${r.nakshatra} (pada ${r.pada})</div>
-    <div class="actions" style="margin-bottom:10px">${tabs}</div>
+    <div class="actions" style="margin-bottom:8px">${tabs}</div>
+    <div class="actions" style="margin-bottom:10px">${[["hi", "हिन्दी"], ["hinglish", "Hinglish"], ["en", "English"]].filter(([k]) => k !== "hinglish" || horoTranslateApiOk).map(([k, l]) => `<button type="button" class="${horoLang() === k ? "primary" : "secondary"}" style="padding:4px 12px;font-size:13px" onclick="setHoroscope({lang:'${k}'})">${l}</button>`).join("")}</div>
     <div id="horoBody" class="muted">Loading…</div>
     <div class="muted" style="font-size:11.5px;margin-top:10px">Powered by <a href="https://freehoroscopeapi.com" target="_blank" rel="noopener">FreeHoroscopeAPI</a> · Vedic rashi (Moon sign, Lahiri), birth time IST maana gaya. Entertainment only.</div>
   </div>`;
 }
 function setHoroscope(patch) {
   if (patch.period) horoState.period = patch.period;
+  if (patch.lang) { try { localStorage.setItem("ft_horo_lang", patch.lang); } catch (e) {} }
   const card = document.getElementById("horoCard");
   if (card) { card.outerHTML = horoCardHTML(); loadHoroscope(); }
+}
+/* ---- Horoscope text in Hindi / Hinglish ----
+   1) /api/translate (optional Vercel function using Claude; Hindi + Hinglish; see api/translate.js)
+   2) falls back to the free MyMemory translator (Hindi only, no key). The result is cached per day on this device. */
+const HORO_TRANSLATE_API = "/api/translate";
+let horoTranslateApiOk = true;                      // flips to false once /api/translate turns out not to be deployed
+function horoLang() { try { return localStorage.getItem("ft_horo_lang") || "hi"; } catch (e) { return "hi"; } }
+function horoSplit(text, max = 450) {              // sentence-aware chunks (MyMemory allows ~500 chars per request)
+  const parts = (text.match(/[^.!?]+[.!?]+\s*|[^.!?]+$/g) || [text]).map(x => x.trim()).filter(Boolean), out = []; let cur = "";
+  for (const p of parts) { if (cur && (cur + " " + p).length > max) { out.push(cur); cur = p; } else cur = cur ? cur + " " + p : p; }
+  if (cur) out.push(cur);
+  return out.flatMap(c => c.length <= max ? [c] : c.match(new RegExp(`.{1,${max}}`, "g")));
+}
+function horoUnescape(t) { const x = document.createElement("textarea"); x.innerHTML = t; return x.value; }
+async function horoViaMyMemory(text) {
+  const chunks = horoSplit(text);
+  const res = await Promise.all(chunks.map(async c => {
+    const r = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(c)}&langpair=en|hi`);
+    const j = await r.json(), t = j?.responseData?.translatedText || "";
+    if (String(j?.responseStatus) !== "200" || !t || /MYMEMORY WARNING|INVALID|QUERY LENGTH/i.test(t)) throw new Error("mymemory");
+    return horoUnescape(t);
+  }));
+  return res.join(" ");
+}
+async function horoViaClaude(text, to) {
+  const { data } = supabase ? await supabase.auth.getSession() : { data: null };
+  const token = data?.session?.access_token; if (!token) throw new Error("no session");
+  const r = await fetch(HORO_TRANSLATE_API, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify({ text, to }) });
+  if (r.status === 404 || r.status === 501 || r.status === 405) { horoTranslateApiOk = false; throw new Error("api not deployed"); }
+  const ct = r.headers.get("content-type") || "";
+  if (!ct.includes("json")) { horoTranslateApiOk = false; throw new Error("api not deployed"); }
+  const j = await r.json(); if (!r.ok || !j.text) throw new Error(j.error || "translate failed");
+  return j.text;
+}
+async function horoTranslate(text, lang, cacheKey) {
+  const ck = `ft_horo_tr:${lang}:${cacheKey}`;
+  try { const hit = localStorage.getItem(ck); if (hit) return { text: hit, fallback: false }; } catch (e) {}
+  let out = null;
+  if (horoTranslateApiOk) { try { out = await horoViaClaude(text, lang); } catch (e) { /* use the free translator */ } }
+  if (out) { try { localStorage.setItem(ck, out); } catch (e) {} return { text: out, fallback: false }; }
+  out = await horoViaMyMemory(text);                 // free translator: Hindi (Devanagari) only
+  try { localStorage.setItem(`ft_horo_tr:hi:${cacheKey}`, out); } catch (e) {}
+  return { text: out, fallback: lang === "hinglish" };
 }
 async function loadHoroscope() {
   const body = document.getElementById("horoBody");
@@ -911,7 +956,18 @@ async function loadHoroscope() {
     const el = document.getElementById("horoBody");
     if (!el || horoState.sign !== sign || horoState.period !== period) return; // user moved on
     el.className = "";
-    el.innerHTML = `<div style="font-weight:600;margin-bottom:2px">${horoSymbol(sign)} ${esc(d.sign || sign)} · ${esc(d.period || period)} · <span class="muted" style="font-weight:400">${esc(d.date || "")}</span></div><p style="margin:0;line-height:1.55">${esc(d.horoscope)}</p>`;
+    el.innerHTML = `<div style="font-weight:600;margin-bottom:2px">${horoSymbol(sign)} ${esc(d.sign || sign)} · ${esc(d.period || period)} · <span class="muted" style="font-weight:400">${esc(d.date || "")}</span></div><p id="horoText" style="margin:0;line-height:1.55">${esc(d.horoscope)}</p><div id="horoNote" class="muted" style="font-size:12px;margin-top:6px"></div>`;
+    const lang = horoLang();
+    if (lang !== "en") {
+      const note = document.getElementById("horoNote"); if (note) note.textContent = "Hindi mein badla ja raha hai…";
+      horoTranslate(d.horoscope, lang, `${d.date || ""}|${sign}|${period}`).then(r => {
+        if (horoState.sign !== sign || horoState.period !== period || horoLang() !== lang) return;
+        const p = document.getElementById("horoText"), n = document.getElementById("horoNote");
+        if (p) p.textContent = r.text; if (n) n.textContent = r.fallback ? "Hinglish ke liye Vercel function (api/translate.js) chahiye — abhi Hindi dikha rahe hain." : "";
+      }).catch(() => {
+        const n = document.getElementById("horoNote"); if (n && horoLang() === lang) n.textContent = "Hindi anuvaad abhi nahi mil paaya, English dikha rahe hain.";
+      });
+    }
   };
   if (horoCache.has(key)) return show(horoCache.get(key));
   body.className = "muted"; body.textContent = "Loading…";

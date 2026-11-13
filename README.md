@@ -145,3 +145,8 @@ Run `supabase/supabase-edit-log.sql` once (after `supabase-person-wall.sql`). Da
 
 ## Activity Log for tree owner / admin (new)
 Run `supabase/supabase-edit-log-admin.sql` after `supabase-edit-log.sql`. Owners/admins get an **Activity Log** page (sidebar, phone "More" menu) with two tabs — **Activity** (one-line timeline) and **Changes** (old → new for every field) — and filters for person, who changed it, type and date range. The 🔔 bell shows a notification when other people changed something since the admin last opened the log.
+
+## Horoscope in Hindi / Hinglish (new)
+The horoscope card has a **हिन्दी / Hinglish / English** switch (choice is remembered, translation is cached per day on the device).
+- Works out of the box with the free MyMemory translator (Hindi / Devanagari only).
+- For better Hindi and for **Hinglish**, deploy `api/translate.js` (Vercel Function using Claude) and set `ANTHROPIC_API_KEY`, `SUPABASE_URL`, `SUPABASE_ANON_KEY` in Vercel > Settings > Environment Variables. Only signed-in users of the app can call it. The Hinglish button appears only when that function is deployed.
