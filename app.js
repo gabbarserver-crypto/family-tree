@@ -2745,7 +2745,7 @@ function peopleListHTML() {
   };
   rows.sort(sorters[peopleSort] || byName);
   const chip = (label, on, fn, title) => `<button type="button" class="${on ? "primary" : "ghost"}" style="padding:6px 14px;font-size:13px;min-height:0" onclick="${fn}"${title ? ` title="${title}"` : ""}>${label}</button>`;
-  const chips = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 8px">${chip(`👑 Admins (${adminsTotal})`, peopleOnlyAdmins, "setPeopleAdmins(true)", "Jo is tree mein add/edit kar sakte hain")}${chip(`ALL (${state.people.length})`, !peopleOnlyUnlinked && !peopleOnlyAdmins, "setPeopleUnlinked(false)")}${chip(`⚠️ Unlinked (${unlinkedTotal})`, peopleOnlyUnlinked, "setPeopleUnlinked(true)", "Jinka kisi se koi rishta link nahi hai")}${chip(`🔀 Duplicates${peopleDupCount ? ` (${peopleDupCount})` : ""}`, false, "go('merge')", "Duplicate profiles ko ek mein jodo")}</div>`;
+  const chips = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 8px">${chip(`👑 Admins (${adminsTotal})`, peopleOnlyAdmins, "setPeopleAdmins(true)", "Jo is tree mein add/edit kar sakte hain")}${chip(`ALL (${state.people.length})`, !peopleOnlyUnlinked && !peopleOnlyAdmins, "setPeopleUnlinked(false)")}${chip(`⚠️ Unlinked (${unlinkedTotal})`, peopleOnlyUnlinked, "setPeopleUnlinked(true)", "Jinka kisi se koi rishta link nahi hai")}${peopleDupCount ? chip(`🔀 Duplicates (${peopleDupCount})`, false, "go('merge')", "Same naam + same father (ya mother / spouse / DOB) wale profiles — ek mein jodo") : ""}</div>`;   // only shown when duplicates really exist
   const count = chips + `<p class="muted" style="font-size:12.5px;margin:0 0 8px">${rows.length === state.people.length ? rows.length + " members" : rows.length + " of " + state.people.length + " members"}</p>`;
   if (!rows.length) return count + `<div class="card"><p class="muted">${peopleOnlyAdmins && !q ? "Abhi koi admin nahi hai. Koi bhi profile claim karne par automatically admin ban jata hai." : peopleOnlyUnlinked && !q ? "Koi unlinked profile nahi hai — sab kisi na kisi se juda hua hai. 🎉" : "Koi match nahi mila. Kuch aur search karke dekhein."}</p></div>`;
   return count + `<div class="list">${rows.map(({ p, label, kin }) => `<div class="row person-row" style="cursor:pointer" onclick="openProfile('${p.id}')">
@@ -3447,9 +3447,9 @@ const WALL_REACTIONS = [["like", "👍", "Like"], ["heart", "❤️", "Pyaar"], 
 function wallReactHTML(postId, ctx, reactions, mine) {
   const id = esc(postId), cur = WALL_REACTIONS.find(r => r[0] === mine);
   const summary = WALL_REACTIONS.map(r => [r, Number((reactions || {})[r[0]]) || 0]).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1])
-    .map(([r, n]) => `<span class="wall-rx${r[0] === mine ? " mine" : ""}" title="${esc(r[2])}">${r[1]} ${n}</span>`).join("");
-  return `<button type="button" class="wall-act${cur ? " on" : ""}" onclick="wallReactToggle('${id}','${ctx}')">${cur ? cur[1] + " " + esc(cur[2]) : "🙂 React"}</button>${summary}
-    <div class="wall-picker" hidden>${WALL_REACTIONS.map(r => `<button type="button" class="${r[0] === mine ? "sel" : ""}" title="${esc(r[2])}" aria-label="${esc(r[2])}" onclick="wallReact('${id}','${ctx}','${r[0]}')">${r[1]}</button>`).join("")}</div>`;
+    .map(([r, n]) => `<span class="wall-rx${r[0] === mine ? " mine" : ""}">${r[1]} ${n}</span>`).join("");
+  return `<button type="button" class="wall-act${cur ? " on" : ""}" onclick="wallReactToggle('${id}','${ctx}')">${cur ? cur[1] : "🙂 React"}</button>${summary}
+    <div class="wall-picker" hidden>${WALL_REACTIONS.map(r => `<button type="button" class="${r[0] === mine ? "sel" : ""}" aria-label="${esc(r[2])}" onclick="wallReact('${id}','${ctx}','${r[0]}')">${r[1]}</button>`).join("")}</div>`;
 }
 function wallReactToggle(postId, ctx) { const pk = document.querySelector(`#wr-${ctx}-${postId} .wall-picker`); if (pk) pk.hidden = !pk.hidden; }
 async function wallReact(postId, ctx, key) {

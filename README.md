@@ -138,4 +138,4 @@ In "New post" tap 📍 Location: type a place name and/or lat/lng, use GPS, sear
 ## Post reactions (new)
 Run `supabase/supabase-wall-reactions.sql` once in the Supabase SQL editor (after `supabase-wall-location.sql`). Replaces the single like with 👍 ❤️ 😂 😢 🙏 🙌 (one reaction per person per post; old likes become ❤️).
 
-- Members page: tabs are **Admins · ALL · Unlinked · Duplicates**. Duplicates opens the merge page (no separate sidebar item anymore).
+- Members page: tabs are **Admins · ALL · Unlinked · Duplicates**. Duplicates opens the merge page (no separate sidebar item anymore) and the chip only appears when duplicates exist (same name + at least one matching signal such as father name).
