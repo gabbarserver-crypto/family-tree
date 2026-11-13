@@ -2841,6 +2841,7 @@ function profile(id) {
       <div class="field" style="max-width:240px;margin-top:10px"><label>Privacy</label>
         <select onchange="setPrivacy('${p.id}',this.value)"><option ${p.privacy === "Family only" || !p.privacy ? "selected" : ""}>Family only</option><option ${p.privacy === "Private" ? "selected" : ""}>Private</option><option ${p.privacy === "Selected family" ? "selected" : ""}>Selected family</option><option ${p.privacy === "Public" ? "selected" : ""}>Public</option></select>
       </div>
+      <button type="button" class="secondary" style="margin-top:10px" onclick="openEditLog('${p.id}')">📜 Edit log</button>
     </div>
   </div>
   ${canEditPerson(p) ? personDetailsCard(p) : ""}
@@ -3521,6 +3522,7 @@ function openProfilePopup(id) {
     </div>
     <div class="actions modal-foot">
       <button type="button" class="secondary" onclick="openPersonWall('${esc(p.id)}')">📝 Wall</button>
+      <button type="button" class="secondary" onclick="openEditLog('${esc(p.id)}')">📜 Log</button>
       ${me() && p.id === me().id ? "" : `<button type="button" class="secondary rel-btn" onclick="openRelationChart('${esc(p.id)}')" title="Aapse kya rishta hai, chart me dekhein">${REL_ICON_SVG} Relation</button>`}
       ${canAddRelativeTo(p.id) ? `<button type="button" class="primary" onclick="openAddRelativeWizard('${esc(p.id)}')">➕ Add Relative</button>` : ""}
       <button type="button" class="ghost" onclick="openFullProfile('${esc(p.id)}')">Open full profile</button>
@@ -3528,6 +3530,51 @@ function openProfilePopup(id) {
     </div>`);
 }
 function openFullProfile(id) { closeEditProfile(); openProfile(id); }
+/* ---------------- Edit log: who changed what, and when (needs supabase-edit-log.sql) ---------------- */
+const LOG_FIELDS = { full_name: "Name", dob: "Date of birth", gender: "Gender", mobile: "Mobile", email: "Email", avatar_url: "Profile photo", status: "Profile status",
+  claimed_by: "Profile claimed", nickname: "Nickname", show_nickname: "Show nickname", birth_place: "Birth place", current_place: "Current place", life_status: "Life status", Relationship: "Relationship" };
+const LOG_ACTIONS = { created: "Profile created", updated: "Edited", relationship_added: "Relationship added", relationship_removed: "Relationship removed" };
+function logFieldLabel(f) {
+  if (LOG_FIELDS[f]) return LOG_FIELDS[f];
+  const base = f.replace(/^details\./, "").replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").trim();
+  return base ? base[0].toUpperCase() + base.slice(1) : f;
+}
+function logVal(v) { return v == null || v === "" ? "—" : v === "true" ? "Yes" : v === "false" ? "No" : v; }
+function logChangeHTML(c) {
+  if (c.field === "Relationship") return `<li>${esc(c.new || "")}</li>`;
+  const label = `<b>${esc(logFieldLabel(c.field))}</b>`;
+  if (!("old" in c) && !("new" in c)) return `<li>${label} <span class="muted">changed</span></li>`;     // hidden (private) value
+  if (c.old == null || c.old === "") return `<li>${label} <span class="muted">added:</span> ${esc(logVal(c.new))}</li>`;
+  if (c.new == null || c.new === "") return `<li>${label} <span class="muted">removed</span> <s>${esc(logVal(c.old))}</s></li>`;
+  return `<li>${label}: <s class="muted">${esc(logVal(c.old))}</s> → ${esc(logVal(c.new))}</li>`;
+}
+function logTime(iso) {
+  const d = new Date(iso); if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
+}
+async function openEditLog(id) {
+  const p = personById(id); if (!p) return;
+  profileModalOrigin = "view"; profileModalLocked = false;
+  const back = `<button type="button" class="ghost" onclick="openProfilePopup('${esc(id)}')">← Profile</button>`;
+  profileModalShell(`<div class="modal-head"><h3>📜 Edit log — ${esc(p.name)}</h3><button type="button" class="ghost" aria-label="Close" onclick="closeEditProfile()">✕</button></div>
+    <div class="modal-body" id="editLogBody"><p class="muted">Loading…</p></div><div class="actions modal-foot">${back}</div>`);
+  const body = document.getElementById("editLogBody");
+  if (!supabase || !currentUser) { body.innerHTML = `<p class="muted">Edit log sirf Supabase se connected app mein dikhta hai.</p>`; return; }
+  const { data, error } = await supabase.rpc("list_person_edit_log", { p_person_id: id });
+  if (document.getElementById("editLogBody") !== body) return;          // user moved on
+  if (error) {
+    const missing = /list_person_edit_log|schema cache|does not exist/i.test(error.message || "");
+    body.innerHTML = `<p class="muted">${missing ? "Pehle Supabase mein <b>supabase-edit-log.sql</b> chalaiye." : esc(error.message || "Log load nahi ho paaya")}</p>`;
+    return;
+  }
+  if (!data?.length) { body.innerHTML = `<p class="muted">Abhi koi edit record nahi hua. Log tab se shuru hota hai jab se <b>supabase-edit-log.sql</b> chali hai.</p>`; return; }
+  body.innerHTML = `<div class="edit-log">${data.map(e => {
+    const mine = currentUser && e.actor_id === currentUser.id;
+    const items = (e.changes || []).map(logChangeHTML).join("");
+    return `<div class="edit-log-item"><div class="edit-log-head"><b>${esc(e.actor_name || "Family member")}${mine ? " (aap)" : ""}</b> <span class="badge ${e.action === "updated" ? "plum" : "sage"}">${esc(LOG_ACTIONS[e.action] || e.action)}</span></div>
+      <div class="muted" style="font-size:12px;margin:2px 0 4px">${esc(logTime(e.created_at))}</div>${items ? `<ul>${items}</ul>` : ""}</div>`;
+  }).join("")}</div>`;
+}
 /* "Relation" button in the profile popup: shows how this person is related to ME, drawn as a small family chart. */
 const REL_ICON_SVG = '<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" style="vertical-align:-3px;margin-right:4px"><circle cx="12" cy="5" r="3" fill="currentColor"/><circle cx="5" cy="19" r="3" fill="currentColor"/><circle cx="19" cy="19" r="3" fill="currentColor"/><path d="M12 8v4M12 12H5v4M12 12h7v4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 function openRelationChart(id) {
@@ -4853,7 +4900,7 @@ async function importGedcomPicked(inputEl) {
    scoped to the module — they are NOT attached to window automatically
    the way classic <script> globals are. */
 Object.assign(window, {
-  relBack, relZoom, relFit, setPeopleUnlinked, setPeopleAdmins,
+  openEditLog, relBack, relZoom, relFit, setPeopleUnlinked, setPeopleAdmins,
   toggleTheme,
   setHoroscope, loadHoroscope, openHoroscope, setHoroCity, tarotDraw, wallPickMedia, wallRemoveFile, wallViewImage, wallMediaShare, wallMediaDownload, wallSaveMedia,
   avatarFallback, sendChat, chatKey,

@@ -139,3 +139,6 @@ In "New post" tap 📍 Location: type a place name and/or lat/lng, use GPS, sear
 Run `supabase/supabase-wall-reactions.sql` once in the Supabase SQL editor (after `supabase-wall-location.sql`). Replaces the single like with 👍 ❤️ 😂 😢 🙏 🙌 (one reaction per person per post; old likes become ❤️).
 
 - Members page: tabs are **Admins · ALL · Unlinked · Duplicates**. Duplicates opens the merge page (no separate sidebar item anymore) and the chip only appears when duplicates exist (same name + at least one matching signal such as father name).
+
+## Edit log (new)
+Run `supabase/supabase-edit-log.sql` once (after `supabase-person-wall.sql`). Database triggers on `persons` and `relationships` record **who changed what and when**; open it from the profile popup (📜 Log) or the full profile page (📜 Edit log). History starts when the SQL is run. Mobile / e-mail / photo / claim changes are logged without their values. Anyone who can view that person's wall can read the log.
