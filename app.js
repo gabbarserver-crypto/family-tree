@@ -559,6 +559,7 @@ const ADMIN_NAV = { group: "Admin", items: [ ["admin", "Admin & Safety", "🛡�
 function navHTML(page, withLogout = true) {
   if (page === "add" || page === "addRelative" || page === "treeAdmins" || page === "merge") page = "people";   // Add Person + Tree Admins both live inside the Members page now
   const groups = NAV.map(g => ({ group: g.group, items: g.items.filter(([id]) => (id !== "add" || canEditTree()) && true) }));
+  if (canEditTree()) groups[0].items.push(["editlog", "Activity Log", "📜"]);   // tree owner / admin only
   if (isStaff()) groups.push(ADMIN_NAV);
   return groups.map(g => `<div class="navgroup"><div class="navgroup-label">${g.group}</div>${
     g.items.map(([id, label, icon]) => navItem(id, label, icon, page)).join("")
@@ -689,7 +690,7 @@ const notifSeenKey = () => "ft_notif_seen:" + (currentUser?.id || "x");
 function notifSeenAt() { try { return Number(localStorage.getItem(notifSeenKey())) || 0; } catch (e) { return 0; } }
 function notifAdminItems() { return (state.adminNotes || []).filter(n => !(n.detail && n.detail.self)); }
 function notifNewAdminCount() { const t = notifSeenAt(); return notifAdminItems().filter(n => new Date(n.created_at).getTime() > t).length; }
-function notifCount() { return (state.incomingJoins || []).length + (state.incomingClaims || []).length + (state.incoming || []).length + notifNewAdminCount(); }
+function notifCount() { return (state.incomingJoins || []).length + (state.incomingClaims || []).length + (state.incoming || []).length + notifNewAdminCount() + (canEditTree() ? (state.editLogNew || 0) : 0); }
 function notifBellHTML() {
   const n = notifCount();
   return `<button type="button" class="iconbtn notif-btn" title="Notifications" aria-label="Notifications${n ? ", " + n + " new" : ""}" onclick="openNotifications()">🔔<span class="notif-badge" ${n ? "" : "hidden"}>${n > 99 ? "99+" : n}</span></button>`;
@@ -716,6 +717,7 @@ async function pollNotifications() {
     if (!inc.error) state.incoming = inc.data || [];
     if (!ij.error) state.incomingJoins = ij.data || [];
     await loadAdminNotes(currentUser);
+    await loadEditLogCount();
     const n = notifCount();
     if (notifLastCount !== null && n > notifLastCount) toast("🔔 Naya notification aaya hai");
     notifLastCount = n; notifUpdateBadge();
@@ -724,6 +726,7 @@ async function pollNotifications() {
 }
 function startNotifPoll() {
   notifLastCount = notifCount(); notifUpdateBadge();
+  loadEditLogCount().then(() => { notifLastCount = notifCount(); notifUpdateBadge(); });
   if (!notifTimer) notifTimer = setInterval(pollNotifications, 60000);
 }
 function closeNotifications() { document.getElementById("notifSheet")?.remove(); }
@@ -736,6 +739,9 @@ function openNotifications(keepScroll) {
       <div class="muted" style="font-size:12.5px">${esc(n.action === "admin_by_claim" ? "Aapka profile claim hone par" : "Tree admin ne aapko admin banaya")} · ${esc(fmtDateTime(n.created_at))}. Ab aap relatives add/edit kar sakte ho aur join requests approve kar sakte ho.</div>
       <div class="actions" style="margin-top:8px"><button type="button" class="secondary" onclick="closeNotifications();go('people')">Members dekho</button></div></div>`);
   });
+  if (canEditTree() && state.editLogNew > 0) items.push(`<div class="notif-item new"><div class="notif-t">📜 <b>${state.editLogNew}</b> naye changes aapke family tree mein</div>
+      <div class="muted" style="font-size:12.5px">Kisi ne profile ya relation edit kiya hai. Kisne, kab, kya badla — Activity Log mein dekho.</div>
+      <div class="actions" style="margin-top:8px"><button type="button" class="primary" onclick="closeNotifications();go('editlog')">Activity Log kholo</button></div></div>`);
   (state.incomingJoins || []).forEach(r => items.push(`<div class="notif-item new"><div class="notif-t">🙋 <b>${esc(r.requester_name)}</b> tree join karna chahta hai${r.person_name ? ` (profile: <b>${esc(r.person_name)}</b>)` : ""}</div>
       <div class="muted" style="font-size:12.5px">${esc(r.tree_name || "")} · ${esc(fmtDateTime(r.created_at))}. Approve karne par ye person tree ka admin ban jayega.</div>
       <div class="actions" style="margin-top:8px"><button type="button" class="primary" onclick="notifAct('joinApprove','${esc(r.request_id)}')">Approve</button><button type="button" class="danger" onclick="notifAct('joinReject','${esc(r.request_id)}',${Number(r.added_profiles) || 0})">Reject</button></div></div>`));
@@ -804,6 +810,7 @@ function render() {
   if (page === "home") requestAnimationFrame(dailyQuoteInit);
   if (page === "wall") requestAnimationFrame(loadWallFeed);
   if (page === "horoscope") requestAnimationFrame(loadHoroscope);
+  if (page === "editlog") requestAnimationFrame(editlogInit);
   if (page === "merge") mergeInitSelects();
   if (page === "profile") requestAnimationFrame(() => loadMemories(activeProfileId || me()?.id));
   refreshDmBadge();
@@ -813,9 +820,10 @@ function switchRole() {}
 function pageView(p) {
   const map = {
     home, tree, add, addRelative, people, merge, relationship, profile: () => profile(activeProfileId || me().id),
-    wall, events: eventsPage, sharing, support, admin, production, treeAdmins: people, importGed, horoscope: horoscopePage, games: gamesPage
+    wall, events: eventsPage, sharing, support, admin, production, treeAdmins: people, importGed, horoscope: horoscopePage, editlog: editlogPage, games: gamesPage
   };
   if ((p === "admin" || p === "production") && !isStaff()) return accessDenied();
+  if (p === "editlog" && !canEditTree()) return accessDenied("Tree admin access required", "Only this tree's owner or admins can see the activity log.");
   if (p === "add" && !canEditTree()) return accessDenied("Tree admin access required", "Only this tree's owner or admins can add relatives. Ask the owner to promote you from the Members page.");
   if (p === "addRelative" && !canAddRelativeTo(addRelativeTargetId)) return accessDenied("Tree admin access required", "Only this tree's owner or admins can add relatives to other people. Ask the owner to promote you from the Members page.");
   return (map[p] || home)();
@@ -2827,6 +2835,7 @@ async function deleteMemory(id) {
 
 function profile(id) {
   const p = state.people.find(x => x.id === id) || me();
+  profilePanelMode = "details"; profileInline = false;
   return `<div class="page-head"><h2>Profile</h2><p class="muted">Person profile &amp; media.</p></div>
   <div class="card profile-head">
     <div>${avatarHTML(p, "lg " + (p.me ? "gold" : ""))}
@@ -2841,10 +2850,14 @@ function profile(id) {
       <div class="field" style="max-width:240px;margin-top:10px"><label>Privacy</label>
         <select onchange="setPrivacy('${p.id}',this.value)"><option ${p.privacy === "Family only" || !p.privacy ? "selected" : ""}>Family only</option><option ${p.privacy === "Private" ? "selected" : ""}>Private</option><option ${p.privacy === "Selected family" ? "selected" : ""}>Selected family</option><option ${p.privacy === "Public" ? "selected" : ""}>Public</option></select>
       </div>
-      <button type="button" class="secondary" style="margin-top:10px" onclick="openEditLog('${p.id}')">📜 Edit log</button>
+      <div class="profile-actions">
+        ${canEditPerson(p) ? `<button type="button" class="secondary" data-pp="edit" onclick="setProfilePanel('edit','${p.id}')">✏️ Edit</button>` : ""}
+        <button type="button" class="secondary" data-pp="log" onclick="setProfilePanel('log','${p.id}')">📜 Edit log</button>
+        ${canDeletePerson(p) ? `<button type="button" class="danger" data-pp="delete" onclick="setProfilePanel('delete','${p.id}')">🗑 Delete profile</button>` : ""}
+      </div>
     </div>
   </div>
-  ${canEditPerson(p) ? personDetailsCard(p) : ""}
+  <div id="profilePanel">${profilePanelDefault(p)}</div>
   ${linksCardHTML(p)}
   ${memoriesCardHTML(p)}
   <div class="card"><h3>Photos &amp; Albums</h3><div class="photo-grid">
@@ -2879,11 +2892,11 @@ function canEditPerson(p) {
 function canChangePhoto(p) { return !!p && !treeViewing && (canEditPerson(p) || (!state.joined && canEditTree())); }
 /* Profiles you (or the tree owner/admin) created and nobody has claimed yet can be deleted. Never your own profile. */
 function canDeletePerson(p) { return !!p && !p.me && canEditPerson(p); }
-async function deletePerson(id) {
+async function deletePerson(id, skipConfirm) {
   const p = personById(id);
   if (!p || !canDeletePerson(p)) { toast("You can't delete this profile"); return; }
   const links = state.relationships.filter(r => r.from === id || r.to === id).length;
-  if (!confirm(`Delete "${p.name}"?\n\nThis also removes ${links} relationship link${links === 1 ? "" : "s"} from the tree. Relatives connected only through this person may disappear from the tree. This can't be undone.`)) return;
+  if (!skipConfirm && !confirm(`Delete "${p.name}"?\n\nThis also removes ${links} relationship link${links === 1 ? "" : "s"} from the tree. Relatives connected only through this person may disappear from the tree. This can't be undone.`)) return;
   const name = p.name, oldDetails = { ...(p.details || {}) };
   const snapshot = { people: state.people, relationships: state.relationships };
   state.people = state.people.filter(x => x.id !== id);
@@ -3012,7 +3025,7 @@ function detailRowsHTML(p) {
 function personDetailsCard(p) {
   return `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
       <h3 style="margin:0">Personal details</h3>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">${p.me ? `<button class="secondary" onclick="openChangeEmail('${esc(p.id)}')">✉️ Change email</button>` : ""}${p.me && supabase && personTreeRole(p) !== "owner" ? `<button class="secondary" onclick="openTransferProfile('${esc(p.id)}')">🔁 Transfer profile</button>` : ""}${p.me ? `<button class="danger" onclick="openDeleteMyProfile()">🗑 Delete my profile</button>` : ""}${canEditPerson(p) ? `<button class="secondary" onclick="openEditProfile('${esc(p.id)}')">✏️ Edit</button>` : ""}${canDeletePerson(p) ? `<button class="danger" onclick="deletePerson('${esc(p.id)}')">🗑 Delete profile</button>` : ""}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${p.me ? `<button class="secondary" onclick="openChangeEmail('${esc(p.id)}')">✉️ Change email</button>` : ""}${p.me && supabase && personTreeRole(p) !== "owner" ? `<button class="secondary" onclick="openTransferProfile('${esc(p.id)}')">🔁 Transfer profile</button>` : ""}${p.me ? `<button class="danger" onclick="openDeleteMyProfile()">🗑 Delete my profile</button>` : ""}</div>
     </div>
     ${detailRowsHTML(p)}
   </div>`;
@@ -3552,16 +3565,10 @@ function logTime(iso) {
   const d = new Date(iso); if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
 }
-async function openEditLog(id) {
-  const p = personById(id); if (!p) return;
-  profileModalOrigin = "view"; profileModalLocked = false;
-  const back = `<button type="button" class="ghost" onclick="openProfilePopup('${esc(id)}')">← Profile</button>`;
-  profileModalShell(`<div class="modal-head"><h3>📜 Edit log — ${esc(p.name)}</h3><button type="button" class="ghost" aria-label="Close" onclick="closeEditProfile()">✕</button></div>
-    <div class="modal-body" id="editLogBody"><p class="muted">Loading…</p></div><div class="actions modal-foot">${back}</div>`);
-  const body = document.getElementById("editLogBody");
+async function fillEditLog(body, id) {
   if (!supabase || !currentUser) { body.innerHTML = `<p class="muted">Edit log sirf Supabase se connected app mein dikhta hai.</p>`; return; }
   const { data, error } = await supabase.rpc("list_person_edit_log", { p_person_id: id });
-  if (document.getElementById("editLogBody") !== body) return;          // user moved on
+  if (!body.isConnected) return;          // user moved on
   if (error) {
     const missing = /list_person_edit_log|schema cache|does not exist/i.test(error.message || "");
     body.innerHTML = `<p class="muted">${missing ? "Pehle Supabase mein <b>supabase-edit-log.sql</b> chalaiye." : esc(error.message || "Log load nahi ho paaya")}</p>`;
@@ -3574,6 +3581,130 @@ async function openEditLog(id) {
     return `<div class="edit-log-item"><div class="edit-log-head"><b>${esc(e.actor_name || "Family member")}${mine ? " (aap)" : ""}</b> <span class="badge ${e.action === "updated" ? "plum" : "sage"}">${esc(LOG_ACTIONS[e.action] || e.action)}</span></div>
       <div class="muted" style="font-size:12px;margin:2px 0 4px">${esc(logTime(e.created_at))}</div>${items ? `<ul>${items}</ul>` : ""}</div>`;
   }).join("")}</div>`;
+}
+async function openEditLog(id) {            // popup version (used from the profile popup)
+  const p = personById(id); if (!p) return;
+  profileModalOrigin = "view"; profileModalLocked = false;
+  const back = `<button type="button" class="ghost" onclick="openProfilePopup('${esc(id)}')">← Profile</button>`;
+  profileModalShell(`<div class="modal-head"><h3>📜 Edit log — ${esc(p.name)}</h3><button type="button" class="ghost" aria-label="Close" onclick="closeEditProfile()">✕</button></div>
+    <div class="modal-body" id="editLogBody"><p class="muted">Loading…</p></div><div class="actions modal-foot">${back}</div>`);
+  await fillEditLog(document.getElementById("editLogBody"), id);
+}
+/* Full profile page: Edit / Edit log / Delete swap the area below the header instead of opening a popup. */
+let profilePanelMode = "details", profileInline = false;
+function profilePanelDefault(p) { return canEditPerson(p) ? personDetailsCard(p) : ""; }
+function setProfilePanel(mode, id) {
+  const p = personById(id), box = document.getElementById("profilePanel"); if (!p || !box) return;
+  if (mode === profilePanelMode) mode = "details";            // tapping the active button again goes back to the details
+  profilePanelMode = mode; profileInline = false;
+  document.querySelectorAll(".profile-actions [data-pp]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.pp === mode)));
+  const back = `<button type="button" class="ghost" onclick="setProfilePanel('details','${esc(id)}')">← Back</button>`;
+  if (mode === "details") box.innerHTML = profilePanelDefault(p);
+  else if (mode === "edit") {
+    if (!canEditPerson(p)) { toast("You can't edit this profile"); return setProfilePanel("details", id); }
+    profileInline = true;
+    box.innerHTML = `<div class="card"><h3>✏️ ${p.me ? "Edit my details" : "Edit details of " + esc(p.name)}</h3><div class="form">${editProfileFormHTML(p)}</div>
+      <div class="actions" style="margin-top:12px"><button type="button" class="ghost" onclick="setProfilePanel('details','${esc(id)}')">Cancel</button><button type="button" class="primary" onclick="saveProfileEdits('${esc(id)}')">Save changes</button></div></div>`;
+    document.getElementById("mpFirst")?.focus({ preventScroll: true });
+  } else if (mode === "log") {
+    box.innerHTML = `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px"><h3 style="margin:0">📜 Edit log</h3>${back}</div><div id="editLogBody"><p class="muted">Loading…</p></div></div>`;
+    fillEditLog(document.getElementById("editLogBody"), id);
+  } else if (mode === "delete") {
+    if (!canDeletePerson(p)) { toast("You can't delete this profile"); return setProfilePanel("details", id); }
+    const links = state.relationships.filter(r => r.from === id || r.to === id).length;
+    box.innerHTML = `<div class="card"><h3>🗑 Delete profile</h3>
+      <p><b>${esc(p.name)}</b> ko delete karna hai?</p>
+      <p class="muted" style="font-size:13.5px">Isse tree ke <b>${links}</b> relationship link${links === 1 ? "" : "s"} bhi hat jayenge. Jo log sirf is insaan ke through jude hain wo tree se gayab ho sakte hain. Ye wapas nahi ho sakta.</p>
+      <div class="actions" style="margin-top:12px"><button type="button" class="ghost" onclick="setProfilePanel('details','${esc(id)}')">Cancel</button><button type="button" class="danger" onclick="deletePerson('${esc(id)}', true)">🗑 Haan, delete karo</button></div></div>`;
+  }
+  box.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+/* ---------------- Activity Log (tree owner / admin): every edit in the tree, with filters (needs supabase-edit-log-admin.sql) ---------------- */
+const EL = { tab: "activity", f: { person: "", actor: "", action: "", from: "", to: "" }, rows: [], done: false, loading: false, error: "", actors: [] };
+const EL_PAGE = 50;
+function editlogTreeId() { return state.joined ? state.joined.treeId : state.treeId; }
+const editlogSeenKey = () => `ft_editlog_seen:${currentUser?.id || "x"}:${editlogTreeId() || "t"}`;
+function editlogMarkSeen() { try { localStorage.setItem(editlogSeenKey(), new Date().toISOString()); } catch (e) {} state.editLogNew = 0; notifUpdateBadge(); }
+async function loadEditLogCount() {      // bell badge: changes made by OTHER people since this admin last opened the Activity Log
+  state.editLogNew = 0;
+  try {
+    if (!supabase || !currentUser || !canEditTree()) return;
+    const tid = editlogTreeId(); if (!tid) return;
+    let since = null; try { since = localStorage.getItem(editlogSeenKey()); } catch (e) {}
+    if (!since) { editlogMarkSeen(); return; }        // first time: count from now on, don't flood with old history
+    const { data, error } = await supabase.rpc("count_tree_edit_log_since", { p_tree_id: tid, p_since: since });
+    if (!error) state.editLogNew = Number(data) || 0;
+  } catch (e) { state.editLogNew = 0; }
+}
+function editlogPage() {
+  if (!supabase) return `<div class="empty card"><span class="big">📜</span><h3>Activity Log</h3><p class="muted">Ye sirf Supabase se connected app mein chalta hai.</p></div>`;
+  const people = state.people.filter(p => !p.external).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  const sel = (key, list) => list.map(([v, l]) => `<option value="${esc(v)}" ${EL.f[key] === v ? "selected" : ""}>${esc(l)}</option>`).join("");
+  return `<div class="page-head"><h2>📜 Activity Log</h2><p class="muted">Poore tree mein kisne, kab, kya badla. Sirf tree owner / admin ko dikhta hai.</p></div>
+  <div class="card"><div class="el-filters">
+    <div class="field"><label>Person</label><select onchange="elFilter('person',this.value)">${sel("person", [["", "Sab log"], ...people.map(p => [p.id, p.name])])}</select></div>
+    <div class="field"><label>Kisne badla</label><select id="elActor" onchange="elFilter('actor',this.value)">${elActorOptions()}</select></div>
+    <div class="field"><label>Type</label><select onchange="elFilter('action',this.value)">${sel("action", [["", "Sab"], ["updated", "Edit"], ["created", "Profile bana"], ["relationship_added", "Relation juda"], ["relationship_removed", "Relation hata"]])}</select></div>
+    <div class="field"><label>From</label><input type="date" value="${esc(EL.f.from)}" onchange="elFilter('from',this.value)"></div>
+    <div class="field"><label>To</label><input type="date" value="${esc(EL.f.to)}" onchange="elFilter('to',this.value)"></div>
+    <div class="field" style="align-self:end"><button type="button" class="ghost" onclick="elReset()">Reset</button></div>
+  </div></div>
+  <div class="actions" id="elTabs" style="margin:2px 0 10px">${elTabsHTML()}</div>
+  <div id="elList"></div>`;
+}
+function elActorOptions() { return `<option value="">Sab</option>` + EL.actors.map(a => `<option value="${esc(a.actor_id)}" ${EL.f.actor === a.actor_id ? "selected" : ""}>${esc(a.actor_name || "Family member")}</option>`).join(""); }
+function elTabsHTML() {
+  return [["activity", "Activity"], ["changes", "Changes"]].map(([k, l]) => `<button type="button" class="${EL.tab === k ? "primary" : "secondary"}" onclick="elTab('${k}')">${l}</button>`).join("");
+}
+function elTab(k) { EL.tab = k; const t = document.getElementById("elTabs"); if (t) t.innerHTML = elTabsHTML(); elRenderList(); }
+function elFilter(k, v) { EL.f[k] = v; editlogLoad(false); }
+function elReset() { EL.f = { person: "", actor: "", action: "", from: "", to: "" }; render(); }
+async function editlogInit() {
+  if (!canEditTree() || !supabase) return;
+  editlogMarkSeen();
+  editlogLoad(false);
+  const { data } = await supabase.rpc("list_tree_edit_actors", { p_tree_id: editlogTreeId() });
+  if (data) { EL.actors = data; const a = document.getElementById("elActor"); if (a) a.innerHTML = elActorOptions(); }
+}
+async function editlogLoad(more) {
+  if (EL.loading) return;
+  EL.loading = true; EL.error = "";
+  if (!more) { EL.rows = []; EL.done = false; }
+  elRenderList();
+  const f = EL.f, last = EL.rows[EL.rows.length - 1];
+  const { data, error } = await supabase.rpc("list_tree_edit_log", {
+    p_tree_id: editlogTreeId(), p_person: f.person || null, p_actor: f.actor || null, p_action: f.action || null,
+    p_from: f.from ? new Date(f.from + "T00:00:00").toISOString() : null,
+    p_to: f.to ? new Date(new Date(f.to + "T00:00:00").getTime() + 86400000).toISOString() : null,
+    p_before: more && last ? last.created_at : null, p_before_id: more && last ? last.id : null, p_limit: EL_PAGE });
+  EL.loading = false;
+  if (error) { EL.error = /list_tree_edit_log|schema cache|does not exist/i.test(error.message || "") ? "Pehle Supabase mein <b>supabase-edit-log-admin.sql</b> chalaiye." : esc(error.message || "Log load nahi ho paaya"); }
+  else { EL.rows.push(...(data || [])); EL.done = (data || []).length < EL_PAGE; }
+  elRenderList();
+}
+function elPersonLink(r) { return personById(r.person_id) ? `<a href="#" onclick="event.preventDefault();openProfilePopup('${esc(r.person_id)}')">${esc(r.person_name || "")}</a>` : esc(r.person_name || ""); }
+function elSummary(r) {
+  const ch = r.changes || [];
+  if (r.action === "created") return "Profile banaya gaya";
+  if (r.action === "relationship_added" || r.action === "relationship_removed") return esc((ch[0] && ch[0].new) || "");
+  const names = [...new Set(ch.map(c => logFieldLabel(c.field)))];
+  return `${names.length} cheez badli: ${esc(names.slice(0, 4).join(", "))}${names.length > 4 ? ` +${names.length - 4} aur` : ""}`;
+}
+function elRenderList() {
+  const box = document.getElementById("elList"); if (!box) return;
+  if (EL.error) { box.innerHTML = `<div class="card"><p class="muted">${EL.error}</p></div>`; return; }
+  let rows = EL.rows;
+  if (EL.tab === "changes") rows = rows.filter(r => r.action !== "created");
+  const item = r => {
+    const mine = currentUser && r.actor_id === currentUser.id;
+    const head = `<div class="edit-log-head"><b>${esc(r.actor_name || "Family member")}${mine ? " (aap)" : ""}</b> <span class="badge ${r.action === "updated" ? "plum" : "sage"}">${esc(LOG_ACTIONS[r.action] || r.action)}</span> <span class="muted">·</span> ${elPersonLink(r)}</div>
+      <div class="muted" style="font-size:12px;margin:2px 0 4px">${esc(logTime(r.created_at))}</div>`;
+    return EL.tab === "activity"
+      ? `<div class="edit-log-item">${head}<div style="font-size:13.5px">${elSummary(r)}</div></div>`
+      : `<div class="edit-log-item">${head}<ul>${(r.changes || []).map(logChangeHTML).join("")}</ul></div>`;
+  };
+  box.innerHTML = (rows.length ? `<div class="edit-log">${rows.map(item).join("")}</div>` : (EL.loading ? "" : `<div class="card"><p class="muted">Is filter mein koi record nahi mila.</p></div>`))
+    + (EL.loading ? `<p class="muted" style="text-align:center">Loading…</p>` : (!EL.done && EL.rows.length ? `<div style="text-align:center;margin:12px 0"><button type="button" class="secondary" onclick="editlogLoad(true)">Aur dikhao</button></div>` : ""));
 }
 /* "Relation" button in the profile popup: shows how this person is related to ME, drawn as a small family chart. */
 const REL_ICON_SVG = '<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" style="vertical-align:-3px;margin-right:4px"><circle cx="12" cy="5" r="3" fill="currentColor"/><circle cx="5" cy="19" r="3" fill="currentColor"/><circle cx="19" cy="19" r="3" fill="currentColor"/><path d="M12 8v4M12 12H5v4M12 12h7v4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -3593,7 +3724,7 @@ function openRelationChart(id) {
 function openEditProfile(id, fromView) {
   const p = personById(id);
   if (!p || !canEditPerson(p)) { toast("You can't edit this profile"); return; }
-  profileModalOrigin = fromView ? "view" : "edit";
+  profileInline = false; profileModalOrigin = fromView ? "view" : "edit";
   profileModalLocked = true;
   profileModalShell(`<div class="modal-head"><h3>✏️ ${p.me ? "Edit my details" : "Edit details of " + esc(p.name)}</h3><button type="button" class="ghost" aria-label="Close" onclick="closeEditProfile()">✕</button></div>
     <div class="form modal-body">${editProfileFormHTML(p)}</div>
@@ -3689,6 +3820,7 @@ async function saveProfileEdits(id) {
   if (p.me && supabase && currentUser) { try { await supabase.from("profiles").update({ display_name: p.name, ...(email && !emailPending ? { email } : {}) }).eq("id", currentUser.id); } catch (e) { console.warn("display_name update failed", e); } }
   toast(emailPending ? `Profile updated. ${email} par confirmation link bheja gaya hai — click karte hi login email badal jayega.` : "Profile updated");
   render();
+  if (profileInline) { profileInline = false; return; }          // edited inside the profile page: render() above already refreshed it
   if (profileModalOrigin === "view") openProfilePopup(id); else closeEditProfile();
 }
 function setPrivacy(id, val) { const p = state.people.find(x => x.id === id); if (p) { p.privacy = val; save(); toast("Privacy set to " + val); } }
@@ -4900,7 +5032,7 @@ async function importGedcomPicked(inputEl) {
    scoped to the module — they are NOT attached to window automatically
    the way classic <script> globals are. */
 Object.assign(window, {
-  openEditLog, relBack, relZoom, relFit, setPeopleUnlinked, setPeopleAdmins,
+  setProfilePanel, openEditLog, editlogLoad, elFilter, elReset, elTab, relBack, relZoom, relFit, setPeopleUnlinked, setPeopleAdmins,
   toggleTheme,
   setHoroscope, loadHoroscope, openHoroscope, setHoroCity, tarotDraw, wallPickMedia, wallRemoveFile, wallViewImage, wallMediaShare, wallMediaDownload, wallSaveMedia,
   avatarFallback, sendChat, chatKey,

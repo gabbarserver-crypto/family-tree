@@ -142,3 +142,6 @@ Run `supabase/supabase-wall-reactions.sql` once in the Supabase SQL editor (afte
 
 ## Edit log (new)
 Run `supabase/supabase-edit-log.sql` once (after `supabase-person-wall.sql`). Database triggers on `persons` and `relationships` record **who changed what and when**; open it from the profile popup (📜 Log) or the full profile page (📜 Edit log). History starts when the SQL is run. Mobile / e-mail / photo / claim changes are logged without their values. Anyone who can view that person's wall can read the log.
+
+## Activity Log for tree owner / admin (new)
+Run `supabase/supabase-edit-log-admin.sql` after `supabase-edit-log.sql`. Owners/admins get an **Activity Log** page (sidebar, phone "More" menu) with two tabs — **Activity** (one-line timeline) and **Changes** (old → new for every field) — and filters for person, who changed it, type and date range. The 🔔 bell shows a notification when other people changed something since the admin last opened the log.
