@@ -106,7 +106,7 @@ function joinSyncState() {
   joinSyncChain = joinSyncChain.then(async () => {
     const j = state.joined; if (!j) return;
     const people = state.people.filter(p => !p.external && (!j.known.has(p.id) || canEditPerson(p))).map(personToRow);
-    const rels = state.relationships.filter(r => !j.knownRels.has(r.id) || r.status === "removed").map(r => ({ id: isUuid(r.id) ? r.id : crypto.randomUUID(), person_a_id: r.from, person_b_id: r.to, relationship_type: r.type, status: r.status === "removed" ? "removed" : "active" }));
+    const rels = state.relationships.filter(r => !j.knownRels.has(r.id) || r.status === "removed").map(r => ({ id: isUuid(r.id) ? r.id : crypto.randomUUID(), person_a_id: r.from, person_b_id: r.to, relationship_type: r.type, created_at: r.created_at || new Date().toISOString(), status: r.status === "removed" ? "removed" : "active" }));
     if (!people.length && !rels.length) return;
     const { data, error } = await supabase.rpc("join_sync", { p_tree_id: j.treeId, p_people: people, p_rels: rels });
     if (error) { console.error("join_sync failed", error); toast("Server save failed: " + error.message); return; }
@@ -138,7 +138,7 @@ async function persistState() {
       }
       p.savedRole = role;
     }
-    const relRows = state.relationships.filter(r => !r.tree_id || r.tree_id === state.treeId).map(r => ({ id: isUuid(r.id) ? r.id : crypto.randomUUID(), tree_id: state.treeId, person_a_id: r.from, person_b_id: r.to, relationship_type: r.type, created_by: currentUser.id, status: r.status === 'removed' ? 'removed' : 'active' }));
+    const relRows = state.relationships.filter(r => !r.tree_id || r.tree_id === state.treeId).map(r => ({ id: isUuid(r.id) ? r.id : crypto.randomUUID(), tree_id: state.treeId, person_a_id: r.from, person_b_id: r.to, relationship_type: r.type, created_by: currentUser.id, created_at: r.created_at || new Date().toISOString(), status: r.status === 'removed' ? 'removed' : 'active' }));
     if (relRows.length) { const { error } = await supabase.from('relationships').upsert(relRows, { onConflict: 'id' }); if (error) throw error; }
   } catch (e) { console.error('Supabase save failed', e); toast('Saved locally in this session; server save failed'); }
 }
@@ -223,7 +223,7 @@ function edgeExists(from, to, type) {
 function addEdge(from, to, type) {
   if (from === to) return null;
   if (edgeExists(from, to, type)) return null; // acceptance test 7: no duplicate edges
-  const e = { id: nextRelId(), from, to, type, status: "confirmed" };
+  const e = { id: nextRelId(), from, to, type, status: "confirmed", created_at: new Date().toISOString() };
   removedEdgeKeys.delete(edgeKey(from, to, type));
   state.relationships.push(e);
   return e;
@@ -2803,7 +2803,8 @@ async function saveAddRelative() {
     toast("Brother/Sister add karne ke liye pehle is person ke parents (Father/Mother) add karein"); return;
   }
   if (!canAddRelativeTo(addRelativeTargetId)) { toast("Only this tree's owner or admins can add relatives to other people"); return; }
-  if (addRelativeMode === "uid" && state.joined) { toast("Unique ID se link karna join approve hone ke baad se"); return; }
+  // Joined members may link an existing profile by Unique ID; join_sync() enforces
+  // which rows/relationships can be written while the membership is pending.
   if (addRelativeMode === "uid") { await linkByUniqueId(); return; }
   if (addRelativeMode === "existing") {
     const exId = document.getElementById("arExistingPerson").value;
