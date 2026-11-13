@@ -809,7 +809,7 @@ function render() {
   if (page === "tree") requestAnimationFrame(treeStyle === "chart" ? chartAfterRender : drawTreeConnectors);
   if (page === "home") requestAnimationFrame(dailyQuoteInit);
   if (page === "wall") requestAnimationFrame(loadWallFeed);
-  if (page === "horoscope") requestAnimationFrame(loadHoroscope);
+  if (page === "horoscope") { requestAnimationFrame(loadHoroscope); requestAnimationFrame(loadAstroKundli); }
   if (page === "editlog") requestAnimationFrame(editlogInit);
   if (page === "merge") mergeInitSelects();
   if (page === "profile") requestAnimationFrame(() => loadMemories(activeProfileId || me()?.id));
@@ -1124,6 +1124,7 @@ function horoscopePage() {
     <div id="horoPlaceCards">${horoPlaceCardsHTML()}</div>
     ${tarotCardHTML()}
     ${familyRashiHTML()}
+    ${astroKundliCardHTML()}
     ${astroLinkCardHTML()}`;
 }
 function openHoroscope() {
@@ -1133,6 +1134,100 @@ function openHoroscope() {
 /* Full kundli / dasha / matching reports: opens AstroSage's free reports page in a new tab (nothing is sent from this app). */
 const ASTROSAGE_FREE_URL = "https://www.astrosage.com/free/";
 function openAstroSage() { window.open(ASTROSAGE_FREE_URL, "_blank", "noopener"); }
+/* ---- Kundli card: Mangal Dosh, Sade Sati, Vimshottari Dasha (own profile; needs DOB + birth time, Lagna also needs birth place) ----
+   Maths lives in ./astro.js (+ the astronomy-engine library, both loaded only when this page is opened). */
+let astroHits = [];
+function astroGeoKey() { return "ft_birth_geo_" + (myself()?.id || ""); }
+function astroGeoLoad() {
+  try { const j = JSON.parse(localStorage.getItem(astroGeoKey()) || "null"); if (j && isFinite(j.lat) && isFinite(j.lng)) return j; } catch (e) { /* storage unavailable */ }
+  const m = myself(), txt = String(m?.birthPlace || m?.details?.city || "").toLowerCase();
+  const c = txt && HORO_CITIES.find(x => txt.includes(x[0].toLowerCase()));
+  return c ? { name: c[0], lat: c[1], lng: c[2], guess: true } : null;
+}
+function astroGeoSave(g) { try { if (g) localStorage.setItem(astroGeoKey(), JSON.stringify(g)); else localStorage.removeItem(astroGeoKey()); } catch (e) { /* ignore */ } }
+async function astroGeoSearch() {
+  const q = (document.getElementById("astroPlaceName")?.value || "").trim();
+  const box = document.getElementById("astroPlaceResults"); if (!box) return;
+  if (q.length < 3) { toast("Shehar ka naam likho (kam se kam 3 akshar)"); return; }
+  box.innerHTML = '<p class="muted">Dhundh rahe hain…</p>';
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&q=${encodeURIComponent(q)}`, { headers: { "Accept-Language": "en" } });
+    astroHits = await r.json();
+  } catch (e) { box.innerHTML = '<p class="muted">Search nahi ho paya. Internet check karke dobara try karo.</p>'; return; }
+  box.innerHTML = astroHits.length
+    ? astroHits.map((h, i) => `<button type="button" class="secondary" style="display:block;width:100%;text-align:left;margin:4px 0;font-size:13px" onclick="astroGeoPick(${i})">📍 ${esc(h.display_name)}</button>`).join("")
+    : '<p class="muted">Kuchh nahi mila. Thoda alag likh ke try karo.</p>';
+}
+function astroGeoPick(i) {
+  const h = astroHits[i]; if (!h) return;
+  astroGeoSave({ name: h.display_name.split(", ").slice(0, 2).join(", "), lat: +h.lat, lng: +h.lon });
+  loadAstroKundli();
+}
+function astroGeoClear() { astroGeoSave(null); loadAstroKundli(); }
+function astroKundliCardHTML() {
+  return `<div class="card" id="astroKundli"><h3>🪐 Mangal Dosh · Sade Sati · Dasha</h3><div id="astroBody" class="muted">Calculate ho raha hai…</div></div>`;
+}
+async function loadAstroKundli() {
+  const el = document.getElementById("astroBody"); if (!el) return;
+  const m = myself();
+  if (!m || !rashiFromBirth(normalizeDate(m.dob) || m.dob, m.details?.birth_time)) {
+    el.innerHTML = "Apni <b>janm tareekh</b> aur <b>janm ka samay</b> My Profile mein bharein, tab yahan Mangal Dosh, Sade Sati aur Dasha dikhengi."; return;
+  }
+  let A, X;
+  try { [A, X] = await Promise.all([import("astronomy-engine"), import("./astro.js")]); }
+  catch (e) { el.innerHTML = 'Load nahi ho paya. <button type="button" class="ghost" onclick="loadAstroKundli()">Retry</button>'; return; }
+  const jd = X.birthJd(normalizeDate(m.dob) || m.dob, m.details?.birth_time);
+  if (jd == null) { el.innerHTML = "Ye tareekh calculation ki seema (1800-2100) se bahar hai."; return; }
+  const geo = astroGeoLoad(), nowJd = X.jdFromDate(new Date());
+  let k;
+  try { k = X.kundliSummary(A, moonSiderealLongitude, jd, geo, nowJd); }
+  catch (e) { el.innerHTML = "Calculation mein dikkat aayi. Thodi der baad try karo."; return; }
+  const R = i => RASHI[i][1], fd = j => X.dateFromJd(j).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  const row = (a, b) => `<div class="row"><span class="muted">${a}</span><span style="text-align:right">${b}</span></div>`;
+  const sub = t => `<div class="muted" style="font-size:12.5px;margin:2px 0 10px">${t}</div>`;
+
+  // ---- Mangal Dosh
+  const md = k.mangal; let mdHead, mdNote = `Mangal ${R(md.marsSign)} rashi mein · Chandra se ${md.hMoon}wen ghar`;
+  if (md.hLagna != null) mdNote += ` · Lagna (${R(X.signOf(k.lagna))}) se ${md.hLagna}wen ghar`;
+  if (md.present) mdHead = "⚠️ Mangal Dosh hai (parampara ke niyam se)";
+  else if (md.hLagna == null) mdHead = "✅ Chandra se Mangal Dosh nahi · Lagna se dekhne ke liye janm sthan chunein";
+  else mdHead = "✅ Mangal Dosh nahi dikhta";
+  if (md.present && md.strongSign) mdNote += ". Mangal apni/uchch rashi mein hai, jise parampara mein dosh ka parihar (kam prabhav) mana jata hai";
+
+  // ---- Sade Sati
+  const st = k.saturn, PH = { 1: "Pehla charan", 2: "Doosra charan (sabse bhaari mana jata hai)", 3: "Teesra charan" };
+  let ssHead, ssNote = `Shani abhi ${R(k.saturnNowSign)} rashi mein`;
+  if (st.kind === "sadesati") ssHead = `🪐 Sade Sati chal rahi hai: ${PH[st.phase]}`;
+  else if (st.kind === "dhaiya") ssHead = `🪐 Dhaiya chal rahi hai (Shani Chandra se ${st.house}wen ghar mein)`;
+  else ssHead = "✅ Abhi Sade Sati ya Dhaiya nahi";
+  if (k.sade.current) ssNote += ` · Ye daur: ${k.sade.current.startJd ? fd(k.sade.current.startJd) : "pehle se"} se ${k.sade.current.endJd ? fd(k.sade.current.endJd) : "aage tak"} (Shani ke vakri hone se beech mein thodi der bahar bhi aata hai)`;
+  else if (k.sade.next) ssNote += ` · Agli Sade Sati: ${fd(k.sade.next.startJd)} se ${fd(k.sade.next.endJd)}`;
+
+  // ---- Dasha
+  const cd = X.currentDasha(k.dasha, nowJd);
+  const dashaHead = cd.md ? `Mahadasha: <b>${cd.md.lord}</b> (${fd(cd.md.startJd)} – ${fd(cd.md.endJd)})` : "Dasha nikaalne mein dikkat";
+  const dashaNote = cd.ad ? `Antardasha: <b>${cd.ad.lord}</b> (${fd(cd.ad.startJd)} – ${fd(cd.ad.endJd)})` : "";
+  const bal = k.dasha.balanceYears, balY = Math.floor(bal), balM = Math.round((bal - balY) * 12);
+  const allDasha = k.dasha.list.map(d => `<div class="row"><span>${d.lord}</span><span class="muted">${X.dateFromJd(d.startJd).getFullYear()} – ${X.dateFromJd(d.endJd).getFullYear()}</span></div>`).join("");
+
+  // ---- Birth place (needed for Lagna only)
+  const place = geo
+    ? `Janm sthan: <b>${esc(geo.name)}</b>${geo.guess ? " (profile se anuman)" : ""} · <a href="#" onclick="astroGeoClear();return false">badlein</a>`
+    : "Lagna aur Lagna-se Mangal Dosh ke liye janm sthan chunein:";
+  const placeForm = `<div style="display:flex;gap:6px;margin-top:6px"><input id="astroPlaceName" placeholder="Janm ka shehar (jaise Jaipur)" value="${esc(geo ? "" : (m.birthPlace || m.details?.city || ""))}" style="flex:1;min-width:0"><button type="button" class="secondary" onclick="astroGeoSearch()">Dhundho</button></div><div id="astroPlaceResults"></div>
+    <div class="muted" style="font-size:11.5px;margin-top:4px">Shehar ka naam OpenStreetMap se dhundha jaata hai. Chuna hua sthan sirf is device par yaad rehta hai.</div>`;
+
+  el.className = ""; el.style.color = "";
+  el.innerHTML = `
+    ${row("Chandra rashi", `${R(k.moonSign)} · ${NAKSHATRAS[Math.floor(k.moon / (360 / 27))]}`)}
+    ${k.lagna != null ? row("Lagna", R(X.signOf(k.lagna))) : ""}
+    <div style="font-weight:600;margin-top:12px">Mangal Dosh</div><div>${mdHead}</div>${sub(mdNote)}
+    <div style="font-weight:600">Shani: Sade Sati / Dhaiya</div><div>${ssHead}</div>${sub(ssNote)}
+    <div style="font-weight:600">Vimshottari Dasha</div><div>${dashaHead}</div>${sub(dashaNote + `${dashaNote ? " · " : ""}Janm par ${k.dasha.firstLord} dasha ka ${balY} saal ${balM} mahine bacha tha`)}
+    <details style="margin:0 0 10px"><summary class="muted" style="cursor:pointer;font-size:13px">Saari Mahadasha dekhein</summary>${allDasha}</details>
+    <div style="font-size:13px">${place}</div>${geo && !geo.guess ? "" : placeForm}
+    <div class="muted" style="font-size:11.5px;margin-top:10px">Nirayana (Lahiri), samay IST maana gaya, tareekhein ±1-2 din. Ye parampara ke niyam hain aur alag-alag jyotishi alag maante hain, kisi bade faisle (shaadi, sehat, paisa) ka aadhar na banayein. Sirf jaankari ke liye.</div>`;
+}
 function astroLinkCardHTML() {
   return `<div class="card"><h3>📜 Poori Kundli & Reports</h3>
     <p class="muted" style="margin-top:0">Kundli, Kundli Matching, Dasha, Mangal Dosh aur Sade Sati ki free reports AstroSage par dekhein. Apni janm tareekh, samay aur shehar wahan bharni hogi.</p>
@@ -5100,7 +5195,7 @@ async function importGedcomPicked(inputEl) {
 Object.assign(window, {
   setProfilePanel, openEditLog, editlogLoad, elFilter, elReset, elTab, relBack, relZoom, relFit, setPeopleUnlinked, setPeopleAdmins,
   toggleTheme,
-  setHoroscope, loadHoroscope, openHoroscope, openAstroSage, setHoroCity, tarotDraw, wallPickMedia, wallRemoveFile, wallViewImage, wallMediaShare, wallMediaDownload, wallSaveMedia,
+  setHoroscope, loadHoroscope, openHoroscope, openAstroSage, loadAstroKundli, astroGeoSearch, astroGeoPick, astroGeoClear, setHoroCity, tarotDraw, wallPickMedia, wallRemoveFile, wallViewImage, wallMediaShare, wallMediaDownload, wallSaveMedia,
   avatarFallback, sendChat, chatKey,
   openPersonTree, exitTreeView, openBranch, exitBranch,
   openChangeEmail, saveNewEmail,
