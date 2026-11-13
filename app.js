@@ -1123,11 +1123,21 @@ function horoscopePage() {
     <div class="card"><div class="field" style="margin:0"><label>Shehar (panchang aur sunrise ke liye)</label><select onchange="setHoroCity(this.value)">${cityOpts}</select></div></div>
     <div id="horoPlaceCards">${horoPlaceCardsHTML()}</div>
     ${tarotCardHTML()}
-    ${familyRashiHTML()}`;
+    ${familyRashiHTML()}
+    ${astroLinkCardHTML()}`;
 }
 function openHoroscope() {
   if (/^https:\/\//i.test(HOROSCOPE_URL)) window.open(HOROSCOPE_URL, "_blank", "noopener");
   else go("horoscope");
+}
+/* Full kundli / dasha / matching reports: opens AstroSage's free reports page in a new tab (nothing is sent from this app). */
+const ASTROSAGE_FREE_URL = "https://www.astrosage.com/free/";
+function openAstroSage() { window.open(ASTROSAGE_FREE_URL, "_blank", "noopener"); }
+function astroLinkCardHTML() {
+  return `<div class="card"><h3>📜 Poori Kundli & Reports</h3>
+    <p class="muted" style="margin-top:0">Kundli, Kundli Matching, Dasha, Mangal Dosh aur Sade Sati ki free reports AstroSage par dekhein. Apni janm tareekh, samay aur shehar wahan bharni hogi.</p>
+    <button type="button" class="primary" onclick="openAstroSage()">AstroSage par kundli dekhein ↗</button>
+    <div class="muted" style="font-size:11.5px;margin-top:10px">Ye ek bahari website hai (AstroSage). Entertainment only.</div></div>`;
 }
 function horoMiniHTML() {
   const m = myself(), r = m ? rashiFromBirth(normalizeDate(m.dob) || m.dob, m.details?.birth_time) : null;
@@ -5090,7 +5100,7 @@ async function importGedcomPicked(inputEl) {
 Object.assign(window, {
   setProfilePanel, openEditLog, editlogLoad, elFilter, elReset, elTab, relBack, relZoom, relFit, setPeopleUnlinked, setPeopleAdmins,
   toggleTheme,
-  setHoroscope, loadHoroscope, openHoroscope, setHoroCity, tarotDraw, wallPickMedia, wallRemoveFile, wallViewImage, wallMediaShare, wallMediaDownload, wallSaveMedia,
+  setHoroscope, loadHoroscope, openHoroscope, openAstroSage, setHoroCity, tarotDraw, wallPickMedia, wallRemoveFile, wallViewImage, wallMediaShare, wallMediaDownload, wallSaveMedia,
   avatarFallback, sendChat, chatKey,
   openPersonTree, exitTreeView, openBranch, exitBranch,
   openChangeEmail, saveNewEmail,

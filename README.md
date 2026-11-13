@@ -39,7 +39,9 @@ Roles (member / support / admin) come from the `admin_roles` and `support_staff`
 ## Supabase
 SQL files are in `supabase/`. Run order: your earlier V7–V11 migrations (not in this zip — keep them in your repo), then `supabase-chat.sql`, `supabase-remove-link.sql`, `supabase-hardening.sql`, `supabase-join-tree.sql`, `supabase-admin-claim.sql`.
 Review all RLS policies before going live.
-The app also expects `person-memories.sql`, `claim-existing-profile.sql` and `supabase-v11-support.sql` — these are NOT in this zip.
+The app also expects `person-memories.sql`, `claim-existing-profile.sql` and `supabase-v11-support.sql` — these are now included in `supabase/` (reconstructed from the live database; constraints marked ASSUMED were not visible in the dump).
+
+Suggested order for a fresh project: `supabase-v11-support.sql` -> `supabase-support.sql` -> `person-memories.sql` -> `claim-existing-profile.sql` (after the base tables exist). Run `supabase-security-fixes.sql` last on any project (locks legacy tables, closes open functions, tightens `tree_members` policies).
 
 Create a private Storage bucket:
 `support-attachments`
