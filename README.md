@@ -99,7 +99,7 @@ Run `supabase/supabase-admin-claim.sql` once (after `supabase-join-tree.sql`).
 - Stat cards in grids align; stacked blocks get consistent spacing.
 - Chat: no extra card padding, chat first and Members below on phones.
 - People list: styled search/sort, stable row layout, icon-only delete on small screens. Native inputs/selects/textareas without a class now get the app look.
-- Bottom nav: Home, Tree, Members, Wall, Chat + **More** (opens a sheet with every page, incl. Connections, Support, Merge, Relationship, Admin).
+- Bottom nav: Home, Tree, Members, Wall, Chat + **More** (opens a sheet with every page, incl. Connections, Support, Relationship, Admin).
 - Fixed: `setTreeStyle`, `chart*` and `setPrivacy` handlers were never exported to `window`, so the Branch/Chart switch, the Chart toolbar and the Privacy dropdown did nothing.
 - Packaging: removed unused duplicate `assets/`, root `logo.png`, duplicate root SQL files and the stale `supabase-client-example.js`; added `.gitignore` and `.env.example`.
 
@@ -137,3 +137,5 @@ In "New post" tap 📍 Location: type a place name and/or lat/lng, use GPS, sear
 
 ## Post reactions (new)
 Run `supabase/supabase-wall-reactions.sql` once in the Supabase SQL editor (after `supabase-wall-location.sql`). Replaces the single like with 👍 ❤️ 😂 😢 🙏 🙌 (one reaction per person per post; old likes become ❤️).
+
+- Members page: tabs are **Admins · ALL · Unlinked · Duplicates**. Duplicates opens the merge page (no separate sidebar item anymore).

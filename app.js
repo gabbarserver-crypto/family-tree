@@ -545,7 +545,7 @@ const GAMES_URL = "https://games.1infinity.online/games/auth.html?redirect=index
 const NAV = [
   { group: "Family", items: [
     ["home", "Home", "🏠"], ["tree", "My Tree", "img:/assets/tree-logo-icon.png"], ["people", "Members", "👨‍👩‍👧"],
-    ["merge", "Duplicates", "🔀"], ["importGed", "Import/Export", "🔄"], ["relationship", "Relationship", "🔗"], ["horoscope", "Horoscope", "img:/assets/horoscope-icon.png"]
+    ["importGed", "Import/Export", "🔄"], ["relationship", "Relationship", "🔗"], ["horoscope", "Horoscope", "img:/assets/horoscope-icon.png"]
   ]},
   { group: "Social", items: [
     ["wall", "Family Wall", "📝"], ["events", "Events", "📅"], ["sharing", "Connections", "🔗🤝"], ["games", "Games", "🎮"]
@@ -557,7 +557,7 @@ const NAV = [
 const ADMIN_NAV = { group: "Admin", items: [ ["admin", "Admin & Safety", "🛡️"], ["production", "Production", "🚀"] ] };
 
 function navHTML(page, withLogout = true) {
-  if (page === "add" || page === "addRelative" || page === "treeAdmins") page = "people";   // Add Person + Tree Admins both live inside the Members page now
+  if (page === "add" || page === "addRelative" || page === "treeAdmins" || page === "merge") page = "people";   // Add Person + Tree Admins both live inside the Members page now
   const groups = NAV.map(g => ({ group: g.group, items: g.items.filter(([id]) => (id !== "add" || canEditTree()) && true) }));
   if (isStaff()) groups.push(ADMIN_NAV);
   return groups.map(g => `<div class="navgroup"><div class="navgroup-label">${g.group}</div>${
@@ -780,7 +780,7 @@ function render() {
   if (treeViewing && page !== "tree" && page !== "profile") exitTreeView(false);
   if (!document.getElementById("chatSheet")) teardownChat();
   const app = document.getElementById("app");
-  const navPage = page === "events" ? "wall" : page === "treeAdmins" ? "people" : page;   // Events is inside the Wall tab
+  const navPage = page === "events" ? "wall" : (page === "treeAdmins" || page === "merge" || page === "addRelative" || page === "add") ? "people" : page;   // Events is inside the Wall tab
   const flatNav = NAV.flatMap(g => g.items).filter(([id]) => id !== "add" || canEditTree()).concat(isStaff() ? ADMIN_NAV.items : []);
   app.innerHTML = `<div class="shell">
     <header class="topbar">
@@ -2706,7 +2706,9 @@ async function saveAddRelative() {
 /* ---------------- people ---------------- */
 let peopleQuery = "";
 let peopleOnlyUnlinked = false;
-let peopleOnlyAdmins = false;
+let peopleOnlyAdmins = true;     // opens on the Admins tab (switches to ALL by itself if the tree has no admins)
+let peopleViewInit = false;
+let peopleDupCount = 0;
 let peopleSort = "name-asc";
 const PEOPLE_SORTS = {
   "name-asc": "Name (A → Z)",
@@ -2743,7 +2745,7 @@ function peopleListHTML() {
   };
   rows.sort(sorters[peopleSort] || byName);
   const chip = (label, on, fn, title) => `<button type="button" class="${on ? "primary" : "ghost"}" style="padding:6px 14px;font-size:13px;min-height:0" onclick="${fn}"${title ? ` title="${title}"` : ""}>${label}</button>`;
-  const chips = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 8px">${chip(`Sab (${state.people.length})`, !peopleOnlyUnlinked && !peopleOnlyAdmins, "setPeopleUnlinked(false)")}${chip(`👑 Admins (${adminsTotal})`, peopleOnlyAdmins, "setPeopleAdmins(true)", "Jo is tree mein add/edit kar sakte hain")}${chip(`⚠️ Unlinked (${unlinkedTotal})`, peopleOnlyUnlinked, "setPeopleUnlinked(true)", "Jinka kisi se koi rishta link nahi hai")}</div>`;
+  const chips = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 8px">${chip(`👑 Admins (${adminsTotal})`, peopleOnlyAdmins, "setPeopleAdmins(true)", "Jo is tree mein add/edit kar sakte hain")}${chip(`ALL (${state.people.length})`, !peopleOnlyUnlinked && !peopleOnlyAdmins, "setPeopleUnlinked(false)")}${chip(`⚠️ Unlinked (${unlinkedTotal})`, peopleOnlyUnlinked, "setPeopleUnlinked(true)", "Jinka kisi se koi rishta link nahi hai")}${chip(`🔀 Duplicates${peopleDupCount ? ` (${peopleDupCount})` : ""}`, false, "go('merge')", "Duplicate profiles ko ek mein jodo")}</div>`;
   const count = chips + `<p class="muted" style="font-size:12.5px;margin:0 0 8px">${rows.length === state.people.length ? rows.length + " members" : rows.length + " of " + state.people.length + " members"}</p>`;
   if (!rows.length) return count + `<div class="card"><p class="muted">${peopleOnlyAdmins && !q ? "Abhi koi admin nahi hai. Koi bhi profile claim karne par automatically admin ban jata hai." : peopleOnlyUnlinked && !q ? "Koi unlinked profile nahi hai — sab kisi na kisi se juda hua hai. 🎉" : "Koi match nahi mila. Kuch aur search karke dekhein."}</p></div>`;
   return count + `<div class="list">${rows.map(({ p, label, kin }) => `<div class="row person-row" style="cursor:pointer" onclick="openProfile('${p.id}')">
@@ -2761,25 +2763,18 @@ function adminToggleBtn(p) {
   return (p.claimed_by || p.status === "claimed")
     ? `<button type="button" class="secondary" ${st} title="Admin banao" aria-label="Make admin" onclick="event.stopPropagation();setTreeRole('${esc(p.id)}','admin')">👑<span class="person-del-txt"> Make admin</span></button>` : "";
 }
-function adminsStripHTML() {
-  const iAmOwner = isTreeOwner();
-  const list = state.people.filter(p => !p.external && (personTreeRole(p) === "admin" || (iAmOwner && personTreeRole(p) === "owner")));
-  return `<div class="card" id="adminsStrip" style="margin-bottom:12px"><h3 style="margin:0 0 2px">👑 Admins</h3>
-    <p class="muted" style="font-size:12.5px;margin:0 0 6px">Ye log is tree mein relatives add &amp; edit kar sakte hain. Profile claim karne wala automatically admin ban jata hai aur tab tak rehta hai jab tak koi admin use hata na de.</p>
-    ${list.length ? `<div class="admin-chips">${list.map(p => `<button type="button" class="admin-chip" onclick="openProfile('${esc(p.id)}')">${avatarHTML(p)}<span>${esc(p.name)}</span><span class="badge ${treeRoleBadgeClass(personTreeRole(p))}">${treeRoleLabel(personTreeRole(p))}</span></button>`).join("")}</div>` : `<p class="muted" style="margin:0">Abhi koi admin nahi hai.</p>`}</div>`;
-}
 function refreshPeopleList() {
   const el = document.getElementById("peopleList"); if (el) el.innerHTML = peopleListHTML();
-  const st = document.getElementById("adminsStrip"); if (st) st.outerHTML = adminsStripHTML();
 }
-function setPeopleSearch(v) { peopleQuery = v || ""; refreshPeopleList(); }
+function setPeopleSearch(v) { peopleQuery = v || ""; if (peopleQuery.trim() && peopleOnlyAdmins) peopleOnlyAdmins = false; refreshPeopleList(); }
 function clearPeopleSearch() { peopleQuery = ""; const i = document.getElementById("peopleSearch"); if (i) { i.value = ""; i.focus(); } refreshPeopleList(); }
 function setPeopleUnlinked(on) { peopleOnlyUnlinked = !!on; peopleOnlyAdmins = false; refreshPeopleList(); }
 function setPeopleAdmins(on) { peopleOnlyAdmins = !!on; if (on) peopleOnlyUnlinked = false; refreshPeopleList(); }
 function setPeopleSort(v) { peopleSort = PEOPLE_SORTS[v] ? v : "name-asc"; refreshPeopleList(); }
 function people() {
+  if (!peopleViewInit) { peopleViewInit = true; peopleOnlyAdmins = state.people.some(p => !p.external && (personTreeRole(p) === "admin" || (isTreeOwner() && personTreeRole(p) === "owner"))); }
+  try { peopleDupCount = findDuplicateGroups().length; } catch (e) { peopleDupCount = 0; }
   return `<div class="page-head" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;justify-content:space-between"><div><h2>👨‍👩‍👧 Members</h2><p class="muted">Tree ke sab members — admins, claimed aur unclaimed profiles — ek hi jagah.</p></div>${canEditTree() ? `<button type="button" class="primary" onclick="go('add')">➕ Add Person</button>` : ""}</div>
-  ${adminsStripHTML()}
   <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
     <input id="peopleSearch" type="search" value="${esc(peopleQuery)}" placeholder="🔍 Search by name, relation, place or ID…" oninput="setPeopleSearch(this.value)" style="flex:1;min-width:220px">
     <button type="button" class="secondary" onclick="clearPeopleSearch()">Clear</button>
@@ -3860,7 +3855,7 @@ function merge() {
       </label></div>`).join("")}
     <div style="margin-top:12px"><button class="primary" onclick="mergeSelectedGroups()">${direct ? "Merge selected now" : "Send merge requests"}</button></div>
   </div>` : `<div class="card"><h3>Suggested duplicates</h3><p class="muted">Koi duplicate profile nahi mila.</p></div>`;
-  return `<div class="page-head"><h2>Duplicates</h2><p class="muted">Duplicate profiles ko ek mein jodo. Saare rishte (relationships) kept profile par shift ho jayenge.</p></div>
+  return `<div class="page-head"><button type="button" class="secondary" style="margin-bottom:8px" onclick="go('people')">← Members</button><h2>Duplicates</h2><p class="muted">Duplicate profiles ko ek mein jodo. Saare rishte (relationships) kept profile par shift ho jayenge.</p></div>
   ${dupCard}
   <div class="card form">
     <h3>Manual merge</h3>
