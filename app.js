@@ -4021,12 +4021,13 @@ function relationship() {
   const opts = sorted.map(p => `<option value="${esc(relPickLabel(p))}"></option>`).join("");
   const mine = me();
   const field = (id, label, val) => `<div class="field"><label>${label}</label><input id="${id}" list="relPeople" autocomplete="off" placeholder="Naam ya Person ID likhkar chunein…" value="${esc(val)}" onfocus="this.select()" onkeydown="if(event.key==='Enter'){event.preventDefault();findRelation()}"></div>`;
-  return `<div class="page-head"><h2>Relationship Finder</h2><p class="muted">Select any two people — the label and the full relationship path are derived live from the family graph.</p></div>
-  <div class="card form"><datalist id="relPeople">${opts}</datalist>
+  return `<div class="page-head"><h2>Relationship Finder</h2><p class="muted" id="relIntro">Select any two people — the label and the full relationship path are derived live from the family graph.</p></div>
+  <div class="card form" id="relForm"><datalist id="relPeople">${opts}</datalist>
   ${field("ra", "Person A", mine ? relPickLabel(mine) : "")}
   ${field("rb", "Person B", "")}
   ${field("rc", "Person C (optional)", "")}
-  <button class="primary" style="justify-self:start" onclick="findRelation()">Find Relationship</button><div id="relout"></div></div>`;
+  <button class="primary" style="justify-self:start" onclick="findRelation()">Find Relationship</button></div>
+  <div id="relout"></div>`;
 }
 /* Relationship path drawn as a small family tree: parents sit above children, spouses side by side,
    and every line is labelled (Father, Wife, Son ...). A and B are highlighted. */
@@ -4068,19 +4069,70 @@ function relationTreeHTML(fromId, path) {
     const pp = personById(id) || { name: "?" }, q = pos[i], end = i === 0 ? "start" : i === ids.length - 1 ? "end" : "";
     return `<div class="rt-card ${end}" style="left:${X(q)}px;top:${Y(q)}px;width:${W}px;height:${H}px">${avatarHTML(pp, "rt-av")}<span class="rt-name">${esc(pp.name)}</span>${end ? `<span class="rt-tag">${end === "start" ? "A" : "B"}</span>` : ""}</div>`;
   }).join("");
-  return `<div class="rt-wrap" data-w="${totalW}" data-h="${totalH}"><div class="rt-sizer" style="width:${totalW}px;height:${totalH}px"><div class="rt-canvas" style="width:${totalW}px;height:${totalH}px"><svg width="${totalW}" height="${totalH}" class="rt-svg">${lines}</svg>${pills}${cards}</div></div></div>`;
+  return `<div class="rt-box"><div class="rt-tools"><button type="button" class="secondary" onclick="relZoom(this,-0.2)" aria-label="Zoom out">−</button><span class="rt-pct">100%</span><button type="button" class="secondary" onclick="relZoom(this,0.2)" aria-label="Zoom in">＋</button><button type="button" class="ghost" onclick="relFit(this)">Fit</button></div><div class="rt-wrap" data-w="${totalW}" data-h="${totalH}"><div class="rt-sizer" style="width:${totalW}px;height:${totalH}px"><div class="rt-canvas" style="width:${totalW}px;height:${totalH}px"><svg width="${totalW}" height="${totalH}" class="rt-svg">${lines}</svg>${pills}${cards}</div></div></div></div>`;
 }
-/* Shrink every relation chart to fit its box (width AND ~70% of screen height) so no scrolling is needed.
-   Very big charts stop at 50% and then scroll as a fallback. */
-function fitRelTrees() {
+/* Relation charts: auto-fit on open, then the user can zoom (− / ＋ / Fit buttons, Ctrl+scroll, pinch on phones)
+   and drag to pan. A chart the user has zoomed keeps its zoom when the window is resized. */
+const RT_MIN = 0.3, RT_MAX = 2.5;
+function rtFitScale(w) {
+  const W = +w.dataset.w, H = +w.dataset.h; if (!W || !H) return 1;
+  const availW = w.clientWidth - 2, availH = Math.max(260, window.innerHeight * 0.72);
+  return Math.max(0.5, Math.min(1, availW / W, availH / H));
+}
+function rtSet(w, sc, ax, ay) {   // zoom to sc keeping the point under (ax, ay) (px inside the box) fixed
+  const sz = w.querySelector(".rt-sizer"), cv = w.querySelector(".rt-canvas"), W = +w.dataset.w, H = +w.dataset.h;
+  if (!sz || !cv || !W) return;
+  sc = Math.min(RT_MAX, Math.max(RT_MIN, sc));
+  const old = +w.dataset.sc || 1;
+  if (ax == null) ax = w.clientWidth / 2;
+  if (ay == null) ay = w.clientHeight / 2;
+  const cx = (w.scrollLeft + ax - sz.offsetLeft) / old, cy = (w.scrollTop + ay) / old;
+  cv.style.transform = `scale(${sc})`; sz.style.width = W * sc + "px"; sz.style.height = H * sc + "px";
+  w.dataset.sc = sc;
+  w.scrollLeft = cx * sc + sz.offsetLeft - ax; w.scrollTop = cy * sc - ay;
+  const pct = w.parentElement && w.parentElement.querySelector(".rt-pct"); if (pct) pct.textContent = Math.round(sc * 100) + "%";
+}
+function fitRelTrees(force) {
   document.querySelectorAll(".rt-wrap").forEach(w => {
-    const W = +w.dataset.w, H = +w.dataset.h, sz = w.querySelector(".rt-sizer"), cv = w.querySelector(".rt-canvas"); if (!W || !sz || !cv) return;
-    const availW = w.clientWidth - 2, availH = Math.max(260, window.innerHeight * 0.7);
-    const sc = Math.max(0.5, Math.min(1, availW / W, availH / H));
-    cv.style.transform = `scale(${sc})`; sz.style.width = W * sc + "px"; sz.style.height = H * sc + "px";
+    if (w.dataset.user && !force) return;
+    if (force) delete w.dataset.user;
+    w.dataset.sc = w.dataset.sc || "1";
+    rtSet(w, rtFitScale(w));
+    w.scrollLeft = 0; w.scrollTop = 0;
   });
 }
+function relZoom(btn, d) { const w = btn.closest(".rt-box").querySelector(".rt-wrap"); w.dataset.user = "1"; rtSet(w, (+w.dataset.sc || 1) + d); }
+function relFit(btn) { const w = btn.closest(".rt-box").querySelector(".rt-wrap"); delete w.dataset.user; rtSet(w, rtFitScale(w)); w.scrollLeft = 0; w.scrollTop = 0; }
 window.addEventListener("resize", () => fitRelTrees());
+(function relChartGestures() {
+  const ptrs = new Map(); let pinch = null, drag = null;
+  const wrapOf = e => e.target && e.target.closest ? e.target.closest(".rt-wrap") : null;
+  const rel = (w, x, y) => { const r = w.getBoundingClientRect(); return [x - r.left, y - r.top]; };
+  document.addEventListener("pointerdown", e => {
+    const w = wrapOf(e); if (!w) return;
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, w });
+    const mine = [...ptrs.values()].filter(p => p.w === w);
+    if (mine.length === 2) { pinch = { w, d0: Math.hypot(mine[0].x - mine[1].x, mine[0].y - mine[1].y) || 1, s0: +w.dataset.sc || 1 }; drag = null; }
+    else if (e.pointerType === "mouse" && e.button === 0) { drag = { w, x: e.clientX, y: e.clientY, l: w.scrollLeft, t: w.scrollTop }; w.classList.add("grabbing"); }
+  });
+  document.addEventListener("pointermove", e => {
+    const p = ptrs.get(e.pointerId); if (!p) return;
+    p.x = e.clientX; p.y = e.clientY;
+    if (pinch) {
+      const mine = [...ptrs.values()].filter(q => q.w === pinch.w); if (mine.length < 2) return;
+      const d = Math.hypot(mine[0].x - mine[1].x, mine[0].y - mine[1].y) || 1;
+      const [ax, ay] = rel(pinch.w, (mine[0].x + mine[1].x) / 2, (mine[0].y + mine[1].y) / 2);
+      pinch.w.dataset.user = "1"; rtSet(pinch.w, pinch.s0 * d / pinch.d0, ax, ay);
+    } else if (drag) { drag.w.scrollLeft = drag.l - (e.clientX - drag.x); drag.w.scrollTop = drag.t - (e.clientY - drag.y); }
+  });
+  const up = e => { ptrs.delete(e.pointerId); if (ptrs.size < 2) pinch = null; if (drag && !ptrs.size) { drag.w.classList.remove("grabbing"); drag = null; } };
+  document.addEventListener("pointerup", up); document.addEventListener("pointercancel", up);
+  document.addEventListener("wheel", e => {   // Ctrl/⌘ + scroll (and trackpad pinch) zooms; plain scroll still scrolls the page
+    const w = wrapOf(e); if (!w || !(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault(); const [ax, ay] = rel(w, e.clientX, e.clientY);
+    w.dataset.user = "1"; rtSet(w, (+w.dataset.sc || 1) * Math.exp(-e.deltaY * 0.0015), ax, ay);
+  }, { passive: false });
+})();
 /* One result card: "<b> is <label> of <a>" + the path chart. */
 function relResultHTML(a, b) {
   const result = deriveRelationship(a.id, b.id);
@@ -4096,8 +4148,16 @@ function findRelation() {
   if (cRaw && !c) { toast("Person C list se chunein (ya khali chhod dein)"); return; }
   // A + B -> one result. With Person C: B->A, C->A and C->B, each with its own chart.
   const pairs = c ? [[a, b], [a, c], [b, c]] : [[a, b]];
-  document.getElementById("relout").innerHTML = pairs.map(([x, y]) => relResultHTML(x, y)).join("");
-  fitRelTrees();
+  document.getElementById("relout").innerHTML = `<div class="rel-back"><button type="button" class="secondary" onclick="relBack()">← Back</button></div>` + pairs.map(([x, y]) => relResultHTML(x, y)).join("");
+  document.getElementById("relForm").hidden = true;       // the three pickers + button hide, only the chart stays
+  const intro = document.getElementById("relIntro"); if (intro) intro.hidden = true;
+  window.scrollTo(0, 0);
+  fitRelTrees(true);
+}
+function relBack() {   // pickers come back with whatever was selected
+  document.getElementById("relout").innerHTML = "";
+  document.getElementById("relForm").hidden = false;
+  const intro = document.getElementById("relIntro"); if (intro) intro.hidden = false;
 }
 
 /* ---------------- Events: birthdays, marriage & death anniversaries (computed from the tree) + DB events ---------------- */
@@ -4798,7 +4858,7 @@ async function importGedcomPicked(inputEl) {
    scoped to the module — they are NOT attached to window automatically
    the way classic <script> globals are. */
 Object.assign(window, {
-  setPeopleUnlinked, setPeopleAdmins,
+  relBack, relZoom, relFit, setPeopleUnlinked, setPeopleAdmins,
   toggleTheme,
   setHoroscope, loadHoroscope, openHoroscope, setHoroCity, tarotDraw, wallPickMedia, wallRemoveFile, wallViewImage, wallMediaShare, wallMediaDownload, wallSaveMedia,
   avatarFallback, sendChat, chatKey,

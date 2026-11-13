@@ -552,7 +552,8 @@ input[type=search]{-webkit-appearance:none;appearance:none}
 .tree-canvas.grab *{cursor:grabbing!important}
 
 /* relationship path drawn as a tree */
-.rt-wrap{margin-top:12px;overflow:auto;border:1px solid var(--line);border-radius:14px;background:linear-gradient(135deg,#eaf3fb 0%,var(--paper) 55%,#fdf6e6 100%);max-height:70vh}
+.rt-wrap{position:relative;margin-top:8px;overflow:auto;border:1px solid var(--line);border-radius:14px;background:linear-gradient(135deg,#eaf3fb 0%,var(--paper) 55%,#fdf6e6 100%);max-height:72vh;touch-action:pan-x pan-y;cursor:grab;overscroll-behavior:contain}
+.rt-wrap.grabbing{cursor:grabbing;user-select:none}
 .rt-sizer{margin:0 auto;position:relative}
 .rt-canvas{position:relative;transform-origin:0 0}
 .rt-svg{position:absolute;left:0;top:0}
@@ -834,3 +835,11 @@ input[type=search]{-webkit-appearance:none;appearance:none}
 .admin-chip{display:inline-flex;align-items:center;gap:8px;padding:4px 12px 4px 5px;border:1px solid var(--line);border-radius:999px;background:var(--paper-raised);font-size:13px;font-weight:600;color:var(--ink);cursor:pointer;min-height:0}
 .admin-chip .avatar{width:26px;height:26px;font-size:10px;flex:none}
 .admin-chip:hover{border-color:var(--plum)}
+
+/* Relationship finder: zoom toolbar + back bar */
+.rt-box{margin-top:10px}
+.rt-tools{display:flex;gap:6px;align-items:center;justify-content:flex-end}
+.rt-tools button{min-width:36px;min-height:0;padding:6px 12px}
+.rt-pct{font-size:12.5px;color:var(--ink-soft);min-width:46px;text-align:center;font-weight:600}
+.rel-back{margin:0 0 4px}
+#relForm[hidden],#relIntro[hidden]{display:none!important}
