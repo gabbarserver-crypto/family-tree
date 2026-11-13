@@ -90,11 +90,27 @@ begin
     raise exception 'This profile is no longer available';
   end if;
   return jsonb_build_object(
-    'tree_name',   (select name from family_trees where id = i.tree_id),
+    'tree_name', (select name from family_trees where id = i.tree_id),
     'person_name', (select full_name from persons where id = i.person_id),
-    'invited_by',  coalesce((select nullif(display_name, '') from profiles where id = i.created_by), 'A family member'),
-    'make_admin',  i.make_admin,
-    'expires_at',  i.expires_at);
+    'person_avatar_url', (select avatar_url from persons where id = i.person_id),
+    'father_name', (
+      select fp.full_name
+      from relationships r join persons fp on fp.id = r.person_a_id
+      where r.person_b_id = i.person_id and r.relationship_type = 'parent'
+        and fp.gender = 'Male'
+      order by r.created_at nulls last limit 1
+    ),
+    'husband_name', (
+      select hp.full_name
+      from relationships r join persons hp
+        on hp.id = case when r.person_a_id = i.person_id then r.person_b_id else r.person_a_id end
+      where (r.person_a_id = i.person_id or r.person_b_id = i.person_id)
+        and r.relationship_type = 'spouse' and hp.gender = 'Male'
+      order by r.created_at nulls last limit 1
+    ),
+    'invited_by', coalesce((select nullif(display_name, '') from profiles where id = i.created_by), 'A family member'),
+    'make_admin', i.make_admin,
+    'expires_at', i.expires_at);
 end $$;
 revoke all on function public.peek_profile_invite(text) from public;
 grant execute on function public.peek_profile_invite(text) to authenticated;

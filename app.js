@@ -5428,13 +5428,24 @@ async function showPendingInvite(user) {
     toast(/expired|invalid/i.test(error.message) ? "Ye invite link expire ho gaya ya band hai. Bhejne wale se naya link maango." : error.message);
     return false;
   }
-  document.getElementById("app").innerHTML = `<main class="login"><section class="login-card" style="max-width:520px">
+  const invitePhoto = d.person_avatar_url
+    ? `<img src="${esc(d.person_avatar_url)}" alt="${esc(d.person_name)}" style="width:104px;height:104px;border-radius:50%;object-fit:cover;border:3px solid var(--accent,#8b5cf6)">`
+    : `<div style="width:104px;height:104px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2,#eee8f5);color:var(--text,#514568);font-size:34px;font-weight:700;border:3px solid var(--accent,#8b5cf6)">${esc((d.person_name || "?").trim().split(/\\s+/).slice(0,2).map(x => x[0] || "").join("").toUpperCase())}</div>`;
+  const familyLine = [
+    d.father_name ? `Father: ${esc(d.father_name)}` : "",
+    d.husband_name ? `Husband: ${esc(d.husband_name)}` : ""
+  ].filter(Boolean).join(" · ");
+  document.getElementById("app").innerHTML = `<main class="login"><section class="login-card" style="max-width:520px;text-align:center">
     <div class="eyebrow">Family invite</div>
-    <h1 style="font-size:28px">🌳 ${esc(d.tree_name || "Family tree")}</h1>
-    <p class="muted"><b>${esc(d.invited_by)}</b> ne aapko is tree me profile <b>${esc(d.person_name)}</b> ke roop me invite kiya hai.</p>
-    <div class="card" style="margin:12px 0"><b>Accept karne par:</b><br><span class="muted" style="font-size:13.5px">• Ye profile aapki ho jayegi<br>• ${d.make_admin ? "Aap is tree ke <b>admin</b> banoge (add/edit, join approve, admin manage, invite)" : "Aap tree ke <b>member</b> banoge (profiles add/edit kar sakoge)"}</span></div>
-    <p class="muted" style="font-size:12.5px">Agar ye profile aap nahi ho, to Accept mat karo.</p>
-    <button class="primary full" onclick="acceptProfileInvite()">✅ Ye main hu — Accept</button>
+    <h1 style="font-size:26px;margin-bottom:18px">🌳 ${esc(d.tree_name || "Family tree")}</h1>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:12px 0 18px">
+      ${invitePhoto}
+      <h2 style="font-size:22px;margin:2px 0 0">${esc(d.person_name || "Family member")}</h2>
+      ${familyLine ? `<p class="muted" style="margin:0;font-size:14px">${familyLine}</p>` : ""}
+      <p class="muted" style="margin:0;font-size:13px">Invited by ${esc(d.invited_by || "A family member")}</p>
+    </div>
+    <div class="card" style="margin:8px 0 14px;text-align:left"><b>Accept karne par:</b><br><span class="muted" style="font-size:13.5px">• Ye profile aapki ho jayegi<br>• ${d.make_admin ? "Aap is tree ke <b>admin</b> banoge (add/edit, join approve, admin manage, invite)" : "Aap tree ke <b>member</b> banoge (profiles add/edit kar sakoge)"}</span></div>
+    <button class="primary full" onclick="acceptProfileInvite()">✅ Accept</button>
     <button class="ghost full" style="margin-top:8px" onclick="declineProfileInvite()">Abhi nahi</button>
     <button class="ghost full" style="margin-top:8px" onclick="logout()">Logout</button>
   </section></main>`;
