@@ -1851,10 +1851,10 @@ function branchNode(p, isCenter) {
   const centerBadge = hasOwnTree ? `<button type="button" class="tree-badge right own-tree" title="${badgeTitle}" onclick="event.stopPropagation();${badgeClick}"><img src="/assets/tree-icon-grey.png" alt="Tree"></button>` : "";
   const dodYear = p.details?.dod ? new Date(p.details.dod).getFullYear() : "";
   const years = p.dob ? `${new Date(p.dob).getFullYear()} –${dodYear ? " " + dodYear : ""}` : (dodYear ? `– ${dodYear}` : "–");
-  return `<div class="branch-node ${p.me ? "me" : ""} ${isCenter && !p.me ? "me" : ""}" id="${nodeElId(p.id)}" style="position:relative;cursor:pointer" title="View profile" onclick="openProfilePopup('${p.id}')">
+  return `<div class="branch-node ${p.me ? "me" : ""} ${isCenter && !p.me ? "me" : ""}${p.lifeStatus === "deceased" ? " gone" : ""}" id="${nodeElId(p.id)}" style="position:relative;cursor:pointer" title="View profile" onclick="openProfilePopup('${p.id}')">
     ${addBadge}${centerBadge}
     ${avatarHTML(p, "photo" + (p.status !== "unclaimed" ? " claimed" : ""))}
-    <strong>${esc(p.name)}</strong>
+    <strong>${p.lifeStatus === "deceased" ? "🕯️ " : ""}${esc(p.name)}</strong>
     <div class="mini">${years}${p.status === "unclaimed" ? " · Unclaimed" : ""}</div>
     <div class="mini rel">${deriveRelationship(me().id, p.id).label}</div>
   </div>`;

@@ -850,3 +850,19 @@ input[type=search]{-webkit-appearance:none;appearance:none}
 .profile-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .profile-actions [aria-pressed="true"]{outline:2px solid var(--gold,#c8962e);outline-offset:1px}
 @media (max-width:720px){.profile-actions{justify-content:center}}
+
+/* ---------- deceased (expired) people: grey cards, same in Branch and Chart view ---------- */
+.branch-node.gone,.ch-card.gone{background:#E9EAEE;border-color:#9AA0AE}
+.branch-node.gone strong,.ch-card.gone b{color:#555B6A}
+.branch-node.gone .mini,.ch-card.gone .ch-yrs{color:#7a8090}
+.branch-node.gone .mini.rel,.ch-card.gone .ch-rel{color:#7a8090}
+.branch-node.gone .photo,.branch-node.gone .avatar{filter:grayscale(.6);opacity:.85}
+/* if the deceased person is "me"/the centre card, keep the dark card but fade it */
+.branch-node.me.gone{background:#555B6A;border-color:#555B6A}
+.branch-node.me.gone strong,.branch-node.me.gone .mini{color:#fff}
+.ch-card.me.gone{background:linear-gradient(to bottom,#E9EAEE 0,#E9EAEE 76px,#555B6A 76px)}
+:root[data-theme="dark"] .branch-node.gone,:root[data-theme="dark"] .ch-card.gone{background:#2F2C38;border-color:#5B5868}
+:root[data-theme="dark"] .branch-node.gone strong,:root[data-theme="dark"] .ch-card.gone b{color:#b9b6c6}
+:root[data-theme="dark"] .branch-node.gone .mini,:root[data-theme="dark"] .ch-card.gone .ch-yrs,:root[data-theme="dark"] .branch-node.gone .mini.rel{color:#8e8a9f}
+:root[data-theme="dark"] .branch-node.me.gone{background:#3d3a49;border-color:#5B5868}
+:root[data-theme="dark"] .ch-card.me.gone{background:linear-gradient(to bottom,#2F2C38 0,#2F2C38 76px,#000 76px)}
