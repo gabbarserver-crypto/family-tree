@@ -86,7 +86,7 @@ another family line. Tap a card for the profile, drag to pan, ＋/－/Fit to zoo
 ## Admin by claim, admin management, profile transfer (new)
 Run `supabase/supabase-admin-claim.sql` once (after `supabase-join-tree.sql`).
 - **Claiming a profile makes that user an admin** of the tree (add + edit). Claiming stays optional; unclaimed profiles are managed by admins.
-- An admin stays admin until **another admin removes them** (Tree Admins page). Removing admin does not unclaim the profile.
+- An admin stays admin until **another admin removes them** (Members page). Removing admin does not unclaim the profile.
 - **Any admin can add or remove admins**; the target must be a claimed profile. The tree owner can never be removed, so a tree always has an admin.
 - **Transfer profile**: a claimed (non-owner) profile can be handed to another account with a single-use 48h code (stored hashed). The receiver enters it under "Transfer code hai?" on the first-login screen, becomes the claimant + admin, and the sender stays in the tree as admin with a fresh empty card (same name, no contact details) until another admin removes them.
 - **Another email for an already-claimed profile**: can't take it over. They join with a new profile; when an admin approves (with a confirm warning) they become admin.
@@ -99,7 +99,7 @@ Run `supabase/supabase-admin-claim.sql` once (after `supabase-join-tree.sql`).
 - Stat cards in grids align; stacked blocks get consistent spacing.
 - Chat: no extra card padding, chat first and Members below on phones.
 - People list: styled search/sort, stable row layout, icon-only delete on small screens. Native inputs/selects/textareas without a class now get the app look.
-- Bottom nav: Home, Tree, People, Wall, Chat + **More** (opens a sheet with every page, incl. Connections, Support, Merge, Relationship, Tree Admins, Admin).
+- Bottom nav: Home, Tree, Members, Wall, Chat + **More** (opens a sheet with every page, incl. Connections, Support, Merge, Relationship, Admin).
 - Fixed: `setTreeStyle`, `chart*` and `setPrivacy` handlers were never exported to `window`, so the Branch/Chart switch, the Chart toolbar and the Privacy dropdown did nothing.
 - Packaging: removed unused duplicate `assets/`, root `logo.png`, duplicate root SQL files and the stale `supabase-client-example.js`; added `.gitignore` and `.env.example`.
 

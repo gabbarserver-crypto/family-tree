@@ -107,3 +107,137 @@ export function gedcomToTree(records, { createdBy = null, existingCodes = new Se
 export async function importGedcomFile(file, ctx) {
   return gedcomToTree(parseGedcom(await file.text()), ctx);
 }
+
+/* ---------------------------------------------------------------------------
+   4) EXPORT: familytree state.people / state.relationships -> GEDCOM 5.5.1 text
+   Relationship model in the app: {type:"parent", from:<parent>, to:<child>} and {type:"spouse", from, to}.
+   --------------------------------------------------------------------------- */
+const MON = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+
+/* "1991-08-26" or "14 Mar 1968" -> "26 AUG 1991". Anything else is kept as a GEDCOM date phrase "(text)". */
+function toGedDate(s) {
+  s = (s || "").toString().trim();
+  if (!s) return "";
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m && +m[2] >= 1 && +m[2] <= 12) return `${+m[3]} ${MON[+m[2] - 1]} ${m[1]}`;
+  m = s.match(/^(\d{1,2})\s+([A-Za-z]{3})[A-Za-z]*\.?\s+(\d{4})$/);
+  if (m && MONTHS[m[2].toUpperCase()]) return `${+m[1]} ${m[2].toUpperCase()} ${m[3]}`;
+  if (/^(ABT|BEF|AFT|EST|CAL)?\s*(\d{1,2}\s+[A-Z]{3}\s+)?\d{4}$/i.test(s)) return s.toUpperCase();
+  return `(${s.replace(/[()]/g, "")})`;
+}
+
+/* Long / multi-line text -> GEDCOM lines with CONT (newline) and CONC (length) continuations. */
+function gedText(level, tag, text) {
+  const out = [];
+  const lines = String(text).replace(/\r/g, "").split("\n");
+  lines.forEach((ln, i) => {
+    let chunk = ln, first = true;
+    do {
+      const piece = chunk.slice(0, 200); chunk = chunk.slice(200);
+      if (i === 0 && first) out.push(`${level} ${tag} ${piece}`.trimEnd());
+      else out.push(`${level + 1} ${first ? "CONT" : "CONC"} ${piece}`.trimEnd());
+      first = false;
+    } while (chunk.length);
+  });
+  return out;
+}
+
+const gedName = (full) => {
+  const parts = String(full || "Unknown").replace(/\//g, " ").replace(/\s+/g, " ").trim().split(" ");
+  if (parts.length < 2) return `${parts[0] || "Unknown"} //`;
+  const surn = parts.pop();
+  return `${parts.join(" ")} /${surn}/`;
+};
+
+export function treeToGedcom(people, relationships, { appName = "FamilyTree" } = {}) {
+  const num = new Map(); people.forEach((p, i) => num.set(p.id, i + 1));
+  const byId = new Map(people.map(p => [p.id, p]));
+  const parentsOf = new Map();                      // child id -> [parent ids]
+  const spouseEdges = [];
+  for (const r of relationships || []) {
+    if (!byId.has(r.from) || !byId.has(r.to)) continue;
+    if (r.type === "parent") { if (!parentsOf.has(r.to)) parentsOf.set(r.to, []); if (!parentsOf.get(r.to).includes(r.from)) parentsOf.get(r.to).push(r.from); }
+    else if (r.type === "spouse") spouseEdges.push([r.from, r.to]);
+  }
+
+  /* Build FAM records: every spouse pair, plus parent groups that are not spouses (and single parents). */
+  const fams = [], famByKey = new Map();
+  const ordered = (a, b) => {                       // HUSB first when genders say so
+    const A = byId.get(a), B = byId.get(b);
+    if (A.gender === "Female" && B.gender !== "Female") return [b, a];
+    return [a, b];
+  };
+  const getFam = (ids) => {
+    const key = [...ids].sort().join("|");
+    if (famByKey.has(key)) return famByKey.get(key);
+    let husb = null, wife = null;
+    if (ids.length === 2) [husb, wife] = ordered(ids[0], ids[1]);
+    else { const p = byId.get(ids[0]); if (p.gender === "Female") wife = ids[0]; else husb = ids[0]; }
+    const f = { n: fams.length + 1, husb, wife, children: [] };
+    fams.push(f); famByKey.set(key, f); return f;
+  };
+  spouseEdges.forEach(([a, b]) => getFam([a, b]));
+  for (const [child, pars] of parentsOf) {
+    let f = null;
+    if (pars.length >= 2) {
+      for (let i = 0; i < pars.length && !f; i++) for (let j = i + 1; j < pars.length && !f; j++) {
+        const k = [pars[i], pars[j]].sort().join("|"); if (famByKey.has(k)) f = famByKey.get(k);
+      }
+      if (!f) f = getFam([pars[0], pars[1]]);
+      f.children.push(child);
+      pars.slice(2).forEach(extra => getFam([extra]).children.push(child));   // 3rd+ parent (step/adoptive): own FAM
+    } else {
+      getFam([pars[0]]).children.push(child);
+    }
+  }
+
+  const famsOf = new Map(), famcOf = new Map();    // person -> FAM numbers (as spouse / as child)
+  const add = (m, k, v) => { if (!m.has(k)) m.set(k, []); if (!m.get(k).includes(v)) m.get(k).push(v); };
+  for (const f of fams) {
+    if (f.husb) add(famsOf, f.husb, f.n);
+    if (f.wife) add(famsOf, f.wife, f.n);
+    f.children.forEach(c => add(famcOf, c, f.n));
+  }
+
+  const L = [];
+  const now = new Date();
+  L.push("0 HEAD", `1 SOUR ${appName}`, `2 NAME ${appName}`, "1 GEDC", "2 VERS 5.5.1", "2 FORM LINEAGE-LINKED",
+    "1 CHAR UTF-8", `1 DATE ${now.getDate()} ${MON[now.getMonth()]} ${now.getFullYear()}`);
+
+  for (const p of people) {
+    const d = p.details || {};
+    L.push(`0 @I${num.get(p.id)}@ INDI`, `1 NAME ${gedName(p.name)}`);
+    if (p.nickname) L.push(`2 NICK ${p.nickname}`);
+    if (p.gender === "Male") L.push("1 SEX M"); else if (p.gender === "Female") L.push("1 SEX F");
+    const bd = toGedDate(p.dob || d.dob_text);
+    if (bd || p.birthPlace) { L.push("1 BIRT"); if (bd) L.push(`2 DATE ${bd}`); if (p.birthPlace) L.push(`2 PLAC ${p.birthPlace}`); }
+    if (p.lifeStatus === "deceased" || d.death_date) {
+      const dd = toGedDate(d.death_date);
+      if (dd || d.death_place) { L.push("1 DEAT"); if (dd) L.push(`2 DATE ${dd}`); if (d.death_place) L.push(`2 PLAC ${d.death_place}`); }
+      else L.push("1 DEAT Y");
+    }
+    if (p.currentPlace) L.push("1 RESI", `2 PLAC ${p.currentPlace}`);
+    if (/^https?:\/\//i.test(p.avatar_url || "")) {
+      const ext = (p.avatar_url.split("?")[0].match(/\.(\w{3,4})$/) || [])[1] || "jpg";
+      L.push("1 OBJE", `2 FILE ${p.avatar_url}`, `3 FORM ${ext.toLowerCase()}`);
+    }
+    if (p.about) L.push(...gedText(1, "NOTE", p.about));
+    (famcOf.get(p.id) || []).forEach(n => L.push(`1 FAMC @F${n}@`));
+    (famsOf.get(p.id) || []).forEach(n => L.push(`1 FAMS @F${n}@`));
+  }
+
+  for (const f of fams) {
+    L.push(`0 @F${f.n}@ FAM`);
+    if (f.husb) L.push(`1 HUSB @I${num.get(f.husb)}@`);
+    if (f.wife) L.push(`1 WIFE @I${num.get(f.wife)}@`);
+    f.children.forEach(c => L.push(`1 CHIL @I${num.get(c)}@`));
+    if (f.husb && f.wife) {                         // marriage date saved at import time
+      const h = byId.get(f.husb), w = byId.get(f.wife);
+      const mm = ((h.details && h.details.marriages) || []).find(x => w.details && x.spouse_gedcom_id === w.details.gedcom_id);
+      const md = mm && toGedDate(mm.date);
+      if (md) L.push("1 MARR", `2 DATE ${md}`);
+    }
+  }
+  L.push("0 TRLR");
+  return L.join("\r\n") + "\r\n";
+}

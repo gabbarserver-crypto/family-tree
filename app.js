@@ -1,5 +1,5 @@
 import { supabase, supabaseConfigured, signInWithGoogle, signInWithFacebook, handleNativeAuthUrl, sendPhoneOtp, verifyPhoneOtp } from "./supabase.js";
-import { importGedcomFile } from "./gedcom.js";
+import { importGedcomFile, treeToGedcom } from "./gedcom.js";
 
 /* ==========================================================================
    FamilyTree — integrated app (V1 core + V3 Tree, V4 Merge, V5 Profiles,
@@ -544,9 +544,8 @@ const APK_URL = "/FamilyTree.apk";
 const GAMES_URL = "https://games.1infinity.online/games/auth.html?redirect=index.html";
 const NAV = [
   { group: "Family", items: [
-    ["home", "Home", "🏠"], ["tree", "My Tree", "img:/assets/tree-logo-icon.png"], ["people", "People", "👨‍👩‍👧"],
-    ["merge", "Duplicates", "🔀"], ["importGed", "Import GEDCOM", "📥"], ["relationship", "Relationship", "🔗"], ["horoscope", "Horoscope", "img:/assets/horoscope-icon.png"],
-    ["treeAdmins", "Tree Admins", "👑"]
+    ["home", "Home", "🏠"], ["tree", "My Tree", "img:/assets/tree-logo-icon.png"], ["people", "Members", "👨‍👩‍👧"],
+    ["merge", "Duplicates", "🔀"], ["importGed", "Import/Export", "🔄"], ["relationship", "Relationship", "🔗"], ["horoscope", "Horoscope", "img:/assets/horoscope-icon.png"]
   ]},
   { group: "Social", items: [
     ["wall", "Family Wall", "📝"], ["events", "Events", "📅"], ["sharing", "Connections", "🔗🤝"], ["games", "Games", "🎮"]
@@ -558,7 +557,7 @@ const NAV = [
 const ADMIN_NAV = { group: "Admin", items: [ ["admin", "Admin & Safety", "🛡️"], ["production", "Production", "🚀"] ] };
 
 function navHTML(page, withLogout = true) {
-  if (page === "add" || page === "addRelative") page = "people";   // Add Person lives inside the People page now
+  if (page === "add" || page === "addRelative" || page === "treeAdmins") page = "people";   // Add Person + Tree Admins both live inside the Members page now
   const groups = NAV.map(g => ({ group: g.group, items: g.items.filter(([id]) => (id !== "add" || canEditTree()) && true) }));
   if (isStaff()) groups.push(ADMIN_NAV);
   return groups.map(g => `<div class="navgroup"><div class="navgroup-label">${g.group}</div>${
@@ -571,7 +570,7 @@ function navItem(id, label, icon, page) {
 }
 /* Phones: the sidebar is hidden, so every page that is not a bottom tab lives in this "More" sheet. */
 const BOTTOM_TABS = ["home", "tree", "people", "wall", "horoscope"];   // Chat is inside the Wall feed now
-const BOTTOM_LABELS = { tree: "Tree", wall: "Wall" };
+const BOTTOM_LABELS = { tree: "Tree", wall: "Wall", people: "Members" };
 function openMoreMenu() {
   closeMoreMenu();
   const page = (location.hash || "#home").slice(1);
@@ -735,7 +734,7 @@ function openNotifications(keepScroll) {
     const isNew = new Date(n.created_at).getTime() > seen;
     items.push(`<div class="notif-item${isNew ? " new" : ""}"><div class="notif-t">👑 Aap ab is tree ke <b>Admin</b> hain${isNew ? ' <span class="badge plum">NEW</span>' : ""}</div>
       <div class="muted" style="font-size:12.5px">${esc(n.action === "admin_by_claim" ? "Aapka profile claim hone par" : "Tree admin ne aapko admin banaya")} · ${esc(fmtDateTime(n.created_at))}. Ab aap relatives add/edit kar sakte ho aur join requests approve kar sakte ho.</div>
-      <div class="actions" style="margin-top:8px"><button type="button" class="secondary" onclick="closeNotifications();go('treeAdmins')">Tree Admins dekho</button></div></div>`);
+      <div class="actions" style="margin-top:8px"><button type="button" class="secondary" onclick="closeNotifications();go('people')">Members dekho</button></div></div>`);
   });
   (state.incomingJoins || []).forEach(r => items.push(`<div class="notif-item new"><div class="notif-t">🙋 <b>${esc(r.requester_name)}</b> tree join karna chahta hai${r.person_name ? ` (profile: <b>${esc(r.person_name)}</b>)` : ""}</div>
       <div class="muted" style="font-size:12.5px">${esc(r.tree_name || "")} · ${esc(fmtDateTime(r.created_at))}. Approve karne par ye person tree ka admin ban jayega.</div>
@@ -781,7 +780,7 @@ function render() {
   if (treeViewing && page !== "tree" && page !== "profile") exitTreeView(false);
   if (!document.getElementById("chatSheet")) teardownChat();
   const app = document.getElementById("app");
-  const navPage = page === "events" ? "wall" : page;   // Events is inside the Wall tab
+  const navPage = page === "events" ? "wall" : page === "treeAdmins" ? "people" : page;   // Events is inside the Wall tab
   const flatNav = NAV.flatMap(g => g.items).filter(([id]) => id !== "add" || canEditTree()).concat(isStaff() ? ADMIN_NAV.items : []);
   app.innerHTML = `<div class="shell">
     <header class="topbar">
@@ -814,11 +813,11 @@ function switchRole() {}
 function pageView(p) {
   const map = {
     home, tree, add, addRelative, people, merge, relationship, profile: () => profile(activeProfileId || me().id),
-    wall, events: eventsPage, sharing, support, admin, production, treeAdmins, importGed, horoscope: horoscopePage, games: gamesPage
+    wall, events: eventsPage, sharing, support, admin, production, treeAdmins: people, importGed, horoscope: horoscopePage, games: gamesPage
   };
   if ((p === "admin" || p === "production") && !isStaff()) return accessDenied();
-  if (p === "add" && !canEditTree()) return accessDenied("Tree admin access required", "Only this tree's owner or admins can add relatives. Ask the owner to promote you from the Tree Admins page.");
-  if (p === "addRelative" && !canAddRelativeTo(addRelativeTargetId)) return accessDenied("Tree admin access required", "Only this tree's owner or admins can add relatives to other people. Ask the owner to promote you from the Tree Admins page.");
+  if (p === "add" && !canEditTree()) return accessDenied("Tree admin access required", "Only this tree's owner or admins can add relatives. Ask the owner to promote you from the Members page.");
+  if (p === "addRelative" && !canAddRelativeTo(addRelativeTargetId)) return accessDenied("Tree admin access required", "Only this tree's owner or admins can add relatives to other people. Ask the owner to promote you from the Members page.");
   return (map[p] || home)();
 }
 function accessDenied(title, msg) {
@@ -928,14 +927,43 @@ async function loadHoroscope() {
 
 /* ---------------- import (moved from dashboard; lives under More) ---------------- */
 function importGed() {
-  return `<div class="page-head"><h2>Import GEDCOM</h2><p class="muted">Dusre apps se family tree laayein.</p></div>
+  const n = state.people.length, own = !(state.joined || treeViewing);
+  return `<div class="page-head"><h2>Import / Export</h2><p class="muted">Family tree laayein ya apni tree ka backup (GEDCOM) nikaalein.</p></div>
   <div class="card"><h3>Import from GEDCOM</h3>
     <p class="muted">Upload a .ged file (from iMeUsWe, Ancestry, MyHeritage, etc.) to add all its people and relationships to your tree.</p>
     <div class="actions">
       <button class="primary" onclick="document.getElementById('gedFile').click()">📥 Import .ged file</button>
       <input type="file" id="gedFile" accept=".ged,.gedcom" hidden onchange="importGedcomPicked(this)">
     </div>
+  </div>
+  <div class="card"><h3>Export to GEDCOM</h3>
+    <p class="muted">Apni poori tree (${n} log, unke rishte, DOB, jagah, photo links aur notes) ek .ged file mein download karein. Ye file Ancestry, MyHeritage, Gramps jaise apps mein import ho sakti hai, aur backup ke kaam bhi aati hai.</p>
+    ${own ? "" : `<p class="muted"><b>Note:</b> Export sirf aapki apni tree ka ho sakta hai.</p>`}
+    <div class="actions">
+      <button class="primary" onclick="exportGedcom()" ${own && n ? "" : "disabled"}>📤 Export .ged file</button>
+    </div>
   </div>`;
+}
+
+async function exportGedcom() {
+  if (state.joined || treeViewing) return toast("Export sirf apni tree ka ho sakta hai");
+  if (!state.people.length) return toast("Export karne ke liye tree mein koi person nahi hai");
+  try {
+    const text = treeToGedcom(state.people, state.relationships);
+    const who = ((myself() && myself().name) || "FamilyTree").replace(/[^\w\u0900-\u097F]+/g, "-").replace(/^-+|-+$/g, "") || "FamilyTree";
+    const d = new Date(), pad = x => String(x).padStart(2, "0");
+    const fname = `FamilyTree-${who}-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.ged`;
+    const file = new File([text], fname, { type: "text/plain" });
+    const native = window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform();
+    if (native && navigator.canShare && navigator.canShare({ files: [file] })) {   // Android app: share sheet (save to Drive/Files, WhatsApp...)
+      try { await navigator.share({ files: [file], title: fname }); toast("GEDCOM file tayyar ho gayi"); return; }
+      catch (e) { if (e && e.name === "AbortError") return; }
+    }
+    const url = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
+    const a = document.createElement("a"); a.href = url; a.download = fname; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    toast(`${state.people.length} log export hue (${fname})`);
+  } catch (e) { console.error("GEDCOM export failed", e); toast("GEDCOM export failed: " + e.message); }
 }
 
 /* ---------------- Horoscope tab: Panchang, Rahu Kaal, Tarot, Family Rashi (all computed locally, IST) ---------------- */
@@ -2678,6 +2706,7 @@ async function saveAddRelative() {
 /* ---------------- people ---------------- */
 let peopleQuery = "";
 let peopleOnlyUnlinked = false;
+let peopleOnlyAdmins = false;
 let peopleSort = "name-asc";
 const PEOPLE_SORTS = {
   "name-asc": "Name (A → Z)",
@@ -2693,7 +2722,13 @@ function peopleListHTML() {
   const linked = new Set(); state.relationships.forEach(r => { linked.add(r.from); linked.add(r.to); });
   const isUnlinked = p => !linked.has(p.id);
   const unlinkedTotal = state.people.filter(isUnlinked).length;
+  // Roles (merged from the old Tree Admins page). The owner is only shown as owner to the owner themself.
+  const iAmOwner = isTreeOwner();
+  const shownRole = p => { const r = personTreeRole(p); return r === "owner" ? (iAmOwner ? "owner" : "member") : r; };
+  const isAdminRow = p => { const r = shownRole(p); return r === "owner" || r === "admin"; };
+  const adminsTotal = state.people.filter(p => !p.external && isAdminRow(p)).length;
   if (peopleOnlyUnlinked) rows = rows.filter(r => isUnlinked(r.p));
+  if (peopleOnlyAdmins) rows = rows.filter(r => !r.p.external && isAdminRow(r.p));
   if (q) rows = rows.filter(({ p, label, kin }) => [p.name, p.id, p.personCode, p.birthPlace, p.currentPlace, label, kin].some(v => (v || "").toString().toLowerCase().includes(q)));
   const byName = (a, b) => (a.p.name || "").localeCompare(b.p.name || "", undefined, { sensitivity: "base" });
   const dob = r => r.p.dob || "";   // ISO strings sort correctly; empty DOB always goes last
@@ -2707,21 +2742,44 @@ function peopleListHTML() {
     "newest": (a, b) => (b.p.created_at || "").localeCompare(a.p.created_at || "") || byName(a, b)
   };
   rows.sort(sorters[peopleSort] || byName);
-  const chips = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 8px"><button type="button" class="${peopleOnlyUnlinked ? "ghost" : "primary"}" style="padding:6px 14px;font-size:13px;min-height:0" onclick="setPeopleUnlinked(false)">Sab (${state.people.length})</button><button type="button" class="${peopleOnlyUnlinked ? "primary" : "ghost"}" style="padding:6px 14px;font-size:13px;min-height:0" onclick="setPeopleUnlinked(true)" title="Jinka kisi se koi rishta link nahi hai">⚠️ Unlinked (${unlinkedTotal})</button></div>`;
-  const count = chips + `<p class="muted" style="font-size:12.5px;margin:0 0 8px">${rows.length === state.people.length ? rows.length + " people" : rows.length + " of " + state.people.length + " people"}</p>`;
-  if (!rows.length) return count + `<div class="card"><p class="muted">${peopleOnlyUnlinked && !q ? "Koi unlinked profile nahi hai — sab kisi na kisi se juda hua hai. 🎉" : "Koi match nahi mila. Kuch aur search karke dekhein."}</p></div>`;
+  const chip = (label, on, fn, title) => `<button type="button" class="${on ? "primary" : "ghost"}" style="padding:6px 14px;font-size:13px;min-height:0" onclick="${fn}"${title ? ` title="${title}"` : ""}>${label}</button>`;
+  const chips = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 8px">${chip(`Sab (${state.people.length})`, !peopleOnlyUnlinked && !peopleOnlyAdmins, "setPeopleUnlinked(false)")}${chip(`👑 Admins (${adminsTotal})`, peopleOnlyAdmins, "setPeopleAdmins(true)", "Jo is tree mein add/edit kar sakte hain")}${chip(`⚠️ Unlinked (${unlinkedTotal})`, peopleOnlyUnlinked, "setPeopleUnlinked(true)", "Jinka kisi se koi rishta link nahi hai")}</div>`;
+  const count = chips + `<p class="muted" style="font-size:12.5px;margin:0 0 8px">${rows.length === state.people.length ? rows.length + " members" : rows.length + " of " + state.people.length + " members"}</p>`;
+  if (!rows.length) return count + `<div class="card"><p class="muted">${peopleOnlyAdmins && !q ? "Abhi koi admin nahi hai. Koi bhi profile claim karne par automatically admin ban jata hai." : peopleOnlyUnlinked && !q ? "Koi unlinked profile nahi hai — sab kisi na kisi se juda hua hai. 🎉" : "Koi match nahi mila. Kuch aur search karke dekhein."}</p></div>`;
   return count + `<div class="list">${rows.map(({ p, label, kin }) => `<div class="row person-row" style="cursor:pointer" onclick="openProfile('${p.id}')">
-    <div class="person-main" style="display:flex;gap:12px;align-items:center">${avatarHTML(p)}<div class="person-txt"><strong>${esc(p.name)}</strong>${isUnlinked(p) ? ' <span class="badge" style="background:var(--terracotta-tint);color:var(--terracotta)" title="Kisi se link nahi hai">⚠️ Not linked</span>' : ""}<div class="muted" style="font-size:12.5px">${esc(label)} · ${esc(p.personCode || p.id)}</div>${kin ? `<div class="person-kin">${esc(kin)}</div>` : ""}</div></div>
-    <div class="person-side" style="display:flex;gap:8px;align-items:center">${p.status === "unclaimed" ? '<span class="badge">Unclaimed</span>' : '<span class="badge sage">Claimed</span>'}${canInviteProfile(p) ? `<button type="button" class="secondary" style="padding:6px 12px;font-size:12.5px" title="Invite link bhejo" aria-label="Invite link bhejo" onclick="event.stopPropagation();openProfileInvite('${esc(p.id)}')">🔗<span class="person-del-txt"> Invite</span></button>` : ""}${canDeletePerson(p) ? `<button type="button" class="danger" style="padding:6px 12px;font-size:12.5px" title="Delete this profile" aria-label="Delete this profile" onclick="event.stopPropagation();deletePerson('${esc(p.id)}')">🗑<span class="person-del-txt"> Delete</span></button>` : ""}</div>
+    <div class="person-main" style="display:flex;gap:12px;align-items:center">${avatarHTML(p)}<div class="person-txt"><strong>${esc(p.name)}</strong>${!p.external && isAdminRow(p) ? ` <span class="badge ${treeRoleBadgeClass(shownRole(p))}" title="Is tree mein add/edit kar sakta hai">👑 ${treeRoleLabel(shownRole(p))}</span>` : ""}${isUnlinked(p) ? ' <span class="badge" style="background:var(--terracotta-tint);color:var(--terracotta)" title="Kisi se link nahi hai">⚠️ Not linked</span>' : ""}<div class="muted" style="font-size:12.5px">${esc(label)} · ${esc(p.personCode || p.id)}</div>${kin ? `<div class="person-kin">${esc(kin)}</div>` : ""}</div></div>
+    <div class="person-side" style="display:flex;gap:8px;align-items:center">${p.status === "unclaimed" ? '<span class="badge">Unclaimed</span>' : '<span class="badge sage">Claimed</span>'}${adminToggleBtn(p)}${canInviteProfile(p) ? `<button type="button" class="secondary" style="padding:6px 12px;font-size:12.5px" title="Invite link bhejo" aria-label="Invite link bhejo" onclick="event.stopPropagation();openProfileInvite('${esc(p.id)}')">🔗<span class="person-del-txt"> Invite</span></button>` : ""}${canDeletePerson(p) ? `<button type="button" class="danger" style="padding:6px 12px;font-size:12.5px" title="Delete this profile" aria-label="Delete this profile" onclick="event.stopPropagation();deletePerson('${esc(p.id)}')">🗑<span class="person-del-txt"> Delete</span></button>` : ""}</div>
   </div>`).join("")}</div>`;
 }
-function refreshPeopleList() { const el = document.getElementById("peopleList"); if (el) el.innerHTML = peopleListHTML(); }
+/* Make / Remove admin straight from the member row (only owner/admins; only claimed profiles can become admin). */
+function adminToggleBtn(p) {
+  if (!canManageAdmins() || p.external || treeViewing) return "";
+  const role = personTreeRole(p);
+  if (role === "owner") return "";
+  const st = 'style="padding:6px 12px;font-size:12.5px"';
+  if (role === "admin") return `<button type="button" class="ghost" ${st} title="Admin hatao" aria-label="Remove admin" onclick="event.stopPropagation();setTreeRole('${esc(p.id)}','member')">👑<span class="person-del-txt"> Remove admin</span></button>`;
+  return (p.claimed_by || p.status === "claimed")
+    ? `<button type="button" class="secondary" ${st} title="Admin banao" aria-label="Make admin" onclick="event.stopPropagation();setTreeRole('${esc(p.id)}','admin')">👑<span class="person-del-txt"> Make admin</span></button>` : "";
+}
+function adminsStripHTML() {
+  const iAmOwner = isTreeOwner();
+  const list = state.people.filter(p => !p.external && (personTreeRole(p) === "admin" || (iAmOwner && personTreeRole(p) === "owner")));
+  return `<div class="card" id="adminsStrip" style="margin-bottom:12px"><h3 style="margin:0 0 2px">👑 Admins</h3>
+    <p class="muted" style="font-size:12.5px;margin:0 0 6px">Ye log is tree mein relatives add &amp; edit kar sakte hain. Profile claim karne wala automatically admin ban jata hai aur tab tak rehta hai jab tak koi admin use hata na de.</p>
+    ${list.length ? `<div class="admin-chips">${list.map(p => `<button type="button" class="admin-chip" onclick="openProfile('${esc(p.id)}')">${avatarHTML(p)}<span>${esc(p.name)}</span><span class="badge ${treeRoleBadgeClass(personTreeRole(p))}">${treeRoleLabel(personTreeRole(p))}</span></button>`).join("")}</div>` : `<p class="muted" style="margin:0">Abhi koi admin nahi hai.</p>`}</div>`;
+}
+function refreshPeopleList() {
+  const el = document.getElementById("peopleList"); if (el) el.innerHTML = peopleListHTML();
+  const st = document.getElementById("adminsStrip"); if (st) st.outerHTML = adminsStripHTML();
+}
 function setPeopleSearch(v) { peopleQuery = v || ""; refreshPeopleList(); }
 function clearPeopleSearch() { peopleQuery = ""; const i = document.getElementById("peopleSearch"); if (i) { i.value = ""; i.focus(); } refreshPeopleList(); }
-function setPeopleUnlinked(on) { peopleOnlyUnlinked = !!on; refreshPeopleList(); }
+function setPeopleUnlinked(on) { peopleOnlyUnlinked = !!on; peopleOnlyAdmins = false; refreshPeopleList(); }
+function setPeopleAdmins(on) { peopleOnlyAdmins = !!on; if (on) peopleOnlyUnlinked = false; refreshPeopleList(); }
 function setPeopleSort(v) { peopleSort = PEOPLE_SORTS[v] ? v : "name-asc"; refreshPeopleList(); }
 function people() {
-  return `<div class="page-head" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;justify-content:space-between"><div><h2>People</h2><p class="muted">Everyone connected to your family tree.</p></div>${canEditTree() ? `<button type="button" class="primary" onclick="go('add')">➕ Add Person</button>` : ""}</div>
+  return `<div class="page-head" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;justify-content:space-between"><div><h2>👨‍👩‍👧 Members</h2><p class="muted">Tree ke sab members — admins, claimed aur unclaimed profiles — ek hi jagah.</p></div>${canEditTree() ? `<button type="button" class="primary" onclick="go('add')">➕ Add Person</button>` : ""}</div>
+  ${adminsStripHTML()}
   <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
     <input id="peopleSearch" type="search" value="${esc(peopleQuery)}" placeholder="🔍 Search by name, relation, place or ID…" oninput="setPeopleSearch(this.value)" style="flex:1;min-width:220px">
     <button type="button" class="secondary" onclick="clearPeopleSearch()">Clear</button>
@@ -4575,40 +4633,9 @@ function admin() {
 }
 function reviewItem(btn) { btn.textContent = "Reviewed"; btn.disabled = true; }
 
-/* ---------------- Tree Admins — per-tree admin roles ---------------- */
-/* An "admin" here can add/edit relatives inside THIS family tree only —
-   separate from state.account.role (system-wide staff/admin). The owner
-   (whoever created the tree) is the only one who can promote/demote. */
-function treeAdmins() {
-  const iAmOwner = isTreeOwner();
-  const owners = iAmOwner ? state.people.filter(p => personTreeRole(p) === "owner") : []; // the owner is shown to the owner only, never to admins/members
-  const admins = state.people.filter(p => personTreeRole(p) === "admin");
-  const members = state.people.filter(p => personTreeRole(p) === "member");
-  const rowFor = p => {
-    const role = personTreeRole(p);
-    const canManage = canManageAdmins() && role !== "owner";
-    return `<div class="row">
-      <span style="display:flex;align-items:center;gap:10px">${avatarHTML(p)}<span>${esc(p.name)}${p.me ? " <span class='muted' style='font-size:12px'>(You)</span>" : ""}</span></span>
-      <span style="display:flex;align-items:center;gap:8px">
-        <span class="badge ${treeRoleBadgeClass(role)}">${treeRoleLabel(role)}</span>
-        ${canManage ? (role === "admin"
-          ? `<button class="ghost" onclick="setTreeRole('${p.id}','member')">Remove Admin</button>`
-          : (p.claimed_by || p.status === "claimed"
-              ? `<button class="secondary" onclick="setTreeRole('${p.id}','admin')">Make Admin</button>`
-              : `<span class="muted" style="font-size:12px">Not claimed yet</span>`)) : ""}
-      </span>
-    </div>`;
-  };
-  return `<div class="page-head"><h2>👑 Tree Admins</h2><p class="muted">People who can add and edit relatives in <b>${esc(me()?.name || "your")}'s</b> family tree. Anyone who claims a profile becomes an admin automatically, and stays admin until another admin removes them.</p></div>
-  ${!canManageAdmins() ? `<div class="card" style="margin-bottom:14px"><span class="muted">Only tree admins can add or remove admins. You can view the list below.</span></div>` : ""}
-  ${iAmOwner ? `<div class="card"><h3>Owner</h3>${owners.length ? owners.map(rowFor).join("") : "<p class='muted'>No owner set.</p>"}</div>` : ""}
-  <div class="card"><h3>Admins <span class="muted" style="font-size:12.5px;font-weight:400">— can add &amp; edit relatives in this tree</span></h3>
-    ${admins.length ? admins.map(rowFor).join("") : "<p class='muted'>No admins yet. Anyone who claims a profile becomes one, or promote a claimed member below.</p>"}
-  </div>
-  <div class="card"><h3>Members</h3>
-    ${members.length ? members.map(rowFor).join("") : "<p class='muted'>No other members yet.</p>"}
-  </div>`;
-}
+/* ---------------- Tree admin roles (UI now lives on the Members page) ---------------- */
+/* An "admin" can add/edit relatives inside THIS family tree only — separate from state.account.role (system-wide staff/admin).
+   Any claimed profile can be promoted from its row on the Members page by an owner/admin. */
 async function setTreeRole(personId, role) {
   if (!canManageAdmins()) { toast("Only a tree owner or admin can change admin roles"); return; }
   const p = personById(personId);
@@ -4623,7 +4650,7 @@ async function setTreeRole(personId, role) {
   }
   p.treeRole = role; p.savedRole = role;
   toast(role === "admin" ? `${p.name} is now an admin of this tree` : `${p.name} is no longer an admin`);
-  go("treeAdmins");
+  refreshPeopleList();
 }
 
 /* ---------------- Transfer my claimed profile to another account ---------------- */
@@ -4771,7 +4798,7 @@ async function importGedcomPicked(inputEl) {
    scoped to the module — they are NOT attached to window automatically
    the way classic <script> globals are. */
 Object.assign(window, {
-  setPeopleUnlinked,
+  setPeopleUnlinked, setPeopleAdmins,
   toggleTheme,
   setHoroscope, loadHoroscope, openHoroscope, setHoroCity, tarotDraw, wallPickMedia, wallRemoveFile, wallViewImage, wallMediaShare, wallMediaDownload, wallSaveMedia,
   avatarFallback, sendChat, chatKey,
@@ -4791,7 +4818,7 @@ Object.assign(window, {
   openProfileInvite, closeProfileInvite, generateProfileInvite, copyProfileInvite, revokeProfileInvite, acceptProfileInvite, declineProfileInvite,
   dmOpen, dmBack, dmSearchInput, openChatSheet, closeChatSheet,
   assignTicket, refreshSupport, arRelTypeChanged, cityPicked, cityStateChanged,
-  importGedcomPicked, setPeopleSearch, clearPeopleSearch, setPeopleSort, openMoreMenu, closeMoreMenu,
+  importGedcomPicked, exportGedcom, setPeopleSearch, clearPeopleSearch, setPeopleSort, openMoreMenu, closeMoreMenu,
   /* these were used by inline onclick/onchange but never exported, so the Branch/Chart switch, the whole Chart toolbar and the profile Privacy dropdown did nothing */
   openRelationChart, openNotifications, closeNotifications, notifAct, setEvFilter, setEvRange, openEventWish, dqAnother, dqShare, dqDownload, openPersonWall, openNewWallPost, wallToggleTagPicker, wallToggleLoc, wallLocRender, wallLocClear, wallLocGPS, wallLocSearch, wallLocPick, wallLocPaste, wallLocToggleMap, wallAddTag, wallRemoveTag, wallPost, wallReactToggle, wallReact, wallToggleComments, wallAddComment, wallDeleteComment, wallDeletePost, setTreeStyle, chartAddMenu, chartBack, chartFit, chartGoFamily, chartOpen, chartSetRoot, chartZoom, chartPanStart, chartWheel, setPrivacy
 });
