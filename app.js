@@ -105,11 +105,13 @@ let joinSyncChain = Promise.resolve();
 function joinSyncState() {
   joinSyncChain = joinSyncChain.then(async () => {
     const j = state.joined; if (!j) return;
-    const people = state.people.filter(p => !p.external && (!j.known.has(p.id) || canEditPerson(p))).map(personToRow);
+    const joinSnapKey = r => JSON.stringify(r);
+    const people = state.people.filter(p => !p.external && (!j.known.has(p.id) || canEditPerson(p))).map(personToRow).filter(r => personSnap.get("j:" + r.id) !== joinSnapKey(r));
     const rels = state.relationships.filter(r => !j.knownRels.has(r.id) || r.status === "removed").map(r => ({ id: isUuid(r.id) ? r.id : crypto.randomUUID(), person_a_id: r.from, person_b_id: r.to, relationship_type: r.type, created_at: r.created_at || new Date().toISOString(), status: r.status === "removed" ? "removed" : "active" }));
     if (!people.length && !rels.length) return;
     const { data, error } = await supabase.rpc("join_sync", { p_tree_id: j.treeId, p_people: people, p_rels: rels });
     if (error) { console.error("join_sync failed", error); toast("Server save failed: " + error.message); return; }
+    people.forEach(r => personSnap.set("j:" + r.id, joinSnapKey(r)));
     state.people.forEach(p => j.known.add(p.id));
     state.relationships.forEach(r => { if (isUuid(r.id)) j.knownRels.add(r.id); });
     if (data && data.skipped) toast("Kuch changes allowed nahi the (approval ke baad purane profile edit ho sakte hain)");
@@ -117,17 +119,25 @@ function joinSyncState() {
   return joinSyncChain;
 }
 
+/* Last version of each profile that this device loaded from / wrote to the server. persistState() only sends profiles that differ. */
+const personSnap = new Map();
+function ownedPersonRows() {
+  return state.people.filter(p => p.me || p.claimed_by === currentUser.id || p.created_by === currentUser.id).map(p => ({
+    id: p.id, person_code: p.personCode || p.id, full_name: p.name, dob: normalizeDate(p.dob), gender: p.gender || null, mobile: p.mobile || null, email: p.email || null, avatar_url: p.avatar_url || null, status: p.status || 'unclaimed', claimed_by: p.claimed_by || (p.me ? currentUser.id : null), created_by: p.created_by || currentUser.id,
+    nickname: p.nickname || null, show_nickname: !!p.showNickname, birth_place: p.birthPlace || null, current_place: p.currentPlace || null, life_status: p.lifeStatus || 'living', details: p.details || {}
+  }));
+}
+function markPersonsPersisted() { personSnap.clear(); try { ownedPersonRows().forEach(r => personSnap.set(r.id, JSON.stringify(r))); } catch (e) {} }
 async function persistState() {
   if (treeViewing) return; // read-only while viewing another person's tree
   if (!supabase || !currentUser || !state.treeId) return;
   if (state.joined) return joinSyncState();
   try {
     // Only write persons this user owns/claims; rewriting other people's rows is what RLS rejects (403 / 42501) and it fails the whole batch.
-    const peopleRows = state.people.filter(p => p.me || p.claimed_by === currentUser.id || p.created_by === currentUser.id).map(p => ({
-      id: p.id, person_code: p.personCode || p.id, full_name: p.name, dob: normalizeDate(p.dob), gender: p.gender || null, mobile: p.mobile || null, email: p.email || null, avatar_url: p.avatar_url || null, status: p.status || 'unclaimed', claimed_by: p.claimed_by || (p.me ? currentUser.id : null), created_by: p.created_by || currentUser.id,
-      nickname: p.nickname || null, show_nickname: !!p.showNickname, birth_place: p.birthPlace || null, current_place: p.currentPlace || null, life_status: p.lifeStatus || 'living', details: p.details || {}
-    }));
-    if (peopleRows.length) { const { error } = await supabase.from('persons').upsert(peopleRows, { onConflict: 'id' }); if (error) throw error; }
+    // Write ONLY profiles that really changed on this device. Re-sending every owned profile from a stale copy
+    // silently overwrote edits made meanwhile by other admins/members (and logged them under the owner's name).
+    const peopleRows = ownedPersonRows().filter(r => personSnap.get(r.id) !== JSON.stringify(r));
+    if (peopleRows.length) { const { error } = await supabase.from('persons').upsert(peopleRows, { onConflict: 'id' }); if (error) throw error; peopleRows.forEach(r => personSnap.set(r.id, JSON.stringify(r))); }
     const memberRows = state.people.filter(p => !p.external).map(p => ({ tree_id: state.treeId, person_id: p.id, added_by: currentUser.id, role: personTreeRole(p) }));
     // Insert only missing members (ON CONFLICT DO NOTHING) so existing rows never hit the UPDATE policy; role changes are updated explicitly below.
     if (memberRows.length) { const { error } = await supabase.from('tree_members').upsert(memberRows, { onConflict: 'tree_id,person_id', ignoreDuplicates: true }); if (error) throw error; }
@@ -5654,6 +5664,7 @@ async function loadProductionState(user) {
   try { const inc = await supabase.rpc('my_incoming_connections'); state.incoming = inc.error ? [] : (inc.data || []); } catch (e) { state.incoming = []; }
   try { const ij = await supabase.rpc('my_incoming_join_requests'); state.incomingJoins = ij.error ? [] : (ij.data || []); } catch (e) { state.incomingJoins = []; }
   await loadAdminNotes(user);
+  markPersonsPersisted();
   startNotifPoll();
   initNativePush();
   if (state.incomingJoins.length) setTimeout(() => toast(`${state.incomingJoins.length} naye member tree join karna chahte hain — Connections & Sharing mein dekhein`), 900);
