@@ -155,6 +155,12 @@ async function persistState() {
 function isUuid(v) { return typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v); }
 function normalizeDate(v) { if (!v) return null; const d = new Date(v); return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0,10); }
 function initials(n) { return n.split(" ").map(x => x[0]).slice(0, 2).join("").toUpperCase(); }
+/* Privacy: other people's mobile numbers and e-mails are never shown in full. Only the person themself (p.me) sees their own.
+   Display only: the real values stay in state/DB, so saving never writes a masked value. */
+function maskMobile(m) { const d = String(m || "").replace(/\D/g, ""); return d ? "XXXXXX" + d.slice(-4) : ""; }
+function maskEmail(e) { const [u, dom] = String(e || "").split("@"); return dom ? (u[0] || "") + "*****@" + dom : (e ? "*****" : ""); }
+function showMobile(p) { return p ? (p.me ? p.mobile || "" : maskMobile(p.mobile)) : ""; }
+function showEmail(p) { return p ? (p.me ? p.email || "" : maskEmail(p.email)) : ""; }
 function avatarHTML(p, cls) {
   cls = cls || "";
   const [bg, fg] = avatarPalette(p);
@@ -206,6 +212,8 @@ function isTreeOwner() { return myTreeRole() === "owner"; }
 function canEditTree() { if (treeViewing) return false; return myTreeRole() === "owner" || myTreeRole() === "admin"; }
 /* Any tree admin (or the owner) can add or remove other admins. The owner itself can never be removed. */
 function canManageAdmins() { return canEditTree(); }
+/* Backup (GEDCOM export): the owner AND every tree admin (e.g. the 2nd admin who joined this tree). Plain members and pending joiners cannot. */
+function canBackupTree() { return !treeViewing && !isPendingJoiner() && (!state.joined || canEditTree()); }
 /* Anyone can add relatives directly onto their own card, even if they're
    not a tree owner/admin. Everyone else's card still needs edit rights. */
 function canAddRelativeTo(targetId) { if (treeViewing) return false; if (state.joined) return true; return canEditTree() || targetId === me().id; }
@@ -1001,7 +1009,7 @@ async function loadHoroscope() {
 
 /* ---------------- import (moved from dashboard; lives under More) ---------------- */
 function importGed() {
-  const n = state.people.length, own = !(state.joined || treeViewing);
+  const n = state.people.length, own = canBackupTree();
   return `<div class="page-head"><h2>Import / Export</h2><p class="muted">Family tree laayein ya apni tree ka backup (GEDCOM) nikaalein.</p></div>
   <div class="card"><h3>Import from GEDCOM</h3>
     <p class="muted">Upload a .ged file (from iMeUsWe, Ancestry, MyHeritage, etc.) to add all its people and relationships to your tree.</p>
@@ -1012,7 +1020,7 @@ function importGed() {
   </div>
   <div class="card"><h3>Export to GEDCOM</h3>
     <p class="muted">Apni poori tree (${n} log, unke rishte, DOB, jagah, photo links aur notes) ek .ged file mein download karein. Ye file Ancestry, MyHeritage, Gramps jaise apps mein import ho sakti hai, aur backup ke kaam bhi aati hai.</p>
-    ${own ? "" : `<p class="muted"><b>Note:</b> Export sirf aapki apni tree ka ho sakta hai.</p>`}
+    ${own ? "" : `<p class="muted"><b>Note:</b> Backup / export sirf tree ke owner aur admins nikaal sakte hain.</p>`}
     <div class="actions">
       <button class="primary" onclick="exportGedcom()" ${own && n ? "" : "disabled"}>📤 Export .ged file</button>
     </div>
@@ -1020,7 +1028,7 @@ function importGed() {
 }
 
 async function exportGedcom() {
-  if (state.joined || treeViewing) return toast("Export sirf apni tree ka ho sakta hai");
+  if (!canBackupTree()) return toast("Backup / export sirf tree ke owner aur admins nikaal sakte hain");
   if (!state.people.length) return toast("Export karne ke liye tree mein koi person nahi hai");
   try {
     const text = treeToGedcom(state.people, state.relationships);
@@ -3018,7 +3026,7 @@ function profile(id) {
       <p class="muted">Person ID: <strong>${esc(p.personCode || p.id)}</strong> · ${p.status === "unclaimed" ? '<span class="badge">Unclaimed</span>' : '<span class="badge sage">Claimed</span>'}</p>
       <hr class="divider">
       <p><strong>About:</strong> ${esc(p.about) || "Family profile information can be shown here."}</p>
-      <p><strong>Relation:</strong> ${p.me ? "Self" : deriveRelationship(me().id, p.id).label}${p.gender ? ` · <strong>Gender:</strong> ${esc(p.gender)}` : ""}${p.dob ? ` · <strong>DOB:</strong> ${p.dob}` : ""}${p.mobile ? ` · <strong>Mobile:</strong> ${esc(p.mobile)}` : ""}</p>
+      <p><strong>Relation:</strong> ${p.me ? "Self" : deriveRelationship(me().id, p.id).label}${p.gender ? ` · <strong>Gender:</strong> ${esc(p.gender)}` : ""}${p.dob ? ` · <strong>DOB:</strong> ${p.dob}` : ""}${p.mobile ? ` · <strong>Mobile:</strong> ${esc(showMobile(p))}` : ""}</p>
       <div class="field" style="max-width:240px;margin-top:10px"><label>Privacy</label>
         <select onchange="setPrivacy('${p.id}',this.value)"><option ${p.privacy === "Family only" || !p.privacy ? "selected" : ""}>Family only</option><option ${p.privacy === "Private" ? "selected" : ""}>Private</option><option ${p.privacy === "Selected family" ? "selected" : ""}>Selected family</option><option ${p.privacy === "Public" ? "selected" : ""}>Public</option></select>
       </div>
@@ -3068,7 +3076,7 @@ async function deletePerson(id, skipConfirm) {
   const p = personById(id);
   if (!p || !canDeletePerson(p)) { toast("You can't delete this profile"); return; }
   const links = state.relationships.filter(r => r.from === id || r.to === id).length;
-  if (!skipConfirm && !confirm(`Delete "${p.name}"?\n\nThis also removes ${links} relationship link${links === 1 ? "" : "s"} from the tree. Relatives connected only through this person may disappear from the tree. This can't be undone.`)) return;
+  if (!skipConfirm && !confirm(`Delete "${p.name}"?\n\nThis also removes ${links} relationship link${links === 1 ? "" : "s"} from the tree. Relatives connected only through this person may disappear from the tree.\n\nProfile Trash me surakshit rahegi; sirf tree owner use Activity Log → Deleted se restore kar sakta hai.`)) return;
   const name = p.name, oldDetails = { ...(p.details || {}) };
   const snapshot = { people: state.people, relationships: state.relationships };
   state.people = state.people.filter(x => x.id !== id);
@@ -3078,6 +3086,13 @@ async function deletePerson(id, skipConfirm) {
   const wasOnProfile = activeProfileId === id;
   if (activeProfileId === id) activeProfileId = null;
   closeEditProfile();
+  if (supabase && currentUser) {   // keep a permanent copy first (Trash). If the trash SQL isn't installed yet, deletion still works.
+    const tr = await supabase.rpc("trash_person", { p_tree_id: state.joined ? state.joined.treeId : state.treeId, p_person_id: id });
+    if (tr.error && !/trash_person|schema cache|does not exist/i.test(tr.error.message || "")) {
+      state.people = snapshot.people; state.relationships = snapshot.relationships; toast("Delete nahi hua: " + tr.error.message); render(); return;
+    }
+    if (tr.error) console.warn("Trash not installed (run supabase-trash.sql):", tr.error.message);
+  }
   if (state.joined) {
     const { error } = await supabase.rpc("join_remove_person", { p_tree_id: state.joined.treeId, p_person_id: id });
     if (error) { state.people = snapshot.people; state.relationships = snapshot.relationships; toast("Delete failed: " + error.message); render(); return; }
@@ -3190,7 +3205,7 @@ function detailRowsHTML(p) {
   return `${row("First name", n.first)}${row("Middle name", n.middle)}${row("Surname", n.last)}
     ${row("Gender", p.gender)}
     ${row("Date of birth", fmtDate(p.dob))}${row("Birth time", d.birth_time)}${row("Date of death", fmtDate(d.dod))}
-    ${row("Mobile", p.mobile)}${row("Email", p.email)}
+    ${row("Mobile", showMobile(p))}${row("Email", showEmail(p))}
     ${row("State", d.state)}${row("City", d.city)}${row("Married", married)}`;
 }
 /* Read-only details card on the profile page, with an Edit button that opens the popup form. */
@@ -3215,8 +3230,8 @@ function editProfileFormHTML(p) {
     <div class="field"><label>Birth time (rashi / horoscope ke liye)</label><input id="mpBirthTime" type="time" value="${v(d.birth_time)}"></div>
     <div class="field"><label>Life status</label><select id="mpLife" onchange="if(this.value==='living'){document.getElementById('mpDod').value=''}"><option value="living"${p.lifeStatus === "deceased" || d.dod ? "" : " selected"}>Living</option><option value="deceased"${p.lifeStatus === "deceased" || d.dod ? " selected" : ""}>Deceased (Swargvaas)</option></select></div>
     <div class="field"><label>Date of Death <span class="muted" style="font-weight:400">(pata na ho to khali chhod dein)</span></label><input id="mpDod" type="date" value="${v(d.dod)}" onchange="if(this.value)document.getElementById('mpLife').value='deceased'"></div>
-    <div class="field"><label>Mobile</label><input id="mpMobile" type="tel" value="${v(p.mobile)}" placeholder="+91 98XXXXXXXX"></div>
-    <div class="field"><label>Email (Gmail)</label><input id="mpEmail" type="email" value="${v(p.email)}" placeholder="name@gmail.com"></div>
+    <div class="field"><label>Mobile</label><input id="mpMobile" type="tel" value="${v(showMobile(p))}" placeholder="+91 98XXXXXXXX"></div>
+    <div class="field"><label>Email (Gmail)</label><input id="mpEmail" type="text" inputmode="email" value="${v(showEmail(p))}" placeholder="name@gmail.com"></div>
     <div class="field"><label>State</label>${stateSelectHTML("mpState", d.state, "mp")}</div>
     <div class="field"><label>City</label>${cityFieldHTML("mp", d.city)}</div>
     <div class="field"><label>Married</label>
@@ -3247,8 +3262,8 @@ function profileFieldList(p) {
     ["Gender", p.gender, !!p.gender],
     ["Date of birth", fmtDate(p.dob), !!p.dob],
     ["Photo", p.avatar_url ? "Added" : "", !!p.avatar_url],
-    ["Mobile", p.mobile, !!p.mobile],
-    ["Email", p.email, !!p.email],
+    ["Mobile", showMobile(p), !!p.mobile],
+    ["Email", showEmail(p), !!p.email],
     ["State", d.state, !!d.state],
     ["City", d.city, !!d.city],
     ["Married", married, !!married]
@@ -3827,9 +3842,39 @@ function editlogPage() {
 }
 function elActorOptions() { return `<option value="">Sab</option>` + EL.actors.map(a => `<option value="${esc(a.actor_id)}" ${EL.f.actor === a.actor_id ? "selected" : ""}>${esc(a.actor_name || "Family member")}</option>`).join(""); }
 function elTabsHTML() {
-  return [["activity", "Activity"], ["changes", "Changes"]].map(([k, l]) => `<button type="button" class="${EL.tab === k ? "primary" : "secondary"}" onclick="elTab('${k}')">${l}</button>`).join("");
+  return [["activity", "Activity"], ["changes", "Changes"], ["deleted", "🗑️ Deleted"]].map(([k, l]) => `<button type="button" class="${EL.tab === k ? "primary" : "secondary"}" onclick="elTab('${k}')">${l}</button>`).join("");
 }
-function elTab(k) { EL.tab = k; const t = document.getElementById("elTabs"); if (t) t.innerHTML = elTabsHTML(); elRenderList(); }
+function elTab(k) { EL.tab = k; const t = document.getElementById("elTabs"); if (t) t.innerHTML = elTabsHTML(); if (k === "deleted") loadDeletedList(); else elRenderList(); }
+/* 🗑️ Deleted tab: permanent copies of deleted profiles. Owner + admins see them; only the OWNER gets "Restore". */
+const DEL = { rows: [], loading: false, error: "" };
+async function loadDeletedList() {
+  DEL.loading = true; DEL.error = ""; elRenderList();
+  const { data, error } = await supabase.rpc("list_deleted_persons", { p_tree_id: editlogTreeId() });
+  DEL.loading = false;
+  if (error) DEL.error = /list_deleted_persons|schema cache|does not exist/i.test(error.message || "") ? "Pehle Supabase mein <b>supabase-trash.sql</b> chalaiye." : esc(error.message || "Load nahi ho paaya");
+  else DEL.rows = data || [];
+  elRenderList();
+}
+function elDeletedHTML() {
+  if (DEL.error) return `<div class="card"><p class="muted">${DEL.error}</p></div>`;
+  if (DEL.loading) return `<p class="muted" style="text-align:center">Loading…</p>`;
+  if (!DEL.rows.length) return `<div class="card"><p class="muted">Abhi koi delete hua profile nahi hai. 🎉</p></div>`;
+  const owner = isTreeOwner();
+  return `<div class="edit-log">${DEL.rows.map(r => `<div class="edit-log-item"><div class="edit-log-head"><b>${esc(r.name || "Unknown")}</b> <span class="badge ${r.restored_at ? "sage" : ""}">${r.restored_at ? "Restored" : "Deleted"}</span>
+      <span class="muted"> · ${esc(r.person_code || "")}${r.dob ? " · " + esc(fmtDate(r.dob)) : ""}</span></div>
+      <div class="muted" style="font-size:12px;margin:2px 0 4px">${esc(r.deleted_by_name || "Family member")} ne delete kiya · ${esc(logTime(r.deleted_at))} · ${r.rel_count} rishte${r.restored_at ? " · restored " + esc(logTime(r.restored_at)) : ""}</div>
+      ${!r.restored_at && owner ? `<button type="button" class="primary" style="padding:6px 14px;font-size:13px;min-height:0" onclick="restoreDeleted('${esc(r.id)}','${esc(r.name || "")}')">♻️ Restore</button>` : (!r.restored_at ? `<span class="muted" style="font-size:12.5px">Sirf tree owner restore kar sakta hai</span>` : "")}</div>`).join("")}</div>`;
+}
+async function restoreDeleted(id, name) {
+  if (!isTreeOwner()) { toast("Sirf tree owner restore kar sakta hai"); return; }
+  if (!confirm(`"${name}" ko wapas tree me laayein? Unke rishte bhi wapas judenge (jin logon se wo jude the wo abhi tree me hon to).`)) return;
+  const { error } = await supabase.rpc("restore_deleted_person", { p_id: id });
+  if (error) { toast("Restore nahi hua: " + error.message); return; }
+  toast(`${name} wapas aa gaye ✅`);
+  try { await loadProductionState(currentUser); } catch (e) {}
+  render();
+  setTimeout(() => { EL.tab = "deleted"; const t = document.getElementById("elTabs"); if (t) t.innerHTML = elTabsHTML(); loadDeletedList(); }, 50);
+}
 function elFilter(k, v) { EL.f[k] = v; editlogLoad(false); }
 function elReset() { EL.f = { person: "", actor: "", action: "", from: "", to: "" }; render(); }
 async function editlogInit() {
@@ -3865,6 +3910,7 @@ function elSummary(r) {
 }
 function elRenderList() {
   const box = document.getElementById("elList"); if (!box) return;
+  if (EL.tab === "deleted") { box.innerHTML = elDeletedHTML(); return; }
   if (EL.error) { box.innerHTML = `<div class="card"><p class="muted">${EL.error}</p></div>`; return; }
   let rows = EL.rows;
   if (EL.tab === "changes") rows = rows.filter(r => r.action !== "created");
@@ -3966,9 +4012,11 @@ async function saveProfileEdits(id) {
   const g = id => document.getElementById(id).value.trim();
   const first = g("mpFirst"), middle = g("mpMiddle"), last = g("mpSurname");
   if (!first || !last) { toast("First name and surname are required"); return; }
-  const email = g("mpEmail");
+  let email = g("mpEmail");
+  if (!p.me && email === maskEmail(p.email)) email = p.email || "";   // masked value left as it was = no change
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast("Please enter a valid email"); return; }
-  const mobile = g("mpMobile");
+  let mobile = g("mpMobile");
+  if (!p.me && mobile === maskMobile(p.mobile)) mobile = p.mobile || "";
   if (mobile && !/^[+\d][\d\s-]{6,17}$/.test(mobile)) { toast("Please enter a valid mobile number"); return; }
   // my own card: the email is also my login email, so change it in the account too
   let emailPending = false;
@@ -4229,7 +4277,7 @@ function mergePickSearch(key, typing) {
   const txt = document.getElementById(key + "Text"), hid = document.getElementById(key), box = document.getElementById(key + "List"); if (!txt || !box) return;
   if (typing) hid.value = "";                                   // typing again = no person chosen yet
   const words = txt.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const hay = p => [p.name, p.nickname, p.personCode, p.mobile, p.email].filter(Boolean).join(" ").toLowerCase();
+  const hay = p => [p.name, p.nickname, p.personCode, showMobile(p), showEmail(p)].filter(Boolean).join(" ").toLowerCase();
   const hits = mergeCandidates().filter(p => words.every(w => hay(p).includes(w)))
     .sort((a, b) => (+b.name.toLowerCase().startsWith(words[0] || "") - +a.name.toLowerCase().startsWith(words[0] || "")) || a.name.localeCompare(b.name));
   box.innerHTML = hits.slice(0, 8).map(p => `<button type="button" class="mpick-item" onclick="mergePickChoose('${key}','${esc(p.id)}')"><b>${esc(p.name)}</b>${p.me ? " (You)" : ""}${p.external ? " (dusri tree)" : ""}<small class="muted">${esc(personHint(p))}${p.personCode ? " · " + esc(p.personCode) : ""}</small></button>`).join("")
@@ -4267,7 +4315,7 @@ function compareMerge() {
   const keepA = mergeScore(a) >= mergeScore(b);
   box.innerHTML = `<div class="card">
     <div class="row"><span></span><strong>${esc(a.name)}</strong><strong>${esc(b.name)}</strong></div>
-    ${rowField("DOB", a.dob, b.dob)}${rowField("Mobile", a.mobile, b.mobile)}${rowField("Parents", names(a.id), names(b.id))}${rowField("Spouse", spouses(a.id), spouses(b.id))}
+    ${rowField("DOB", a.dob, b.dob)}${rowField("Mobile", showMobile(a), showMobile(b))}${rowField("Parents", names(a.id), names(b.id))}${rowField("Spouse", spouses(a.id), spouses(b.id))}
     ${matches.length ? `<div class="badge sage" style="margin-top:10px">✓ Matching: ${matches.join(", ")}</div>` : ""}
     ${conflicts.length ? `<div class="badge terracotta" style="margin-top:8px;margin-left:6px">! Conflict: ${conflicts.join(", ")}</div>` : ""}
     <hr class="divider">
@@ -5205,6 +5253,7 @@ async function importGedcomPicked(inputEl) {
    scoped to the module — they are NOT attached to window automatically
    the way classic <script> globals are. */
 Object.assign(window, {
+  restoreDeleted,
   setProfilePanel, openEditLog, editlogLoad, elFilter, elReset, elTab, relBack, relZoom, relFit, setPeopleUnlinked, setPeopleAdmins,
   toggleTheme,
   setHoroscope, loadHoroscope, openHoroscope, openAstroSage, loadAstroKundli, astroGeoSearch, astroGeoPick, astroGeoClear, setHoroCity, tarotDraw, wallPickMedia, wallRemoveFile, wallViewImage, wallMediaShare, wallMediaDownload, wallSaveMedia,
