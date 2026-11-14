@@ -866,3 +866,33 @@ input[type=search]{-webkit-appearance:none;appearance:none}
 :root[data-theme="dark"] .branch-node.gone .mini,:root[data-theme="dark"] .ch-card.gone .ch-yrs,:root[data-theme="dark"] .branch-node.gone .mini.rel{color:#8e8a9f}
 :root[data-theme="dark"] .branch-node.me.gone{background:#3d3a49;border-color:#5B5868}
 :root[data-theme="dark"] .ch-card.me.gone{background:linear-gradient(to bottom,#2F2C38 0,#2F2C38 76px,#000 76px)}
+
+/* ---- Royal look for the branch tree (toggle: "✨ Royal" under the tree) ---- */
+.swarg{display:none}
+.tree-stage.royal .swarg{display:block;margin:6px auto 0;width:max-content;max-width:100%;padding:2px 12px;border-radius:4px;
+  background:linear-gradient(180deg,#7a3f9d,#4f2275);color:#fff;font-size:11px;font-weight:700;letter-spacing:.02em;
+  box-shadow:0 1px 3px rgba(0,0,0,.25),inset 0 0 0 1px rgba(227,166,61,.6);clip-path:polygon(0 0,100% 0,calc(100% - 6px) 50%,100% 100%,0 100%,6px 50%);padding:2px 16px}
+.tree-stage.royal .branch-node:not(.add-node){
+  background:linear-gradient(180deg,#fffdf8,#fbf3e3);border:2px solid #d9a93f;border-radius:14px;
+  box-shadow:0 0 0 2px #fff inset,0 0 0 3px rgba(201,150,47,.35) inset,0 5px 14px rgba(120,80,20,.18)}
+.tree-stage.royal .branch-node strong{color:#2f1c47;font-family:"Fraunces",serif}
+.tree-stage.royal .branch-node .mini{color:#3f7a52}
+.tree-stage.royal .branch-node .photo{box-shadow:0 0 0 2px #fff,0 0 0 4px #d9a93f,0 2px 6px rgba(120,80,20,.3)}
+.tree-stage.royal .branch-node .mini.rel{display:inline-block;margin-top:7px;padding:2px 12px;border-radius:999px;color:#4a2e0a;
+  background:linear-gradient(180deg,#f7c95c,#e3a63d);box-shadow:0 1px 2px rgba(0,0,0,.2);font-weight:800}
+.tree-stage.royal .branch-node.me{background:linear-gradient(180deg,#7a3f9d,#3b1d5c);border-color:#d9a93f}
+.tree-stage.royal .branch-node.me strong,.tree-stage.royal .branch-node.me .mini{color:#fff}
+.tree-stage.royal .branch-node.me .photo{box-shadow:0 0 0 2px #3b1d5c,0 0 0 4px #e3a63d}
+/* deceased: keep the soft grey-cream card, add laurels beside the photo */
+.tree-stage.royal .branch-node.gone:not(.me){background:linear-gradient(180deg,#f3f1f5,#e6e3ea);border-color:#bfa66a}
+.tree-stage.royal .branch-node.gone .photo{position:relative;filter:none;opacity:1}
+.tree-stage.royal .branch-node.gone:not(.add-node)::before,.tree-stage.royal .branch-node.gone:not(.add-node)::after{
+  content:"🌿";position:absolute;top:22px;font-size:20px;filter:sepia(1) saturate(4) hue-rotate(-15deg) brightness(.9)}
+.tree-stage.royal .branch-node.gone:not(.add-node)::before{left:10px;transform:scaleX(-1) rotate(-20deg)}
+.tree-stage.royal .branch-node.gone:not(.add-node)::after{right:10px;transform:rotate(-20deg)}
+:root[data-theme="dark"] .tree-stage.royal .branch-node:not(.add-node):not(.me){background:linear-gradient(180deg,#2c2438,#241c30);border-color:#b8811f;
+  box-shadow:0 0 0 2px #1d1627 inset,0 5px 14px rgba(0,0,0,.45)}
+:root[data-theme="dark"] .tree-stage.royal .branch-node strong{color:#f1e7ff}
+:root[data-theme="dark"] .tree-stage.royal .branch-node .mini{color:#8fd0a5}
+:root[data-theme="dark"] .tree-stage.royal .branch-node.gone:not(.me){background:linear-gradient(180deg,#34303f,#2a2634)}
+.tree-stage.royal .branch-node.gone{position:relative}

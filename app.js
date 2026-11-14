@@ -127,13 +127,7 @@ function ownedPersonRows() {
     nickname: p.nickname || null, show_nickname: !!p.showNickname, birth_place: p.birthPlace || null, current_place: p.currentPlace || null, life_status: p.lifeStatus || 'living', details: p.details || {}
   }));
 }
-/* tree_members rows already known to exist on the server (id -> role). Saves only send MISSING members instead of re-sending every member each time. */
-const memberSnap = new Map();
-function markPersonsPersisted() {
-  personSnap.clear(); memberSnap.clear();
-  try { ownedPersonRows().forEach(r => personSnap.set(r.id, JSON.stringify(r))); } catch (e) {}
-  try { state.people.filter(p => !p.external).forEach(p => memberSnap.set(p.id, personTreeRole(p))); } catch (e) {}
-}
+function markPersonsPersisted() { personSnap.clear(); try { ownedPersonRows().forEach(r => personSnap.set(r.id, JSON.stringify(r))); } catch (e) {} }
 async function persistState() {
   if (treeViewing) return; // read-only while viewing another person's tree
   if (!supabase || !currentUser || !state.treeId) return;
@@ -144,9 +138,9 @@ async function persistState() {
     // silently overwrote edits made meanwhile by other admins/members (and logged them under the owner's name).
     const peopleRows = ownedPersonRows().filter(r => personSnap.get(r.id) !== JSON.stringify(r));
     if (peopleRows.length) { const { error } = await supabase.from('persons').upsert(peopleRows, { onConflict: 'id' }); if (error) throw error; peopleRows.forEach(r => personSnap.set(r.id, JSON.stringify(r))); }
-    const memberRows = state.people.filter(p => !p.external && !memberSnap.has(p.id)).map(p => ({ tree_id: state.treeId, person_id: p.id, added_by: currentUser.id, role: personTreeRole(p) }));
+    const memberRows = state.people.filter(p => !p.external).map(p => ({ tree_id: state.treeId, person_id: p.id, added_by: currentUser.id, role: personTreeRole(p) }));
     // Insert only missing members (ON CONFLICT DO NOTHING) so existing rows never hit the UPDATE policy; role changes are updated explicitly below.
-    if (memberRows.length) { const { error } = await supabase.from('tree_members').upsert(memberRows, { onConflict: 'tree_id,person_id', ignoreDuplicates: true }); if (error) throw error; memberRows.forEach(r => memberSnap.set(r.person_id, r.role)); }
+    if (memberRows.length) { const { error } = await supabase.from('tree_members').upsert(memberRows, { onConflict: 'tree_id,person_id', ignoreDuplicates: true }); if (error) throw error; }
     for (const p of state.people.filter(x => !x.external)) {
       const role = personTreeRole(p);
       if (p.savedRole && p.savedRole !== role) {
@@ -156,11 +150,7 @@ async function persistState() {
     }
     const relRows = state.relationships.filter(r => !r.tree_id || r.tree_id === state.treeId).map(r => ({ id: isUuid(r.id) ? r.id : crypto.randomUUID(), tree_id: state.treeId, person_a_id: r.from, person_b_id: r.to, relationship_type: r.type, created_by: currentUser.id, created_at: r.created_at || new Date().toISOString(), status: r.status === 'removed' ? 'removed' : 'active' }));
     if (relRows.length) { const { error } = await supabase.from('relationships').upsert(relRows, { onConflict: 'id' }); if (error) throw error; }
-  } catch (e) {
-    console.error('Supabase save failed', e, { code: e && e.code, message: e && e.message, details: e && e.details, hint: e && e.hint });
-    // show WHY (database message), e.g. "infinite recursion detected in policy …" or "statement timeout"
-    toast('Server save failed: ' + ((e && (e.message || e.details || e.code)) || 'unknown error').toString().slice(0, 140));
-  }
+  } catch (e) { console.error('Supabase save failed', e); toast('Saved locally in this session; server save failed'); }
 }
 function isUuid(v) { return typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v); }
 function normalizeDate(v) { if (!v) return null; const d = new Date(v); return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0,10); }
@@ -665,6 +655,11 @@ async function phoneLogin() {
 }
 /* Light / dark theme: remembered in this browser; first visit follows the device setting. */
 function currentTheme() { return document.documentElement.dataset.theme === "dark" ? "dark" : "light"; }
+function royalOn() { try { return localStorage.getItem("ft-royal") !== "0"; } catch (e) { return true; } }
+function toggleRoyal() {
+  try { localStorage.setItem("ft-royal", royalOn() ? "0" : "1"); } catch (e) {}
+  if (typeof render === "function" && loggedIn) render();
+}
 function toggleTheme() {
   const next = currentTheme() === "dark" ? "light" : "dark";
   document.documentElement.dataset.theme = next;
@@ -1824,7 +1819,7 @@ function treeBranch() {
   const bp = branchView && personById(branchView.id);
   const banner2 = bp ? `<div class="tree-view-banner"><span><b>${esc(bp.name)}</b> ki family tree (unke parents, bhai-behen, unke bachhe aur sab ke bachhe)</span><button type="button" class="primary" onclick="exitBranch()">← Meri tree par wapas</button></div>` : "";
   return `${banner}${banner2}<div class="tree-canvas" id="treeCanvas">
-    <div class="tree-sizer" id="treeSizer"><div class="tree-stage" id="treeStage">
+    <div class="tree-sizer" id="treeSizer"><div class="tree-stage${royalOn() ? " royal" : ""}" id="treeStage">
       <svg id="treeLines" style="position:absolute;top:0;left:0;pointer-events:none;overflow:visible"></svg>
       ${rows || "<p class='muted'>No relationships recorded yet — tap the ＋ badge on your card to start the graph.</p>"}
     </div></div>
@@ -1835,6 +1830,7 @@ function treeBranch() {
     <button class="ghost" onclick="treeFit()">⤢ Fit</button>
     <button class="ghost" onclick="treeReset()">Reset</button>
     <button class="ghost" onclick="treeFocusMe()">🎯 Focus Me</button>
+    <button class="ghost" onclick="toggleRoyal()" title="Royal / Simple card look">${royalOn() ? "✨ Royal: On" : "✨ Royal: Off"}</button>
   </div>`;
 }
 
@@ -1874,6 +1870,7 @@ function branchNode(p, isCenter) {
     ${avatarHTML(p, "photo" + (p.status !== "unclaimed" ? " claimed" : ""))}
     <strong>${p.lifeStatus === "deceased" ? "🕯️ " : ""}${esc(p.name)}</strong>
     <div class="mini">${years}${p.status === "unclaimed" ? " · Unclaimed" : ""}</div>
+    ${p.lifeStatus === "deceased" ? '<div class="swarg">✝ स्वर्गवासी</div>' : ""}
     <div class="mini rel">${deriveRelationship(me().id, p.id).label}</div>
   </div>`;
 }
@@ -2212,7 +2209,8 @@ function drawTreeConnectors() {
   const svg = document.getElementById("treeLines");
   if (!stage || !svg) return;
   layoutTreeRows(stage);
-  const LINE = currentTheme() === "dark" ? "#6f6480" : "#c9bfa8", DOT = currentTheme() === "dark" ? "#d9c6f3" : "#4a2e6b";
+  const ROY = royalOn();
+  const LINE = ROY ? "#c9962f" : (currentTheme() === "dark" ? "#6f6480" : "#c9bfa8"), DOT = ROY ? "#e3a63d" : (currentTheme() === "dark" ? "#d9c6f3" : "#4a2e6b");
   const get = key => document.getElementById(nodeElId(key));
   // IMPORTANT: .gen rows are position:relative, so offsetLeft/offsetTop are relative to the ROW,
   // not the stage. Walk the offsetParent chain so every coordinate is relative to the stage.
@@ -2223,7 +2221,7 @@ function drawTreeConnectors() {
   };
   const mean = arr => arr.reduce((s, v) => s + v, 0) / arr.length;
   const parts = [];
-  const dot = (x, y) => parts.push(`<circle cx="${x}" cy="${y}" r="4" fill="${DOT}"/>`);
+  const dot = (x, y) => parts.push(`<circle cx="${x}" cy="${y}" r="4" fill="${DOT}"${ROY ? ' stroke="#b8811f" stroke-width="1.5"' : ""}/>`);
   const line = (x1, y1, x2, y2) => parts.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${LINE}" stroke-width="2"/>`);
 
   // 1) spouse links (real + "Add Husband/Wife" placeholder), dot in the middle of the link
