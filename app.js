@@ -127,7 +127,13 @@ function ownedPersonRows() {
     nickname: p.nickname || null, show_nickname: !!p.showNickname, birth_place: p.birthPlace || null, current_place: p.currentPlace || null, life_status: p.lifeStatus || 'living', details: p.details || {}
   }));
 }
-function markPersonsPersisted() { personSnap.clear(); try { ownedPersonRows().forEach(r => personSnap.set(r.id, JSON.stringify(r))); } catch (e) {} }
+/* tree_members rows already known to exist on the server (id -> role). Saves only send MISSING members instead of re-sending every member each time. */
+const memberSnap = new Map();
+function markPersonsPersisted() {
+  personSnap.clear(); memberSnap.clear();
+  try { ownedPersonRows().forEach(r => personSnap.set(r.id, JSON.stringify(r))); } catch (e) {}
+  try { state.people.filter(p => !p.external).forEach(p => memberSnap.set(p.id, personTreeRole(p))); } catch (e) {}
+}
 async function persistState() {
   if (treeViewing) return; // read-only while viewing another person's tree
   if (!supabase || !currentUser || !state.treeId) return;
@@ -138,9 +144,9 @@ async function persistState() {
     // silently overwrote edits made meanwhile by other admins/members (and logged them under the owner's name).
     const peopleRows = ownedPersonRows().filter(r => personSnap.get(r.id) !== JSON.stringify(r));
     if (peopleRows.length) { const { error } = await supabase.from('persons').upsert(peopleRows, { onConflict: 'id' }); if (error) throw error; peopleRows.forEach(r => personSnap.set(r.id, JSON.stringify(r))); }
-    const memberRows = state.people.filter(p => !p.external).map(p => ({ tree_id: state.treeId, person_id: p.id, added_by: currentUser.id, role: personTreeRole(p) }));
+    const memberRows = state.people.filter(p => !p.external && !memberSnap.has(p.id)).map(p => ({ tree_id: state.treeId, person_id: p.id, added_by: currentUser.id, role: personTreeRole(p) }));
     // Insert only missing members (ON CONFLICT DO NOTHING) so existing rows never hit the UPDATE policy; role changes are updated explicitly below.
-    if (memberRows.length) { const { error } = await supabase.from('tree_members').upsert(memberRows, { onConflict: 'tree_id,person_id', ignoreDuplicates: true }); if (error) throw error; }
+    if (memberRows.length) { const { error } = await supabase.from('tree_members').upsert(memberRows, { onConflict: 'tree_id,person_id', ignoreDuplicates: true }); if (error) throw error; memberRows.forEach(r => memberSnap.set(r.person_id, r.role)); }
     for (const p of state.people.filter(x => !x.external)) {
       const role = personTreeRole(p);
       if (p.savedRole && p.savedRole !== role) {
@@ -150,7 +156,11 @@ async function persistState() {
     }
     const relRows = state.relationships.filter(r => !r.tree_id || r.tree_id === state.treeId).map(r => ({ id: isUuid(r.id) ? r.id : crypto.randomUUID(), tree_id: state.treeId, person_a_id: r.from, person_b_id: r.to, relationship_type: r.type, created_by: currentUser.id, created_at: r.created_at || new Date().toISOString(), status: r.status === 'removed' ? 'removed' : 'active' }));
     if (relRows.length) { const { error } = await supabase.from('relationships').upsert(relRows, { onConflict: 'id' }); if (error) throw error; }
-  } catch (e) { console.error('Supabase save failed', e); toast('Saved locally in this session; server save failed'); }
+  } catch (e) {
+    console.error('Supabase save failed', e, { code: e && e.code, message: e && e.message, details: e && e.details, hint: e && e.hint });
+    // show WHY (database message), e.g. "infinite recursion detected in policy …" or "statement timeout"
+    toast('Server save failed: ' + ((e && (e.message || e.details || e.code)) || 'unknown error').toString().slice(0, 140));
+  }
 }
 function isUuid(v) { return typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v); }
 function normalizeDate(v) { if (!v) return null; const d = new Date(v); return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0,10); }
