@@ -1,5 +1,9 @@
 node_modules
 dist
 .env
-.env.local
-.DS_Store
+.env.*
+supabase/.temp
+service-account*.json
+*.keystore
+android/app/build
+android/.gradle
