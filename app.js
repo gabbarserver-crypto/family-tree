@@ -1868,7 +1868,7 @@ function branchNode(p, isCenter) {
   return `<div class="branch-node ${p.me ? "me" : ""} ${isCenter && !p.me ? "me" : ""}${p.lifeStatus === "deceased" ? " gone" : ""}" id="${nodeElId(p.id)}" style="position:relative;cursor:pointer" title="View profile" onclick="openProfilePopup('${p.id}')">
     ${addBadge}${centerBadge}
     ${avatarHTML(p, "photo" + (p.status !== "unclaimed" ? " claimed" : ""))}
-    <strong>${p.lifeStatus === "deceased" ? "✝ " : ""}${esc(p.name)}</strong>
+    <strong>${esc(p.name)}</strong>
     <div class="mini">${years}${p.status === "unclaimed" ? " · Unclaimed" : ""}</div>
     <div class="mini rel">${deriveRelationship(me().id, p.id).label}</div>
   </div>`;
