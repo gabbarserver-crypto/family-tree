@@ -902,3 +902,7 @@ input[type=search]{-webkit-appearance:none;appearance:none}
   background:linear-gradient(180deg,#7a3f9d,#4f2275);box-shadow:0 1px 3px rgba(0,0,0,.25),inset 0 0 0 1px rgba(227,166,61,.6);
   clip-path:polygon(0 0,100% 0,calc(100% - 7px) 50%,100% 100%,0 100%,7px 50%);font-size:12.5px}
 :root[data-theme="dark"] .tree-stage.royal .branch-node.gone:not(.add-node) strong{color:#fff}
+/* royal dark: badge text must stay dark on gold; "me" card text stays white */
+:root[data-theme="dark"] .tree-stage.royal .branch-node .mini.rel{color:#3a2305}
+:root[data-theme="dark"] .tree-stage.royal .branch-node.me .mini:not(.rel){color:#fff}
+:root[data-theme="dark"] .tree-stage.royal .branch-node.me strong{color:#fff}
