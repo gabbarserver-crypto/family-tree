@@ -4209,10 +4209,15 @@ async function uploadAvatarBlob(id, blob) {
     const { data: pub } = supabase.storage.from("avatars").getPublicUrl(path);
     const avatar_url = pub.publicUrl;
     const cur = state.people.find(x => x.id === id);
+    let saved = false;
     if (cur && canEditPerson(cur)) {
-      const { error: dbErr } = await supabase.from("persons").update({ avatar_url }).eq("id", id);
+      // .select() returns the rows really changed: row-level security can block an UPDATE WITHOUT an error (0 rows),
+      // which used to show "Photo updated" and then lose the photo on refresh.
+      const { data: rows, error: dbErr } = await supabase.from("persons").update({ avatar_url }).eq("id", id).select("id");
       if (dbErr) throw dbErr;
-    } else {   // admin changing someone else's (claimed) photo: goes through the database function
+      saved = !!(rows && rows.length);
+    }
+    if (!saved) {   // someone else's profile (tree owner/admin changing it): goes through the database function
       const { error: dbErr } = await supabase.rpc("set_person_avatar", { p_person_id: id, p_avatar_url: avatar_url });
       if (dbErr) throw new Error(/set_person_avatar|function|schema cache/i.test(dbErr.message) ? "Run supabase-person-avatar.sql in Supabase first" : dbErr.message);
     }
