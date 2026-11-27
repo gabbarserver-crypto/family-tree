@@ -4490,13 +4490,28 @@ function relPickValue(inputId) {
   const all = state.people;
   return all.find(p => relPickLabel(p).toLowerCase() === v) || all.find(p => (p.name || "").trim().toLowerCase() === v) || null;
 }
+function relPickerResults(inputId) {
+  const input = document.getElementById(inputId), menu = document.getElementById(inputId + "Menu");
+  if (!input || !menu) return;
+  const q = input.value.trim().toLocaleLowerCase();
+  const matches = [...state.people]
+    .filter(p => !q || relPickLabel(p).toLocaleLowerCase().includes(q) || (p.name || "").toLocaleLowerCase().includes(q))
+    .sort((a,b) => (a.name || "").localeCompare(b.name || "", undefined, {sensitivity:"base"}))
+    .slice(0,60);
+  menu.innerHTML = matches.length ? matches.map(p => `<button type="button" class="rel-pick-option" onmousedown="event.preventDefault()" onclick="relChoosePerson('${inputId}','${esc(p.id)}')">${avatarHTML(p,"rel-pick-avatar")}<span class="rel-pick-copy"><strong>${esc(p.name)}</strong><small>${esc(kinLine(p) || "Family details not added")} · ${esc(p.personCode || p.id)}</small></span></button>`).join("") : '<div class="rel-pick-empty">Koi matching member nahi mila</div>';
+  menu.hidden = false;
+}
+function relChoosePerson(inputId, personId) {
+  const p = personById(personId), input = document.getElementById(inputId), menu = document.getElementById(inputId + "Menu");
+  if (!p || !input) return;
+  input.value = relPickLabel(p);
+  if (menu) menu.hidden = true;
+}
 function relationship() {
-  const sorted = [...state.people].sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }));
-  const opts = sorted.map(p => `<option value="${esc(relPickLabel(p))}"></option>`).join("");
   const mine = me();
-  const field = (id, label, val) => `<div class="field"><label>${label}</label><input id="${id}" list="relPeople" autocomplete="off" placeholder="Naam likhein — Father / Husband se pehchanein…" value="${esc(val)}" onfocus="this.select()" onkeydown="if(event.key==='Enter'){event.preventDefault();findRelation()}"></div>`;
+  const field = (id, label, val) => `<div class="field rel-pick-field"><label for="${id}">${label}</label><input id="${id}" autocomplete="off" placeholder="Naam type karein — neeche list se select karein" value="${esc(val)}" oninput="relPickerResults('${id}')" onfocus="relPickerResults('${id}')" onblur="setTimeout(()=>{const m=document.getElementById('${id}Menu');if(m)m.hidden=true},180)" onkeydown="if(event.key==='Enter'){event.preventDefault();const m=document.getElementById('${id}Menu');if(m)m.hidden=true;findRelation()}"></div><div id="${id}Menu" class="rel-pick-menu" hidden></div>`;
   return `<div class="page-head"><h2>Relationship Finder</h2><p class="muted" id="relIntro">Select any two people — the label and the full relationship path are derived live from the family graph.</p></div>
-  <div class="card form" id="relForm"><datalist id="relPeople">${opts}</datalist>
+  <div class="card form" id="relForm">
   ${field("ra", "Person A", mine ? relPickLabel(mine) : "")}
   ${field("rb", "Person B", "")}
   ${field("rc", "Person C (optional)", "")}
