@@ -4509,7 +4509,7 @@ function relChoosePerson(inputId, personId) {
 }
 function relationship() {
   const mine = me();
-  const field = (id, label, val) => `<div class="field rel-pick-field"><label for="${id}">${label}</label><input id="${id}" autocomplete="off" placeholder="Naam type karein — neeche list se select karein" value="${esc(val)}" oninput="relPickerResults('${id}')" onfocus="relPickerResults('${id}')" onblur="setTimeout(()=>{const m=document.getElementById('${id}Menu');if(m)m.hidden=true},180)" onkeydown="if(event.key==='Enter'){event.preventDefault();const m=document.getElementById('${id}Menu');if(m)m.hidden=true;findRelation()}"></div><div id="${id}Menu" class="rel-pick-menu" hidden></div>`;
+  const field = (id, label, val) => \`<div class="rel-pick-wrap"><div class="field rel-pick-field"><label for="\${id}">\${label}</label><input id="\${id}" autocomplete="off" placeholder="Naam type karein — neeche list se select karein" value="\${esc(val)}" oninput="relPickerResults('\${id}')" onfocus="relPickerResults('\${id}')" onblur="setTimeout(()=>{const m=document.getElementById('\${id}Menu');if(m)m.hidden=true},180)" onkeydown="if(event.key==='Enter'){event.preventDefault();const m=document.getElementById('\${id}Menu');if(m)m.hidden=true;findRelation()}"></div><div id="\${id}Menu" class="rel-pick-menu" hidden></div></div>\`;
   return `<div class="page-head"><h2>Relationship Finder</h2><p class="muted" id="relIntro">Select any two people — the label and the full relationship path are derived live from the family graph.</p></div>
   <div class="card form" id="relForm">
   ${field("ra", "Person A", mine ? relPickLabel(mine) : "")}
