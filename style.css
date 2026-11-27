@@ -906,3 +906,17 @@ input[type=search]{-webkit-appearance:none;appearance:none}
 :root[data-theme="dark"] .tree-stage.royal .branch-node .mini.rel{color:#3a2305}
 :root[data-theme="dark"] .tree-stage.royal .branch-node.me .mini:not(.rel){color:#fff}
 :root[data-theme="dark"] .tree-stage.royal .branch-node.me strong{color:#fff}
+
+/* Private invitation checklist */
+.inv-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:10px 0}
+.inv-create>label,.inv-add-grid label{display:grid;gap:5px;font-size:13px;font-weight:600;margin:8px 0}
+.inv-create input,.inv-create textarea,.inv-add-grid input,.inv-add-grid select,.inv-event-select,.inv-guest-actions select{width:100%;min-width:0;border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--paper-raised);color:var(--ink)}
+.inv-event-select{margin:10px 0 14px}.inv-section-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:12px 0}
+.inv-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0}.inv-summary>span{background:var(--plum-tint);border-radius:12px;padding:12px;text-align:center}
+.inv-summary b{display:block;font-size:22px;color:var(--plum-deep)}.inv-summary small,.inv-guest-main small{display:block;font-size:11px;color:var(--ink-soft);margin-top:3px}
+.inv-add-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:14px 0}.inv-add-grid>section{min-width:0;border:1px solid var(--line);border-radius:14px;padding:12px}
+.inv-add-grid h4,.inv-section-head h4{margin:0 0 8px}.inv-add-grid .muted{font-size:12px;margin:8px 0 0}
+.inv-guest-list{display:grid;gap:8px}.inv-guest-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px;border:1px solid var(--line);border-radius:12px}
+.inv-guest-main{min-width:0;overflow-wrap:anywhere}.inv-guest-actions{display:flex;align-items:center;gap:5px;flex-shrink:0}
+.inv-guest-actions select{width:auto;max-width:115px;padding:7px;font-size:12px}.inv-delete{color:var(--terracotta);margin-top:12px}
+@media(max-width:650px){.inv-form-grid,.inv-add-grid{grid-template-columns:1fr}.inv-guest-row{align-items:flex-start}.inv-guest-actions{flex-direction:column;align-items:flex-end}.inv-guest-actions select{max-width:112px}}
