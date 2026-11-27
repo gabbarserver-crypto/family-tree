@@ -920,3 +920,21 @@ input[type=search]{-webkit-appearance:none;appearance:none}
 .inv-guest-main{min-width:0;overflow-wrap:anywhere}.inv-guest-actions{display:flex;align-items:center;gap:5px;flex-shrink:0}
 .inv-guest-actions select{width:auto;max-width:115px;padding:7px;font-size:12px}.inv-delete{color:var(--terracotta);margin-top:12px}
 @media(max-width:650px){.inv-form-grid,.inv-add-grid{grid-template-columns:1fr}.inv-guest-row{align-items:flex-start}.inv-guest-actions{flex-direction:column;align-items:flex-end}.inv-guest-actions select{max-width:112px}}
+
+
+/* Mobile-friendly Relationship Finder person picker */
+.rel-pick-field{position:relative;z-index:2}
+.rel-pick-menu{position:relative;z-index:30;display:grid;max-height:min(42vh,340px);overflow-y:auto;overscroll-behavior:contain;margin-top:-7px;margin-bottom:8px;border:1px solid var(--line);border-radius:12px;background:var(--paper-raised,var(--paper));box-shadow:0 10px 28px rgba(0,0,0,.24);-webkit-overflow-scrolling:touch}
+.rel-pick-menu[hidden]{display:none!important}
+.rel-pick-option{width:100%;min-width:0;display:flex;align-items:center;gap:10px;text-align:left;padding:10px 12px;border:0;border-bottom:1px solid var(--line);border-radius:0;background:transparent;color:var(--ink);cursor:pointer}
+.rel-pick-option:last-child{border-bottom:0}
+.rel-pick-option:active{background:var(--plum-tint)}
+.rel-pick-avatar{width:38px;height:38px;min-width:38px;border-radius:50%;overflow:hidden;display:grid;place-items:center}
+.rel-pick-copy{min-width:0;display:grid;gap:3px}
+.rel-pick-copy strong{font-size:14px;line-height:1.25;white-space:normal;overflow-wrap:anywhere}
+.rel-pick-copy small{font-size:11.5px;line-height:1.35;color:var(--ink-soft);white-space:normal;overflow-wrap:anywhere}
+.rel-pick-empty{padding:14px;color:var(--ink-soft);font-size:13px}
+@media(max-width:720px){
+  .rel-pick-menu{max-height:38vh}
+  .rel-pick-option{min-height:58px;padding:10px}
+}
