@@ -832,6 +832,7 @@ function render() {
   if (page === "tree") requestAnimationFrame(treeStyle === "chart" ? chartAfterRender : drawTreeConnectors);
   if (page === "home") requestAnimationFrame(dailyQuoteInit);
   if (page === "wall") requestAnimationFrame(loadWallFeed);
+  if (page === "invitations" && state.treeId && invitationLoadedTreeId !== state.treeId) { invitationLoadedTreeId = state.treeId; requestAnimationFrame(loadPrivateInvitations); }
   if (page === "horoscope") { requestAnimationFrame(loadHoroscope); requestAnimationFrame(loadAstroKundli); }
   if (page === "editlog") requestAnimationFrame(editlogInit);
   if (page === "merge") mergeInitSelects();
@@ -4752,6 +4753,7 @@ function eventsPage() {
 
 /* ---------------- Private Invitation Checklist ---------------- */
 let privateInvitationEvents = [], privateInvitationGuests = [], activeInvitationId = null, invitationLoading = false;
+let invitationLoadedTreeId = null;
 function invitationAgeGroup(dob) {
   if (!dob) return "adult";
   const d=new Date(dob), n=new Date(); if(Number.isNaN(d.getTime())) return "adult";
@@ -4770,15 +4772,15 @@ function invitationsPage() {
   const events=privateInvitationEvents.map(x=>'<option value="'+esc(x.id)+'" '+(ev&&ev.id===x.id?'selected':'')+'>'+esc(x.title)+' · '+esc(x.invitation_date)+'</option>').join("");
   const people=state.people.filter(p=>!p.external&&!p.details?.deleted).slice().sort((a,b)=>a.name.localeCompare(b.name)).map(p=>'<option value="'+esc(p.id)+'">'+esc(p.name)+'</option>').join("");
   const rows=guests.map(g=>'<div class="inv-guest-row"><div class="inv-guest-main"><strong>'+esc(g.guest_name)+'</strong><small>'+(g.is_family_head?'Family head':g.age_group==='child'?'Child':'Adult')+'</small><small>'+esc(g.mobile||'Mobile not added')+(g.location?' · '+esc(g.location):'')+'</small></div><div class="inv-guest-actions"><select aria-label="Invitation status" onchange="invitationSetStatus(\''+g.id+'\',this.value)">'+['pending','sent','accepted','declined'].map(s=>'<option value="'+s+'" '+(s===(g.invitation_status||'pending')?'selected':'')+'>'+({pending:'Pending',sent:'Sent',accepted:'Accepted',declined:'Declined'}[s])+'</option>').join("")+'</select><button class="ghost" onclick="invitationRemoveGuest(\''+g.id+'\')">✕</button></div></div>').join("");
-  setTimeout(loadPrivateInvitations,0);
   return '<div class="page-head"><h2>✉️ Private Invitation Checklist</h2><p class="muted">Pehle relatives add karein, phir manual guests. Guest list private rahegi.</p></div>'+
   '<div class="card inv-create"><h3>＋ Create invitation</h3><div class="inv-form-grid"><label>Event name<input id="invTitle" maxlength="120" placeholder="Family wedding"></label><label>Event date<input id="invDate" type="date"></label><label>Venue / location<input id="invVenue" maxlength="180" placeholder="Venue or city"></label></div><label>Private notes<textarea id="invNotes" rows="2" maxlength="1000"></textarea></label><button class="primary" onclick="invitationCreate()">Create checklist</button></div>'+
-  '<div class="card"><div class="inv-section-head"><h3>Your invitations</h3><button class="ghost" onclick="loadPrivateInvitations()">↻ Refresh</button></div><select id="invEventSelect" class="inv-event-select" onchange="invitationChoose(this.value)">'+(events||'<option value="">No invitations yet</option>')+'</select>'+
+  '<div class="card"><div class="inv-section-head"><h3>Your invitations</h3><button class="ghost" onclick="invitationRefresh()">↻ Refresh</button></div><select id="invEventSelect" class="inv-event-select" onchange="invitationChoose(this.value)">'+(events||'<option value="">No invitations yet</option>')+'</select>'+
   (ev?'<div class="inv-summary"><span><b>'+counts.total+'</b><small>Total guests</small></span><span><b>'+counts.adults+'</b><small>Adults</small></span><span><b>'+counts.children+'</b><small>Children</small></span></div><p class="muted">'+esc(ev.invitation_date)+(ev.venue?' · '+esc(ev.venue):'')+'</p>'+
   '<div class="inv-add-grid"><section><h4>👨‍👩‍👧 Add relatives first</h4><label>Family head<select id="invFamilyHead"><option value="">Select family head</option>'+people+'</select></label><button class="secondary" onclick="invitationAddFamily()">＋ Add head & dependents</button><p class="muted">Family head, spouse aur children ek saath add honge. Duplicate skip honge.</p></section>'+
   '<section><h4>＋ Add manually</h4><label>Guest name<input id="invGuestName" maxlength="120" placeholder="Guest full name"></label><div class="inv-form-grid"><label>Mobile<input id="invGuestMobile" type="tel" maxlength="20"></label><label>Location<input id="invGuestLocation" maxlength="160"></label></div><label>Age group<select id="invGuestAge"><option value="adult">Adult (18+)</option><option value="child">Child (under 18)</option></select></label><button class="secondary" onclick="invitationAddManual()">＋ Add guest</button></section></div>'+
   '<div class="inv-section-head"><h4>Guest list</h4><span class="muted">'+counts.total+' people</span></div><div class="inv-guest-list">'+(rows||'<p class="muted">Abhi koi guest add nahi hua.</p>')+'</div><button class="ghost inv-delete" onclick="invitationDelete(\''+ev.id+'\')">Delete this invitation</button>':'<p class="muted">Checklist shuru karne ke liye event create karein.</p>')+'</div>';
 }
+function invitationRefresh() { invitationLoadedTreeId = state.treeId; loadPrivateInvitations(); }
 async function loadPrivateInvitations() {
   const host=document.querySelector(".inv-create")?.nextElementSibling; if(!host||!supabase||!currentUser||!state.treeId||invitationLoading)return;
   invitationLoading=true;
