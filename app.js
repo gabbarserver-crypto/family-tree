@@ -4480,7 +4480,11 @@ async function approveMerge(i) {
 
 /* ---------------- relationship finder — real graph traversal + path ---------------- */
 /* Person pickers: alphabetical list + type-to-filter (native datalist). Label = "Name · Person ID" so equal names stay distinguishable. */
-function relPickLabel(p) { return `${p.name} · ${p.personCode || p.id}`; }
+function relPickLabel(p) {
+  const who = kinLine(p);
+  const identity = who || ("ID: " + (p.personCode || p.id));
+  return `${p.name} · ${identity} · ${p.personCode || p.id}`;
+}
 function relPickValue(inputId) {
   const v = (document.getElementById(inputId)?.value || "").trim().toLowerCase(); if (!v) return null;
   const all = state.people;
@@ -4490,7 +4494,7 @@ function relationship() {
   const sorted = [...state.people].sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }));
   const opts = sorted.map(p => `<option value="${esc(relPickLabel(p))}"></option>`).join("");
   const mine = me();
-  const field = (id, label, val) => `<div class="field"><label>${label}</label><input id="${id}" list="relPeople" autocomplete="off" placeholder="Naam ya Person ID likhkar chunein…" value="${esc(val)}" onfocus="this.select()" onkeydown="if(event.key==='Enter'){event.preventDefault();findRelation()}"></div>`;
+  const field = (id, label, val) => `<div class="field"><label>${label}</label><input id="${id}" list="relPeople" autocomplete="off" placeholder="Naam likhein — Father / Husband se pehchanein…" value="${esc(val)}" onfocus="this.select()" onkeydown="if(event.key==='Enter'){event.preventDefault();findRelation()}"></div>`;
   return `<div class="page-head"><h2>Relationship Finder</h2><p class="muted" id="relIntro">Select any two people — the label and the full relationship path are derived live from the family graph.</p></div>
   <div class="card form" id="relForm"><datalist id="relPeople">${opts}</datalist>
   ${field("ra", "Person A", mine ? relPickLabel(mine) : "")}
