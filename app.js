@@ -566,7 +566,7 @@ const NAV = [
     ["importGed", "Import/Export", "🔄"], ["relationship", "Relationship", "🔗"], ["horoscope", "Horoscope", "img:/assets/horoscope-icon.png"]
   ]},
   { group: "Social", items: [
-    ["wall", "Family Wall", "📝"], ["events", "Events", "📅"], ["sharing", "Connections", "🔗🤝"], ["games", "Games", "🎮"]
+    ["wall", "Family Wall", "📝"], ["events", "Events", "📅"], ["invitations", "Invitation Checklist", "✉️"], ["sharing", "Connections", "🔗🤝"], ["games", "Games", "🎮"]
   ]},
   { group: "Account", items: [
     ["profile", "My Profile", "👤"], ["support", "Support", "🎧"]
@@ -843,7 +843,7 @@ function switchRole() {}
 function pageView(p) {
   const map = {
     home, tree, add, addRelative, people, merge, relationship, profile: () => profile(activeProfileId || me().id),
-    wall, events: eventsPage, sharing, support, admin, production, treeAdmins: people, importGed, horoscope: horoscopePage, editlog: editlogPage, games: gamesPage
+    wall, events: eventsPage, invitations: invitationsPage, sharing, support, admin, production, treeAdmins: people, importGed, horoscope: horoscopePage, editlog: editlogPage, games: gamesPage
   };
   if ((p === "admin" || p === "production") && !isStaff()) return accessDenied();
   if (p === "editlog" && !canEditTree()) return accessDenied("Tree admin access required", "Only this tree's owner or admins can see the activity log.");
@@ -4749,6 +4749,83 @@ function eventsPage() {
   <div class="card ev-list">${body || '<p class="muted">Is range me koi event nahi. Profile me Date of Birth, Marriage date ya Date of Death bharo to yahan dikhenge.</p>'}</div>`;
 }
 
+
+/* ---------------- Private Invitation Checklist ---------------- */
+let privateInvitationEvents = [], privateInvitationGuests = [], activeInvitationId = null, invitationLoading = false;
+function invitationAgeGroup(dob) {
+  if (!dob) return "adult";
+  const d=new Date(dob), n=new Date(); if(Number.isNaN(d.getTime())) return "adult";
+  let age=n.getFullYear()-d.getFullYear(); if(n.getMonth()<d.getMonth()||(n.getMonth()===d.getMonth()&&n.getDate()<d.getDate())) age--;
+  return age<18?"child":"adult";
+}
+function invitationFamilyMembers(id) {
+  const ids=new Set([id]); spousesOf(id).forEach(x=>ids.add(x)); childrenOf(id).forEach(x=>ids.add(x));
+  spousesOf(id).forEach(sp=>childrenOf(sp).forEach(x=>ids.add(x)));
+  return [...ids].map(personById).filter(Boolean);
+}
+function invitationsPage() {
+  const ev=privateInvitationEvents.find(x=>x.id===activeInvitationId)||privateInvitationEvents[0]; if(ev) activeInvitationId=ev.id;
+  const guests=ev?privateInvitationGuests.filter(x=>x.invitation_id===ev.id):[];
+  const counts={total:guests.length,adults:guests.filter(x=>x.age_group!=="child").length,children:guests.filter(x=>x.age_group==="child").length};
+  const events=privateInvitationEvents.map(x=>'<option value="'+esc(x.id)+'" '+(ev&&ev.id===x.id?'selected':'')+'>'+esc(x.title)+' · '+esc(x.invitation_date)+'</option>').join("");
+  const people=state.people.filter(p=>!p.external&&!p.details?.deleted).slice().sort((a,b)=>a.name.localeCompare(b.name)).map(p=>'<option value="'+esc(p.id)+'">'+esc(p.name)+'</option>').join("");
+  const rows=guests.map(g=>'<div class="inv-guest-row"><div class="inv-guest-main"><strong>'+esc(g.guest_name)+'</strong><small>'+(g.is_family_head?'Family head':g.age_group==='child'?'Child':'Adult')+'</small><small>'+esc(g.mobile||'Mobile not added')+(g.location?' · '+esc(g.location):'')+'</small></div><div class="inv-guest-actions"><select aria-label="Invitation status" onchange="invitationSetStatus(\''+g.id+'\',this.value)">'+['pending','sent','accepted','declined'].map(s=>'<option value="'+s+'" '+(s===(g.invitation_status||'pending')?'selected':'')+'>'+({pending:'Pending',sent:'Sent',accepted:'Accepted',declined:'Declined'}[s])+'</option>').join("")+'</select><button class="ghost" onclick="invitationRemoveGuest(\''+g.id+'\')">✕</button></div></div>').join("");
+  setTimeout(loadPrivateInvitations,0);
+  return '<div class="page-head"><h2>✉️ Private Invitation Checklist</h2><p class="muted">Pehle relatives add karein, phir manual guests. Guest list private rahegi.</p></div>'+
+  '<div class="card inv-create"><h3>＋ Create invitation</h3><div class="inv-form-grid"><label>Event name<input id="invTitle" maxlength="120" placeholder="Family wedding"></label><label>Event date<input id="invDate" type="date"></label><label>Venue / location<input id="invVenue" maxlength="180" placeholder="Venue or city"></label></div><label>Private notes<textarea id="invNotes" rows="2" maxlength="1000"></textarea></label><button class="primary" onclick="invitationCreate()">Create checklist</button></div>'+
+  '<div class="card"><div class="inv-section-head"><h3>Your invitations</h3><button class="ghost" onclick="loadPrivateInvitations()">↻ Refresh</button></div><select id="invEventSelect" class="inv-event-select" onchange="invitationChoose(this.value)">'+(events||'<option value="">No invitations yet</option>')+'</select>'+
+  (ev?'<div class="inv-summary"><span><b>'+counts.total+'</b><small>Total guests</small></span><span><b>'+counts.adults+'</b><small>Adults</small></span><span><b>'+counts.children+'</b><small>Children</small></span></div><p class="muted">'+esc(ev.invitation_date)+(ev.venue?' · '+esc(ev.venue):'')+'</p>'+
+  '<div class="inv-add-grid"><section><h4>👨‍👩‍👧 Add relatives first</h4><label>Family head<select id="invFamilyHead"><option value="">Select family head</option>'+people+'</select></label><button class="secondary" onclick="invitationAddFamily()">＋ Add head & dependents</button><p class="muted">Family head, spouse aur children ek saath add honge. Duplicate skip honge.</p></section>'+
+  '<section><h4>＋ Add manually</h4><label>Guest name<input id="invGuestName" maxlength="120" placeholder="Guest full name"></label><div class="inv-form-grid"><label>Mobile<input id="invGuestMobile" type="tel" maxlength="20"></label><label>Location<input id="invGuestLocation" maxlength="160"></label></div><label>Age group<select id="invGuestAge"><option value="adult">Adult (18+)</option><option value="child">Child (under 18)</option></select></label><button class="secondary" onclick="invitationAddManual()">＋ Add guest</button></section></div>'+
+  '<div class="inv-section-head"><h4>Guest list</h4><span class="muted">'+counts.total+' people</span></div><div class="inv-guest-list">'+(rows||'<p class="muted">Abhi koi guest add nahi hua.</p>')+'</div><button class="ghost inv-delete" onclick="invitationDelete(\''+ev.id+'\')">Delete this invitation</button>':'<p class="muted">Checklist shuru karne ke liye event create karein.</p>')+'</div>';
+}
+async function loadPrivateInvitations() {
+  const host=document.querySelector(".inv-create")?.nextElementSibling; if(!host||!supabase||!currentUser||!state.treeId||invitationLoading)return;
+  invitationLoading=true;
+  try {
+    const {data,error}=await supabase.from("private_invitation_events").select("*").eq("tree_id",state.treeId).order("invitation_date");
+    if(error)throw error; privateInvitationEvents=data||[]; const ids=privateInvitationEvents.map(x=>x.id);
+    if(ids.length){const r=await supabase.from("private_invitation_guests").select("*").in("invitation_id",ids).order("created_at");if(r.error)throw r.error;privateInvitationGuests=r.data||[];}else privateInvitationGuests=[];
+    if(!ids.includes(activeInvitationId))activeInvitationId=ids[0]||null; render();
+  } catch(e){console.error(e);if(host.isConnected)host.innerHTML='<p class="muted">Checklist load nahi hui: '+esc(e.message)+'. Supabase SQL migration run karein.</p>';}
+  finally{invitationLoading=false;}
+}
+async function invitationCreate(){
+  const title=document.getElementById("invTitle")?.value.trim(),date=document.getElementById("invDate")?.value;
+  if(!title||!date)return toast("Event name aur date zaroori hain");
+  const r=await supabase.from("private_invitation_events").insert({tree_id:state.treeId,created_by:currentUser.id,title,invitation_date:date,venue:document.getElementById("invVenue")?.value.trim()||null,notes:document.getElementById("invNotes")?.value.trim()||null}).select().single();
+  if(r.error)return toast("Save failed: "+r.error.message);privateInvitationEvents.push(r.data);activeInvitationId=r.data.id;render();toast("Invitation checklist created");
+}
+async function invitationAddRows(rows){
+  if(!activeInvitationId||!rows.length)return toast("Pehle invitation select karein");
+  const existing=new Set(privateInvitationGuests.filter(g=>g.invitation_id===activeInvitationId&&g.person_id).map(g=>g.person_id));
+  const unique=rows.filter(g=>!g.person_id||!existing.has(g.person_id));if(!unique.length)return toast("Ye family members pehle se add hain");
+  const payload=unique.map(g=>({invitation_id:activeInvitationId,tree_id:state.treeId,created_by:currentUser.id,person_id:g.person_id||null,family_head_person_id:g.family_head_person_id||null,is_family_head:!!g.is_family_head,guest_name:g.guest_name,mobile:g.mobile||null,location:g.location||null,age_group:g.age_group||"adult",invitation_status:"pending"}));
+  const r=await supabase.from("private_invitation_guests").insert(payload).select();if(r.error)return toast("Guest save failed: "+r.error.message);privateInvitationGuests.push(...(r.data||[]));render();toast(payload.length+" guest add hue");
+}
+async function invitationAddFamily(){
+  const id=document.getElementById("invFamilyHead")?.value,head=personById(id);if(!head)return toast("Family head select karein");
+  await invitationAddRows(invitationFamilyMembers(id).map(p=>({person_id:p.id,family_head_person_id:id,is_family_head:p.id===id,guest_name:p.name,mobile:p.mobile,location:p.currentPlace||p.birthPlace,age_group:invitationAgeGroup(p.dob)})));
+}
+async function invitationAddManual(){
+  const name=document.getElementById("invGuestName")?.value.trim();if(!name)return toast("Guest name likhein");
+  await invitationAddRows([{guest_name:name,mobile:document.getElementById("invGuestMobile")?.value.trim(),location:document.getElementById("invGuestLocation")?.value.trim(),age_group:document.getElementById("invGuestAge")?.value||"adult"}]);
+}
+function invitationChoose(id){activeInvitationId=id||null;render();}
+async function invitationSetStatus(id,status){
+  if(!["pending","sent","accepted","declined"].includes(status))return;
+  const r=await supabase.from("private_invitation_guests").update({invitation_status:status}).eq("id",id);if(r.error)return toast(r.error.message);
+  const g=privateInvitationGuests.find(x=>x.id===id);if(g)g.invitation_status=status;
+}
+async function invitationRemoveGuest(id){
+  if(!confirm("Guest remove karein?"))return;const r=await supabase.from("private_invitation_guests").delete().eq("id",id);if(r.error)return toast(r.error.message);
+  privateInvitationGuests=privateInvitationGuests.filter(x=>x.id!==id);render();
+}
+async function invitationDelete(id){
+  if(!confirm("Invitation aur guest list delete karein?"))return;const r=await supabase.from("private_invitation_events").delete().eq("id",id);if(r.error)return toast(r.error.message);
+  privateInvitationEvents=privateInvitationEvents.filter(x=>x.id!==id);privateInvitationGuests=privateInvitationGuests.filter(x=>x.invitation_id!==id);activeInvitationId=privateInvitationEvents[0]?.id||null;render();
+}
+
 /* ---------------- V6: family wall ---------------- */
 function wall() {
   return `<div class="page-head"><h2>Family Wall</h2><p class="muted">Poori family ki posts ek jagah. Apni wall par likhne ke liye "New post" dabao.</p></div>
@@ -5350,7 +5427,7 @@ Object.assign(window, {
   assignTicket, refreshSupport, arRelTypeChanged, cityPicked, cityStateChanged,
   importGedcomPicked, exportGedcom, setPeopleSearch, clearPeopleSearch, setPeopleSort, openMoreMenu, closeMoreMenu,
   /* these were used by inline onclick/onchange but never exported, so the Branch/Chart switch, the whole Chart toolbar and the profile Privacy dropdown did nothing */
-  openRelationChart, openNotifications, closeNotifications, notifAct, setEvFilter, setEvRange, openEventWish, dqAnother, dqShare, dqDownload, openPersonWall, openNewWallPost, wallToggleTagPicker, wallToggleLoc, wallLocRender, wallLocClear, wallLocGPS, wallLocSearch, wallLocPick, wallLocPaste, wallLocToggleMap, wallAddTag, wallRemoveTag, wallPost, wallReactToggle, wallReact, wallToggleComments, wallAddComment, wallDeleteComment, wallDeletePost, setTreeStyle, chartAddMenu, chartBack, chartFit, chartGoFamily, chartOpen, chartSetRoot, chartZoom, chartPanStart, chartWheel, setPrivacy
+  openRelationChart, openNotifications, closeNotifications, notifAct, setEvFilter, setEvRange, openEventWish, dqAnother, dqShare, dqDownload, openPersonWall, openNewWallPost, wallToggleTagPicker, wallToggleLoc, wallLocRender, wallLocClear, wallLocGPS, wallLocSearch, wallLocPick, wallLocPaste, wallLocToggleMap, wallAddTag, wallRemoveTag, wallPost, wallReactToggle, wallReact, wallToggleComments, wallAddComment, wallDeleteComment, wallDeletePost, setTreeStyle, chartAddMenu, chartBack, chartFit, chartGoFamily, chartOpen, chartSetRoot, chartZoom, chartPanStart, chartWheel, setPrivacy, invitationCreate, invitationAddFamily, invitationAddManual, invitationChoose, invitationSetStatus, invitationRemoveGuest, invitationDelete, loadPrivateInvitations
 });
 
 window.addEventListener("hashchange", render);
