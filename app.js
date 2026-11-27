@@ -4780,7 +4780,7 @@ function invitationsPage() {
   '<div class="inv-section-head"><h4>Guest list</h4><span class="muted">'+counts.total+' people</span></div><div class="inv-guest-list">'+(rows||'<p class="muted">Abhi koi guest add nahi hua.</p>')+'</div><button class="ghost inv-delete" onclick="invitationDelete(\''+ev.id+'\')">Delete this invitation</button>':'<p class="muted">Checklist shuru karne ke liye event create karein.</p>')+'</div>';
 }
 async function loadPrivateInvitations() {
-  const host=document.getElementById("invitationWorkspace"); if(!host||!supabase||!currentUser||!state.treeId||invitationLoading)return;
+  const host=document.querySelector(".inv-create")?.nextElementSibling; if(!host||!supabase||!currentUser||!state.treeId||invitationLoading)return;
   invitationLoading=true;
   try {
     const {data,error}=await supabase.from("private_invitation_events").select("*").eq("tree_id",state.treeId).order("invitation_date");
