@@ -938,3 +938,12 @@ input[type=search]{-webkit-appearance:none;appearance:none}
   .rel-pick-menu{max-height:38vh}
   .rel-pick-option{min-height:58px;padding:10px}
 }
+
+
+/* Keep relationship suggestions attached to the active input on small screens */
+.rel-pick-wrap{position:relative;z-index:4;min-width:0}
+.rel-pick-wrap:focus-within{z-index:50}
+.rel-pick-field{position:relative;z-index:auto}
+.rel-pick-menu{position:absolute;z-index:100;top:calc(100% - 2px);left:0;right:0;display:grid;max-height:min(42vh,340px);overflow-y:auto;overscroll-behavior:contain;margin:0;border:1px solid var(--line);border-radius:12px;background:var(--paper);box-shadow:0 12px 32px rgba(0,0,0,.38);-webkit-overflow-scrolling:touch}
+.rel-pick-menu[hidden]{display:none!important}
+@media(max-width:720px){.rel-pick-menu{max-height:40vh}.rel-pick-option{min-height:58px}}
