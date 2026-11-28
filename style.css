@@ -947,3 +947,18 @@ input[type=search]{-webkit-appearance:none;appearance:none}
 .rel-pick-menu{position:absolute;z-index:100;top:calc(100% - 2px);left:0;right:0;display:grid;max-height:min(42vh,340px);overflow-y:auto;overscroll-behavior:contain;margin:0;border:1px solid var(--line);border-radius:12px;background:var(--paper);box-shadow:0 12px 32px rgba(0,0,0,.38);-webkit-overflow-scrolling:touch}
 .rel-pick-menu[hidden]{display:none!important}
 @media(max-width:720px){.rel-pick-menu{max-height:40vh}.rel-pick-option{min-height:58px}}
+
+/* ---- Relationship Finder pickers: photo thumbnail + Father/Husband chips ---- */
+.rel-input-row{position:relative;display:block}
+.rel-input-row input{width:100%}
+.rel-input-row input.has-thumb{padding-left:56px}
+.rel-thumb{position:absolute;left:8px;top:50%;transform:translateY(-50%);width:36px;height:36px;border-radius:50%;overflow:hidden;display:grid;place-items:center;pointer-events:none;z-index:1}
+.rel-thumb[hidden]{display:none!important}
+.rel-thumb .avatar,.rel-thumb-av{width:36px!important;height:36px!important;min-width:36px;font-size:13px;border-radius:50%}
+.rel-pick-option{align-items:flex-start;gap:12px}
+.rel-pick-avatar{width:46px!important;height:46px!important;min-width:46px;border-radius:50%;overflow:hidden;font-size:15px}
+.rel-pick-copy{gap:4px}
+.rel-kin-row{display:flex;flex-wrap:wrap;gap:4px 6px}
+.rel-kin{display:inline-flex;gap:4px;align-items:baseline;font-size:12px;line-height:1.3;padding:2px 8px;border-radius:999px;background:var(--plum-tint);color:var(--ink)}
+.rel-kin em{font-style:normal;font-weight:600;color:var(--ink-soft)}
+.rel-kin-none{background:transparent;padding:0;color:var(--ink-soft)}

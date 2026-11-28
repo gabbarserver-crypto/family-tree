@@ -4490,31 +4490,46 @@ function relPickValue(inputId) {
   const all = state.people;
   return all.find(p => relPickLabel(p).toLowerCase() === v) || all.find(p => (p.name || "").trim().toLowerCase() === v) || null;
 }
+/* Dropdown row: photo thumbnail + name + "Father: X" / "Husband: Y" chips + Person ID. */
+function relKinBits(p) {   // kinLine() = "Father: X · Husband: Y"  ->  [["Father","X"],["Husband","Y"]]
+  return (kinLine(p) || "").split(" · ").filter(Boolean).map(s => { const i = s.indexOf(": "); return i < 0 ? ["", s] : [s.slice(0, i), s.slice(i + 2)]; });
+}
+function relPickThumb(inputId) {   // small photo inside the input once a real person is selected
+  const input = document.getElementById(inputId), box = document.getElementById(inputId + "Thumb"); if (!input || !box) return;
+  const p = relPickValue(inputId);
+  box.innerHTML = p ? avatarHTML(p, "rel-thumb-av") : "";
+  box.hidden = !p; input.classList.toggle("has-thumb", !!p);
+}
 function relPickerResults(inputId) {
   const input = document.getElementById(inputId), menu = document.getElementById(inputId + "Menu");
   if (!input || !menu) return;
+  relPickThumb(inputId);
   const q = input.value.trim().toLocaleLowerCase();
   const matches = [...state.people]
     .filter(p => !q || relPickLabel(p).toLocaleLowerCase().includes(q) || (p.name || "").toLocaleLowerCase().includes(q))
-    .sort((a,b) => (a.name || "").localeCompare(b.name || "", undefined, {sensitivity:"base"}))
-    .slice(0,60);
-  menu.innerHTML = matches.length ? matches.map(p => `<button type="button" class="rel-pick-option" onmousedown="event.preventDefault()" onclick="relChoosePerson('${inputId}','${esc(p.id)}')">${avatarHTML(p,"rel-pick-avatar")}<span class="rel-pick-copy"><strong>${esc(p.name)}</strong><small>${esc(kinLine(p) || "Family details not added")} · ${esc(p.personCode || p.id)}</small></span></button>`).join("") : '<div class="rel-pick-empty">Koi matching member nahi mila</div>';
+    .sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }))
+    .slice(0, 60);
+  menu.innerHTML = matches.length ? matches.map(p => {
+    const kin = relKinBits(p).map(([k, v]) => `<span class="rel-kin">${k ? `<em>${esc(k)}</em>` : ""}${esc(v)}</span>`).join("");
+    return `<button type="button" class="rel-pick-option" onmousedown="event.preventDefault()" onclick="relChoosePerson('${inputId}','${esc(p.id)}')">${avatarHTML(p, "rel-pick-avatar")}<span class="rel-pick-copy"><strong>${esc(p.name)}</strong><span class="rel-kin-row">${kin || '<span class="rel-kin rel-kin-none">Family details not added</span>'}</span><small>ID: ${esc(p.personCode || p.id)}</small></span></button>`;
+  }).join("") : '<div class="rel-pick-empty">Koi matching member nahi mila</div>';
   menu.hidden = false;
 }
 function relChoosePerson(inputId, personId) {
   const p = personById(personId), input = document.getElementById(inputId), menu = document.getElementById(inputId + "Menu");
   if (!p || !input) return;
   input.value = relPickLabel(p);
+  relPickThumb(inputId);
   if (menu) menu.hidden = true;
 }
 function relationship() {
   const mine = me();
-  const field = (id, label, val) => `<div class="rel-pick-wrap"><div class="field rel-pick-field"><label for="${id}">${label}</label><input id="${id}" autocomplete="off" placeholder="Naam type karein — neeche list se select karein" value="${esc(val)}" oninput="relPickerResults('${id}')" onfocus="relPickerResults('${id}')" onblur="setTimeout(()=>{const m=document.getElementById('${id}Menu');if(m)m.hidden=true},180)" onkeydown="if(event.key==='Enter'){event.preventDefault();const m=document.getElementById('${id}Menu');if(m)m.hidden=true;findRelation()}"></div><div id="${id}Menu" class="rel-pick-menu" hidden></div></div>`;
+  const field = (id, label, person) => `<div class="rel-pick-wrap"><div class="field rel-pick-field"><label for="${id}">${label}</label><div class="rel-input-row"><span id="${id}Thumb" class="rel-thumb" ${person ? "" : "hidden"}>${person ? avatarHTML(person, "rel-thumb-av") : ""}</span><input id="${id}" class="${person ? "has-thumb" : ""}" autocomplete="off" placeholder="Naam type karein — neeche list se select karein" value="${esc(person ? relPickLabel(person) : "")}" oninput="relPickerResults('${id}')" onfocus="relPickerResults('${id}')" onblur="setTimeout(()=>{const m=document.getElementById('${id}Menu');if(m)m.hidden=true},180)" onkeydown="if(event.key==='Enter'){event.preventDefault();const m=document.getElementById('${id}Menu');if(m)m.hidden=true;findRelation()}"></div></div><div id="${id}Menu" class="rel-pick-menu" hidden></div></div>`;
   return `<div class="page-head"><h2>Relationship Finder</h2><p class="muted" id="relIntro">Select any two people — the label and the full relationship path are derived live from the family graph.</p></div>
   <div class="card form" id="relForm">
-  ${field("ra", "Person A", mine ? relPickLabel(mine) : "")}
-  ${field("rb", "Person B", "")}
-  ${field("rc", "Person C (optional)", "")}
+  ${field("ra", "Person A", mine)}
+  ${field("rb", "Person B", null)}
+  ${field("rc", "Person C (optional)", null)}
   <button class="primary" style="justify-self:start" onclick="findRelation()">Find Relationship</button></div>
   <div id="relout"></div>`;
 }
@@ -5426,6 +5441,7 @@ async function importGedcomPicked(inputEl) {
    the way classic <script> globals are. */
 Object.assign(window, {
   restoreDeleted,
+  relPickerResults, relChoosePerson, relPickThumb,
   setProfilePanel, openEditLog, editlogLoad, elFilter, elReset, elTab, relBack, relZoom, relFit, setPeopleUnlinked, setPeopleAdmins,
   toggleTheme,
   setHoroscope, loadHoroscope, openHoroscope, openAstroSage, loadAstroKundli, astroGeoSearch, astroGeoPick, astroGeoClear, setHoroCity, tarotDraw, wallPickMedia, wallRemoveFile, wallViewImage, wallMediaShare, wallMediaDownload, wallSaveMedia,
