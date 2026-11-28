@@ -962,3 +962,5 @@ input[type=search]{-webkit-appearance:none;appearance:none}
 .rel-kin{display:inline-flex;gap:4px;align-items:baseline;font-size:12px;line-height:1.3;padding:2px 8px;border-radius:999px;background:var(--plum-tint);color:var(--ink)}
 .rel-kin em{font-style:normal;font-weight:600;color:var(--ink-soft)}
 .rel-kin-none{background:transparent;padding:0;color:var(--ink-soft)}
+.inv-add-grid .rel-pick-menu{min-width:0}
+.inv-add-grid .rel-pick-wrap{margin:8px 0}

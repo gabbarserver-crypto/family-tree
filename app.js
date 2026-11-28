@@ -635,7 +635,7 @@ function renderLogin() {
       <button class="btn-google" onclick="googleLogin()">${G} Continue with Google</button>
       <!-- Facebook login hidden until Meta business verification is done. To enable, add back:
       <button class="btn-fb" onclick="facebookLogin()">${FB} Continue with Facebook</button> -->
-      <button class="btn-otp" onclick="phoneLogin()">${I.ph} Continue with Mobile OTP</button>
+      <button class="btn-otp" onclick="phoneLogin()">${I.ph} Continue with WhatsApp OTP</button>
     </div>
     <div class="login2-or">OR</div>
     <div class="login2-feats">
@@ -650,8 +650,9 @@ async function googleLogin() { try { await signInWithGoogle(); } catch(e) { toas
 async function facebookLogin() { try { await signInWithFacebook(); } catch(e) { toast(e.message); } }
 async function phoneLogin() {
   if (!supabase) return toast('Supabase is not configured');
-  const phone = prompt('Enter mobile number with country code, e.g. +9198XXXXXXXX'); if (!phone) return;
-  try { await sendPhoneOtp(phone); const otp = prompt('Enter the OTP you received'); if (!otp) return; await verifyPhoneOtp(phone, otp); await bootAuthenticatedApp(); } catch(e) { toast(e.message); }
+  let phone = (prompt('WhatsApp number daalo (10 digit ya country code ke saath, e.g. 98XXXXXXXX / +9198XXXXXXXX)') || '').replace(/[\s-]/g, ''); if (!phone) return;
+  if (/^\d{10}$/.test(phone)) phone = '+91' + phone; else if (/^91\d{10}$/.test(phone)) phone = '+' + phone;
+  try { await sendPhoneOtp(phone); const otp = prompt('OTP aapke WhatsApp par bheja gaya hai. Yahan daalo:'); if (!otp) return; await verifyPhoneOtp(phone, otp.trim()); await bootAuthenticatedApp(); } catch(e) { toast(e.message); }
 }
 /* Light / dark theme: remembered in this browser; first visit follows the device setting. */
 function currentTheme() { return document.documentElement.dataset.theme === "dark" ? "dark" : "light"; }
@@ -4494,6 +4495,10 @@ function relPickValue(inputId) {
 function relKinBits(p) {   // kinLine() = "Father: X · Husband: Y"  ->  [["Father","X"],["Husband","Y"]]
   return (kinLine(p) || "").split(" · ").filter(Boolean).map(s => { const i = s.indexOf(": "); return i < 0 ? ["", s] : [s.slice(0, i), s.slice(i + 2)]; });
 }
+function pickRowHTML(p, onclickJs) {   // photo + name + Father/Husband chips + ID  (used by Relationship + Invitation pickers)
+  const kin = relKinBits(p).map(([k, v]) => `<span class="rel-kin">${k ? `<em>${esc(k)}</em>` : ""}${esc(v)}</span>`).join("");
+  return `<button type="button" class="rel-pick-option" onmousedown="event.preventDefault()" onclick="${onclickJs}">${avatarHTML(p, "rel-pick-avatar")}<span class="rel-pick-copy"><strong>${esc(p.name)}</strong><span class="rel-kin-row">${kin || '<span class="rel-kin rel-kin-none">Family details not added</span>'}</span><small>ID: ${esc(p.personCode || p.id)}</small></span></button>`;
+}
 function relPickThumb(inputId) {   // small photo inside the input once a real person is selected
   const input = document.getElementById(inputId), box = document.getElementById(inputId + "Thumb"); if (!input || !box) return;
   const p = relPickValue(inputId);
@@ -4509,10 +4514,7 @@ function relPickerResults(inputId) {
     .filter(p => !q || relPickLabel(p).toLocaleLowerCase().includes(q) || (p.name || "").toLocaleLowerCase().includes(q))
     .sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }))
     .slice(0, 60);
-  menu.innerHTML = matches.length ? matches.map(p => {
-    const kin = relKinBits(p).map(([k, v]) => `<span class="rel-kin">${k ? `<em>${esc(k)}</em>` : ""}${esc(v)}</span>`).join("");
-    return `<button type="button" class="rel-pick-option" onmousedown="event.preventDefault()" onclick="relChoosePerson('${inputId}','${esc(p.id)}')">${avatarHTML(p, "rel-pick-avatar")}<span class="rel-pick-copy"><strong>${esc(p.name)}</strong><span class="rel-kin-row">${kin || '<span class="rel-kin rel-kin-none">Family details not added</span>'}</span><small>ID: ${esc(p.personCode || p.id)}</small></span></button>`;
-  }).join("") : '<div class="rel-pick-empty">Koi matching member nahi mila</div>';
+  menu.innerHTML = matches.length ? matches.map(p => pickRowHTML(p, `relChoosePerson('${inputId}','${esc(p.id)}')`)).join("") : '<div class="rel-pick-empty">Koi matching member nahi mila</div>';
   menu.hidden = false;
 }
 function relChoosePerson(inputId, personId) {
@@ -4797,22 +4799,62 @@ function invitationAgeGroup(dob) {
 function invitationFamilyMembers(id) {
   const ids=new Set([id]); spousesOf(id).forEach(x=>ids.add(x)); childrenOf(id).forEach(x=>ids.add(x));
   spousesOf(id).forEach(sp=>childrenOf(sp).forEach(x=>ids.add(x)));
-  return [...ids].map(personById).filter(Boolean);
+  return [...ids].map(personById).filter(p => p && (p.id === id || (!p.details?.deleted && p.lifeStatus !== "deceased")));
+}
+/* Family-head picker: male heads first, and nobody already on this guest list (head OR dependent) is offered again. */
+function invAddedIds() { return new Set(privateInvitationGuests.filter(g => g.invitation_id === activeInvitationId && g.person_id).map(g => g.person_id)); }
+function invHeadChoices() {
+  const added = invAddedIds();
+  const alive = p => p && !p.external && !p.details?.deleted && p.lifeStatus !== "deceased";
+  return state.people.filter(p => {
+    if (!alive(p) || added.has(p.id) || invitationAgeGroup(p.dob) === "child") return false;
+    if (p.gender === "Female") {   // a wife comes along with her husband; show her alone only if he is not available
+      const husband = spousesOf(p.id).map(personById).find(x => alive(x) && x.gender === "Male" && !added.has(x.id));
+      if (husband) return false;
+    }
+    return true;
+  }).sort((a, b) => ((b.gender === "Male") - (a.gender === "Male")) || (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }));
+}
+function invHeadFieldHTML() {
+  return `<div class="rel-pick-wrap"><div class="field rel-pick-field"><label for="invFamilyHeadInput">Family head</label><div class="rel-input-row"><span id="invFamilyHeadInputThumb" class="rel-thumb" hidden></span><input id="invFamilyHeadInput" autocomplete="off" placeholder="Naam type karein — male head pehle dikhte hain" oninput="invHeadResults(true)" onfocus="this.select();invHeadResults(false)" onblur="setTimeout(()=>{const m=document.getElementById('invFamilyHeadMenu');if(m)m.hidden=true},180)"></div></div><input type="hidden" id="invFamilyHead"><div id="invFamilyHeadMenu" class="rel-pick-menu" hidden></div></div><p class="muted" id="invHeadPreview"></p>`;
+}
+function invHeadResults(typing) {
+  const input = document.getElementById("invFamilyHeadInput"), menu = document.getElementById("invFamilyHeadMenu"), hid = document.getElementById("invFamilyHead");
+  if (!input || !menu) return;
+  if (typing && hid) {   // typing again = no head chosen yet
+    hid.value = ""; const t = document.getElementById("invFamilyHeadInputThumb"); if (t) { t.hidden = true; t.innerHTML = ""; }
+    input.classList.remove("has-thumb"); const pv = document.getElementById("invHeadPreview"); if (pv) pv.textContent = "";
+  }
+  const q = (typing || !hid?.value) ? input.value.trim().toLocaleLowerCase() : "";
+  const list = invHeadChoices().filter(p => !q || relPickLabel(p).toLocaleLowerCase().includes(q) || (p.name || "").toLocaleLowerCase().includes(q)).slice(0, 80);
+  menu.innerHTML = list.length ? list.map(p => pickRowHTML(p, `invPickHead('${esc(p.id)}')`)).join("") : '<div class="rel-pick-empty">Koi member nahi mila (ya sab pehle se add hain)</div>';
+  menu.hidden = false;
+}
+function invPickHead(id) {
+  const p = personById(id); if (!p) return;
+  const input = document.getElementById("invFamilyHeadInput"), hid = document.getElementById("invFamilyHead"), menu = document.getElementById("invFamilyHeadMenu");
+  if (!input || !hid) return;
+  hid.value = id; input.value = relPickLabel(p);
+  const t = document.getElementById("invFamilyHeadInputThumb"); if (t) { t.innerHTML = avatarHTML(p, "rel-thumb-av"); t.hidden = false; }
+  input.classList.add("has-thumb"); if (menu) menu.hidden = true;
+  const added = invAddedIds(), mem = invitationFamilyMembers(id).filter(x => !added.has(x.id));
+  const kids = mem.filter(x => invitationAgeGroup(x.dob) === "child").length;
+  const pv = document.getElementById("invHeadPreview");
+  if (pv) pv.textContent = mem.length ? `${mem.length} add honge (${mem.length - kids} adult + ${kids} child): ${mem.map(x => x.name).join(", ")}` : "Ye family pehle se add hai.";
 }
 function invitationsPage() {
   const ev=privateInvitationEvents.find(x=>x.id===activeInvitationId)||privateInvitationEvents[0]; if(ev) activeInvitationId=ev.id;
   const guests=ev?privateInvitationGuests.filter(x=>x.invitation_id===ev.id):[];
   const counts={total:guests.length,adults:guests.filter(x=>x.age_group!=="child").length,children:guests.filter(x=>x.age_group==="child").length};
   const events=privateInvitationEvents.map(x=>'<option value="'+esc(x.id)+'" '+(ev&&ev.id===x.id?'selected':'')+'>'+esc(x.title)+' · '+esc(x.invitation_date)+'</option>').join("");
-  const people=state.people.filter(p=>!p.external&&!p.details?.deleted&&p.lifeStatus!=="deceased"&&parentsOf(p.id).length===0).slice().sort((a,b)=>a.name.localeCompare(b.name)).map(p=>'<option value="'+esc(p.id)+'">'+esc(p.name)+'</option>').join("");
   const rows=guests.map(g=>'<div class="inv-guest-row"><div class="inv-guest-main"><strong>'+esc(g.guest_name)+'</strong><small>'+(g.is_family_head?'Family head':g.age_group==='child'?'Child':'Adult')+'</small><small>'+esc(g.mobile||'Mobile not added')+(g.location?' · '+esc(g.location):'')+'</small></div><div class="inv-guest-actions"><select aria-label="Invitation status" onchange="invitationSetStatus(\''+g.id+'\',this.value)">'+['pending','sent','accepted','declined'].map(s=>'<option value="'+s+'" '+(s===(g.invitation_status||'pending')?'selected':'')+'>'+({pending:'Pending',sent:'Sent',accepted:'Accepted',declined:'Declined'}[s])+'</option>').join("")+'</select><button class="ghost" onclick="invitationRemoveGuest(\''+g.id+'\')">✕</button></div></div>').join("");
   return '<div class="page-head"><h2>✉️ Private Invitation Checklist</h2><p class="muted">Pehle relatives add karein, phir manual guests. Guest list private rahegi.</p></div>'+
   '<div class="card inv-create"><h3>＋ Create invitation</h3><div class="inv-form-grid"><label>Event name<input id="invTitle" maxlength="120" placeholder="Family wedding"></label><label>Event date<input id="invDate" type="date"></label><label>Venue / location<input id="invVenue" maxlength="180" placeholder="Venue or city"></label></div><label>Private notes<textarea id="invNotes" rows="2" maxlength="1000"></textarea></label><button class="primary" onclick="invitationCreate()">Create checklist</button></div>'+
   '<div class="card"><div class="inv-section-head"><h3>Your invitations</h3><button class="ghost" onclick="invitationRefresh()">↻ Refresh</button></div><select id="invEventSelect" class="inv-event-select" onchange="invitationChoose(this.value)">'+(events||'<option value="">No invitations yet</option>')+'</select>'+
   (ev?'<div class="inv-summary"><span><b>'+counts.total+'</b><small>Total guests</small></span><span><b>'+counts.adults+'</b><small>Adults</small></span><span><b>'+counts.children+'</b><small>Children</small></span></div><p class="muted">'+esc(ev.invitation_date)+(ev.venue?' · '+esc(ev.venue):'')+'</p>'+
-  '<div class="inv-add-grid"><section><h4>👨‍👩‍👧 Add relatives first</h4><label>Family head<select id="invFamilyHead"><option value="">Select family head</option>'+people+'</select></label><button class="secondary" onclick="invitationAddFamily()">＋ Add head & dependents</button><p class="muted">Family head, spouse aur children ek saath add honge. Duplicate skip honge.</p></section>'+
+  '<div class="inv-add-grid"><section><h4>👨‍👩‍👧 Add relatives first</h4>'+invHeadFieldHTML()+'<button class="secondary" onclick="invitationAddFamily()">＋ Add head & dependents</button><p class="muted">Family head, spouse aur children ek saath add honge. Duplicate skip honge.</p></section>'+
   '<section><h4>＋ Add manually</h4><label>Guest name<input id="invGuestName" maxlength="120" placeholder="Guest full name"></label><div class="inv-form-grid"><label>Mobile<input id="invGuestMobile" type="tel" maxlength="20"></label><label>Location<input id="invGuestLocation" maxlength="160"></label></div><label>Age group<select id="invGuestAge"><option value="adult">Adult (18+)</option><option value="child">Child (under 18)</option></select></label><button class="secondary" onclick="invitationAddManual()">＋ Add guest</button></section></div>'+
-  '<div class="inv-section-head"><h4>Guest list</h4><span class="muted">'+counts.total+' people</span></div><div class="inv-guest-list">'+(rows||'<p class="muted">Abhi koi guest add nahi hua.</p>')+'</div><button class="ghost inv-delete" onclick="invitationDelete(\''+ev.id+'\')">Delete this invitation</button>':'<p class="muted">Checklist shuru karne ke liye event create karein.</p>')+'</div>';
+  '<div class="inv-section-head"><h4>Guest list</h4><span class="muted"><b>'+counts.total+'</b> members · '+counts.adults+' adult + '+counts.children+' child</span></div><div class="inv-guest-list">'+(rows||'<p class="muted">Abhi koi guest add nahi hua.</p>')+'</div><button class="ghost inv-delete" onclick="invitationDelete(\''+ev.id+'\')">Delete this invitation</button>':'<p class="muted">Checklist shuru karne ke liye event create karein.</p>')+'</div>';
 }
 function invitationRefresh() { invitationLoadedTreeId = state.treeId; loadPrivateInvitations(); }
 async function loadPrivateInvitations() {
@@ -5441,7 +5483,7 @@ async function importGedcomPicked(inputEl) {
    the way classic <script> globals are. */
 Object.assign(window, {
   restoreDeleted,
-  relPickerResults, relChoosePerson, relPickThumb,
+  relPickerResults, relChoosePerson, relPickThumb, invHeadResults, invPickHead,
   setProfilePanel, openEditLog, editlogLoad, elFilter, elReset, elTab, relBack, relZoom, relFit, setPeopleUnlinked, setPeopleAdmins,
   toggleTheme,
   setHoroscope, loadHoroscope, openHoroscope, openAstroSage, loadAstroKundli, astroGeoSearch, astroGeoPick, astroGeoClear, setHoroCity, tarotDraw, wallPickMedia, wallRemoveFile, wallViewImage, wallMediaShare, wallMediaDownload, wallSaveMedia,
